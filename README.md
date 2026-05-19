@@ -49,8 +49,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/depl
 | | |
 |---|---|
 | ОС | Ubuntu 20.04 / 22.04 / 24.04 или Debian 11 / 12 |
-| RAM | от 512 МБ |
-| Диск | от 1 ГБ |
+| RAM | от 1 ГБ (минимум 512 МБ, но во время импорта тесно) |
+| Диск | от 5 ГБ (Docker-образы ~800 МБ + OS + данные) |
 | Порт | 3000 (настраивается через `WEB_PORT` в `.env`) |
 
 Docker и Docker Compose устанавливаются автоматически при их отсутствии.
