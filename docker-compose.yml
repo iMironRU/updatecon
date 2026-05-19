@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:-upd}@db:5432/${POSTGRES_DB:-upd}
       PORT: 3000
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
     ports:
       - "${WEB_PORT:-3000}:3000"
     command: ["node", "dist/db/server.js"]
