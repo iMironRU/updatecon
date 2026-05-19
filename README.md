@@ -93,8 +93,12 @@ docker compose up -d
 ## Удаление
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/uninstall.sh)
+cd ~ && bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/uninstall.sh)
 ```
+
+> **Важно:** всегда запускайте из домашней директории (`cd ~`). Если запустить
+> находясь внутри `~/updatecon`, после удаления папки shell потеряет рабочую
+> директорию и следующая команда не запустится.
 
 Скрипт спросит: удалить ли данные PostgreSQL, Docker-образы и директорию проекта.
 Каждый пункт подтверждается отдельно — можно остановить контейнеры, сохранив данные.
@@ -102,7 +106,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/unin
 Если уже есть клонированная директория:
 
 ```bash
-bash ~/updatecon/uninstall.sh
+cd ~ && bash ~/updatecon/uninstall.sh
 ```
 
 ## Управление
