@@ -88,9 +88,8 @@ IS_FRESH=false
 
 # ── 3. Сбор всех параметров ДО начала установки ──────────────────────────────
 echo
-echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}${BOLD}║         Установка Апдейкон                       ║${NC}"
-echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════╝${NC}"
+echo -e "${CYAN}${BOLD}  ▶  Установка Апдейкон${NC}"
+echo -e "${CYAN}  ──────────────────────────────────────────${NC}"
 echo
 
 if $IS_FRESH; then
@@ -140,12 +139,12 @@ if $IS_FRESH; then
 
   # Сводка
   echo
-  echo -e "${CYAN}  ┌─ Параметры установки ──────────────────────────┐${NC}"
-  printf  "  │  Внешний порт:  %-30s │\n" "$WEB_PORT_INPUT"
-  printf  "  │  Логин admin:   %-30s │\n" "$ADMIN_LOGIN"
-  printf  "  │  Логин ИТС:     %-30s │\n" "${ITS_LOGIN_INPUT:-не задан}"
-  printf  "  │  Восст. дамп:   %-30s │\n" "$( [[ "$RESTORE_SEED" =~ ^[Yy] ]] && echo "да" || echo "нет" )"
-  echo -e "${CYAN}  └────────────────────────────────────────────────┘${NC}"
+  echo -e "${CYAN}  ┌─ Параметры установки ─────────────────${NC}"
+  echo -e "  │  Внешний порт:  ${BOLD}$WEB_PORT_INPUT${NC}"
+  echo -e "  │  Логин admin:   ${BOLD}$ADMIN_LOGIN${NC}"
+  echo -e "  │  Логин ИТС:     ${BOLD}${ITS_LOGIN_INPUT:-не задан}${NC}"
+  echo -e "  │  Восст. дамп:   ${BOLD}$( [[ "$RESTORE_SEED" =~ ^[Yy] ]] && echo "да" || echo "нет" )${NC}"
+  echo -e "${CYAN}  └───────────────────────────────────────${NC}"
   echo
   read -rp "  Начать установку? [Enter / n]: " CONFIRM
   [[ "${CONFIRM:-y}" =~ ^[Nn] ]] && { echo "Отмена."; exit 0; }
@@ -249,21 +248,17 @@ ADMIN_SHOW="$(grep -E '^ADMIN_LOGIN=' .env | cut -d= -f2 || echo admin)"
 PORT_SUFFIX="$( [ "$PORT" = "80" ] && echo "" || echo ":$PORT" )"
 
 echo
-echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}${BOLD}║        Апдейкон успешно запущен!                ║${NC}"
-echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}${BOLD}║${NC}                                                  ${GREEN}${BOLD}║${NC}"
-printf  "  ${BOLD}Сайт:${NC}     ${GREEN}http://%s%s/${NC}\n"       "$HOST_IP" "$PORT_SUFFIX"
-printf  "  ${BOLD}Админка:${NC}  ${GREEN}http://%s%s/admin${NC}\n"  "$HOST_IP" "$PORT_SUFFIX"
-printf  "  ${BOLD}Логин:${NC}    ${YELLOW}%s${NC}\n"                "$ADMIN_SHOW"
-echo -e "${GREEN}${BOLD}║${NC}                                                  ${GREEN}${BOLD}║${NC}"
-echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}${BOLD}║${NC}  Команды управления:                              ${GREEN}${BOLD}║${NC}"
-echo    "     $DC logs -f worker   # прогресс импорта"
-echo    "     $DC logs -f web       # веб-сервер"
-echo    "     $DC down              # остановить"
-echo    "     bash uninstall.sh     # удалить"
-echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}${BOLD}  ✓  Апдейкон успешно запущен!${NC}"
+echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
+echo -e "  ${BOLD}Сайт:${NC}     ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/${NC}"
+echo -e "  ${BOLD}Админка:${NC}  ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/admin${NC}"
+echo -e "  ${BOLD}Логин:${NC}    ${YELLOW}${ADMIN_SHOW}${NC}"
+echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
+echo -e "  ${BOLD}Команды управления:${NC}"
+echo    "    $DC logs -f worker   # прогресс импорта"
+echo    "    $DC logs -f web      # веб-сервер"
+echo    "    $DC down             # остановить"
+echo    "    bash uninstall.sh    # удалить"
 echo
 
 # ── 12. Лог ───────────────────────────────────────────────────────────────────
