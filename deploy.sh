@@ -45,13 +45,19 @@ REPO_URL="https://github.com/iMironRU/updatecon.git"
 REPO_DIR="updatecon"
 
 if [ ! -f "$(pwd)/docker-compose.yml" ]; then
-  log "Репозиторий не найден — клонируем в ./$REPO_DIR …"
   if ! command -v git >/dev/null 2>&1; then
     log "Устанавливаем git…"
     sudo apt-get update -qq && sudo apt-get install -y -qq git
   fi
-  git clone "$REPO_URL" "$REPO_DIR"
-  cd "$REPO_DIR"
+  if [ -d "$REPO_DIR/.git" ]; then
+    log "Директория $REPO_DIR уже существует — обновляем (git pull)…"
+    cd "$REPO_DIR"
+    git pull --ff-only
+  else
+    log "Клонируем репозиторий в ./$REPO_DIR …"
+    git clone "$REPO_URL" "$REPO_DIR"
+    cd "$REPO_DIR"
+  fi
 else
   log "Запуск из директории репозитория: $(pwd)"
 fi
