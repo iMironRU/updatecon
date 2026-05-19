@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-upd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-upd}
+      POSTGRES_DB: ${POSTGRES_DB:-upd}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-upd}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:-upd}@db:5432/${POSTGRES_DB:-upd}
+      PORT: 3000
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    command: ["node", "dist/db/server.js"]
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:-upd}@db:5432/${POSTGRES_DB:-upd}
+      ITS_LOGIN: ${ITS_LOGIN:-}
+      ITS_PASSWORD: ${ITS_PASSWORD:-}
+      # Optional dev replay instead of ITS:
+      LST_FILE: ${LST_FILE:-}
+      # Import schedule (cron). Default: every day at 04:00.
+      IMPORT_CRON: ${IMPORT_CRON:-0 4 * * *}
+      # Run one import immediately on container start (1 = yes).
+      IMPORT_ON_START: ${IMPORT_ON_START:-1}
+    volumes:
+      - ${LST_HOST_DIR:-./data}:/data:ro
+    command: ["node", "dist/db/worker.js"]
+
+volumes:
+  pgdata:

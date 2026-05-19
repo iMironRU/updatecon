@@ -1,0 +1,31 @@
+{
+  "name": "upd1c-chains",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp -r public dist/../public 2>/dev/null || true",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "drizzle-kit migrate",
+    "generate": "drizzle-kit generate",
+    "import:lst": "tsx src/db/import-lst.ts",
+    "server": "tsx src/db/server.ts",
+    "worker": "tsx src/db/worker.ts",
+    "dev": "tsx watch src/db/server.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^7.0.4",
+    "drizzle-orm": "^0.33.0",
+    "fastify": "^4.28.1",
+    "node-cron": "^3.0.3",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.6",
+    "drizzle-kit": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
