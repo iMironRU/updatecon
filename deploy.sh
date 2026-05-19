@@ -157,15 +157,29 @@ if [ -f "$SEED_FILE" ]; then
     RESTORE_SEED="${RESTORE_SEED:-Y}"
 
     if [[ "$RESTORE_SEED" =~ ^[Yy] ]]; then
-      log "Применяем миграции схемы (без импорта)…"
-      $DC run --rm \
-        -e IMPORT_ON_START=0 \
-        -e ITS_LOGIN="" \
-        -e ITS_PASSWORD="" \
-        worker node dist/db/worker.js &
-      WORKER_PID=$!
-      sleep 10
-      kill "$WORKER_PID" 2>/dev/null || true
+      log "Запускаем воркер для применения миграций…"
+      $DC up -d worker
+
+      log "Ждём создания таблиц (до 60 сек)…"
+      MIGRATED=0
+      for i in $(seq 1 30); do
+        READY=$($DC exec -T db psql -U upd -d upd -tAc \
+          "SELECT count(*) FROM information_schema.tables \
+           WHERE table_schema='public' AND table_name='configurations'" 2>/dev/null \
+          | tr -d '[:space:]' || echo 0)
+        if [ "$READY" = "1" ]; then
+          MIGRATED=1; break
+        fi
+        sleep 2
+      done
+
+      $DC stop worker
+
+      if [ "$MIGRATED" != "1" ]; then
+        err "Таблицы не появились за 60 сек — проверьте: $DC logs worker"
+        exit 1
+      fi
+      log "Миграции применены ✓"
 
       log "Восстанавливаем дамп…"
       zcat "$SEED_FILE" | $DC exec -T db psql -U upd -d upd -q
