@@ -56,10 +56,10 @@ DEL_DIR="${DEL_DIR:-n}"
 
 echo
 echo -e "${CYAN}  ┌─ Будет выполнено ──────────────────────────────┐${NC}"
-echo    "  │  • Остановить и удалить контейнеры             │"
-[[ "$DEL_DATA"   =~ ^[Yy] ]] && echo "  │  • ${RED}Удалить данные PostgreSQL (необратимо!)${NC}    │"
-[[ "$DEL_IMAGES" =~ ^[Yy] ]] && echo "  │  • Удалить Docker-образы                       │"
-[ -n "$DIR_TO_DELETE"       ] && echo "  │  • Удалить директорию проекта                  │"
+echo -e "  │  • Остановить и удалить контейнеры             │"
+[[ "$DEL_DATA"   =~ ^[Yy] ]] && echo -e "  │  • ${RED}Удалить данные PostgreSQL (необратимо!)${NC}    │"
+[[ "$DEL_IMAGES" =~ ^[Yy] ]] && echo -e "  │  • Удалить Docker-образы                       │"
+[ -n "$DIR_TO_DELETE"       ] && echo -e "  │  • Удалить директорию проекта                  │"
 echo -e "${CYAN}  └────────────────────────────────────────────────┘${NC}"
 echo
 read -rp "  Подтвердить удаление? [y/N]: " CONFIRM
@@ -96,6 +96,7 @@ fi
 
 if [ -n "$DIR_TO_DELETE" ]; then
   printf "  Удаляем директорию %s..." "$DIR_TO_DELETE"
+  cd /tmp  # уходим из директории перед удалением, иначе shell потеряет cwd
   rm -rf "$DIR_TO_DELETE" \
     && printf "\r  ${GREEN}✓${NC}  Директория удалена   \n" \
     || printf "\r  ${RED}✗${NC}  Не удалось удалить директорию\n"
