@@ -27,12 +27,18 @@ else
 fi
 
 # ── Находим директорию проекта ────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
-  PROJECT_DIR="$SCRIPT_DIR"
-else
-  PROJECT_DIR="$(pwd)"
-fi
+# Приоритет: рядом со скриптом → ~/updatecon → текущая директория (только если
+# там есть docker-compose.yml, иначе пустая строка — директория не удаляется).
+_find_project_dir() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd 2>/dev/null || true)"
+  if [ -f "${script_dir}/docker-compose.yml" ]; then echo "$script_dir"; return; fi
+  if [ -f "${HOME}/updatecon/docker-compose.yml" ]; then echo "${HOME}/updatecon"; return; fi
+  local cwd; cwd="$(pwd 2>/dev/null || true)"
+  if [ -n "$cwd" ] && [ -f "${cwd}/docker-compose.yml" ]; then echo "$cwd"; return; fi
+  echo ""
+}
+PROJECT_DIR="$(_find_project_dir)"
 
 echo
 echo -e "${RED}${BOLD}╔══════════════════════════════════════════════════╗${NC}"
@@ -50,9 +56,13 @@ read -rp "  Удалить Docker-образы (updatecon-web, updatecon-worker)
 DEL_IMAGES="${DEL_IMAGES:-n}"
 
 DIR_TO_DELETE=""
-read -rp "  Удалить директорию $PROJECT_DIR ? [y/N]: " DEL_DIR
-DEL_DIR="${DEL_DIR:-n}"
-[[ "$DEL_DIR" =~ ^[Yy] ]] && DIR_TO_DELETE="$PROJECT_DIR"
+if [ -n "$PROJECT_DIR" ]; then
+  read -rp "  Удалить директорию $PROJECT_DIR ? [y/N]: " DEL_DIR
+  DEL_DIR="${DEL_DIR:-n}"
+  [[ "$DEL_DIR" =~ ^[Yy] ]] && DIR_TO_DELETE="$PROJECT_DIR"
+else
+  warn "  Директория проекта не найдена — пропускаем этот пункт."
+fi
 
 echo
 echo -e "${CYAN}  ┌─ Будет выполнено ──────────────────────────────┐${NC}"
