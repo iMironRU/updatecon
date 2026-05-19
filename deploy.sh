@@ -54,6 +54,10 @@ if [ ! -f "$(pwd)/docker-compose.yml" ]; then
     cd "$REPO_DIR"
     git pull --ff-only
   else
+    if [ -d "$REPO_DIR" ]; then
+      warn "Директория $REPO_DIR существует но не является git-репозиторием (прерванная установка?) — удаляем и клонируем заново…"
+      rm -rf "$REPO_DIR"
+    fi
     log "Клонируем репозиторий в ./$REPO_DIR …"
     git clone "$REPO_URL" "$REPO_DIR"
     cd "$REPO_DIR"
