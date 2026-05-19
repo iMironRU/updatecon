@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — never commit real credentials
+.env
+
+# 1C update list files (can be large, not source code)
+data/*.lst
+data/*.zip
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local dev docker-compose override (exposes postgres port — not for prod)
+docker-compose.override.yml
+
+# Drizzle generated migrations are committed — don't ignore drizzle/
