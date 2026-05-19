@@ -61,7 +61,11 @@ export function getLstFromIts(
         host,
         path,
         method: "GET",
-        headers: { Authorization: auth, "Accept-Encoding": "identity" },
+        headers: {
+          Authorization: auth,
+          "Accept-Encoding": "identity",
+          "User-Agent": "1C+Enterprise/8.3",
+        },
         timeout: timeoutMs,
       },
       (res) => {
