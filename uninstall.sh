@@ -113,8 +113,4 @@ fi
 
 echo
 echo -e "${GREEN}${BOLD}  Апдейкон удалён.${NC}"
-if ! [[ "$DEL_DATA" =~ ^[Yy] ]]; then
-  warn "Данные PostgreSQL сохранены в Docker volume 'updatecon_pgdata'."
-  warn "Удалить вручную: docker volume rm updatecon_pgdata"
-fi
 echo
