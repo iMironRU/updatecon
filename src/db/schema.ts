@@ -22,6 +22,7 @@ import {
   uniqueIndex,
   index,
   bigserial,
+  date,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -34,12 +35,16 @@ export const configurations = pgTable(
     id: bigserial("id", { mode: "number" }).primaryKey(),
     name: text("name").notNull(),
     vendor: text("vendor").notNull().default(""),
+    // Populated by releases.1c.ru adapter (secondary source):
+    displayName: text("display_name"),           // "Бухгалтерия предприятия, редакция 3.0"
+    releasesHref: text("releases_href"),          // "/project/Accounting30"
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
     nameUq: uniqueIndex("configurations_name_uq").on(t.name),
+    releasesHrefUq: uniqueIndex("configurations_releases_href_uq").on(t.releasesHref),
   }),
 );
 
@@ -126,6 +131,36 @@ export const importRuns = pgTable(
   }),
 );
 
+/**
+ * Release metadata per version, populated by secondary sources.
+ * Primary source (lst) does not touch this table.
+ *
+ * `releaseDate`  — when 1C published this version.
+ * `minPlatform`  — minimum 1C:Enterprise platform version required.
+ * `source`       — which adapter wrote this row (e.g. "releases").
+ */
+export const versionMeta = pgTable(
+  "version_meta",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    configId: integer("config_id")
+      .notNull()
+      .references(() => configurations.id),
+    version: text("version").notNull(),
+    releaseDate: date("release_date"),
+    minPlatform: text("min_platform"),
+    source: text("source").notNull().default("releases"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    versionUq: uniqueIndex("version_meta_uq").on(t.configId, t.version),
+    configIdx: index("version_meta_config_idx").on(t.configId),
+  }),
+);
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
+export type VersionMeta = typeof versionMeta.$inferSelect;

@@ -9,6 +9,7 @@
     "migrate": "drizzle-kit migrate",
     "generate": "drizzle-kit generate",
     "import:lst": "tsx src/db/import-lst.ts",
+    "import:releases": "tsx src/releases/import-releases.ts",
     "server": "tsx src/db/server.ts",
     "worker": "tsx src/db/worker.ts",
     "dev": "tsx watch src/db/server.ts"
