@@ -11,25 +11,21 @@
  * cheap no-op.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { migrate as drizzleMigrate } from "drizzle-orm/node-postgres/migrator";
 import cron from "node-cron";
+import { db } from "./client.js";
 import { runImport } from "./import-lst.js";
 
-const pexec = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function migrate() {
   console.log("[worker] applying migrations…");
-  // drizzle-kit migrate reads drizzle.config.ts + ./drizzle folder.
-  await pexec("npx", ["drizzle-kit", "migrate"], {
-    env: process.env,
-  }).then(
-    ({ stdout }) => stdout && console.log(stdout.trim()),
-    (e) => {
-      console.error("[worker] migration failed:", e.stderr || e.message);
-      throw e;
-    },
-  );
+  // Uses drizzle-orm's built-in migrator — no drizzle-kit CLI needed at runtime.
+  await drizzleMigrate(db, {
+    migrationsFolder: join(__dirname, "../../drizzle"),
+  });
   console.log("[worker] migrations done.");
 }
 
