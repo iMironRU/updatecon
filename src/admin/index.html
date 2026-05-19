@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Апдейкон — Администратор</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
+  --border: #30363d; --text: #e6edf3; --muted: #8b949e; --light: #484f58;
+  --blue: #58a6ff; --green: #3fb950; --red: #f85149;
+  --orange: #d29922; --purple: #bc8cff;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Layout */
+.header { background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 24px; height: 52px; display: flex; align-items: center; gap: 16px; }
+.header-logo { font-weight: 700; font-size: 16px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.header-logo-badge { background: var(--orange); color: #000; font-size: 10px;
+  font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: .5px; }
+.header-nav { display: flex; gap: 4px; margin-left: 8px; }
+.nav-btn { padding: 5px 12px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  color: var(--muted); background: none; border: none; font-family: inherit;
+  transition: color .15s, background .15s; }
+.nav-btn:hover, .nav-btn.active { color: var(--text); background: var(--surface2); }
+.header-user { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
+
+.main { max-width: 900px; margin: 0 auto; padding: 28px 24px; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+.card-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; }
+.card-title { font-size: 14px; font-weight: 600; }
+.card-body { padding: 18px; }
+
+/* Status grid */
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.stat { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 4px; }
+.stat-value { font-size: 20px; font-weight: 700; font-family: var(--mono); }
+.stat-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* Table */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; color: var(--muted); font-weight: 600;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface2); }
+.mono { font-family: var(--mono); font-size: 12px; }
+
+/* Badges */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.badge-ok { background: rgba(63,185,80,.15); color: var(--green); }
+.badge-skipped { background: rgba(88,166,255,.12); color: var(--blue); }
+.badge-error { background: rgba(248,81,73,.15); color: var(--red); }
+.badge-running { background: rgba(210,153,34,.15); color: var(--orange); }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px;
+  border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer;
+  border: 1px solid; transition: all .15s; font-family: inherit; }
+.btn-primary { background: #238636; color: #fff; border-color: rgba(240,246,252,.1); }
+.btn-primary:hover:not(:disabled) { background: #2ea043; }
+.btn-danger { background: rgba(248,81,73,.1); color: var(--red); border-color: var(--red); }
+.btn-danger:hover:not(:disabled) { background: rgba(248,81,73,.2); }
+.btn-ghost { background: var(--surface2); color: var(--text); border-color: var(--border); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface); border-color: var(--muted); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Log output */
+.log-area { background: #000; border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px; font-family: var(--mono); font-size: 12px; color: #7ee787;
+  max-height: 240px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  min-height: 80px; }
+.log-area:empty::before { content: 'Вывод появится здесь...'; color: var(--light); }
+
+/* Settings form */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+.field input { width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 12px; color: var(--text); font-size: 13px;
+  font-family: var(--mono); outline: none; transition: border-color .15s; }
+.field input:focus { border-color: var(--blue); }
+.field input[readonly] { color: var(--muted); cursor: default; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hint { font-size: 11px; color: var(--light); margin-top: 4px; }
+.alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; display: flex; align-items: flex-start; gap: 8px; }
+.alert-warn { background: rgba(210,153,34,.1); border: 1px solid rgba(210,153,34,.3); color: var(--orange); }
+.alert-info { background: rgba(88,166,255,.08); border: 1px solid rgba(88,166,255,.2); color: var(--blue); }
+
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--border);
+  border-top-color: var(--blue); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-logo">
+    <span>Апдейкон</span>
+    <span class="header-logo-badge">ADMIN</span>
+  </div>
+  <nav class="header-nav">
+    <button class="nav-btn active" onclick="show('dash')">Дашборд</button>
+    <button class="nav-btn" onclick="show('logs')">Логи</button>
+    <button class="nav-btn" onclick="show('import')">Импорт</button>
+    <button class="nav-btn" onclick="show('settings')">Настройки</button>
+  </nav>
+  <div class="header-user">
+    <span class="dot"></span>
+    <span id="hdr-user">admin</span>
+    &nbsp;·&nbsp;
+    <a href="#" onclick="logout()">Выйти</a>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- DASHBOARD -->
+  <div id="page-dash" class="page active">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Состояние системы</span></div>
+      <div class="card-body">
+        <div class="status-grid">
+          <div class="stat">
+            <div class="stat-label">Конфигурации</div>
+            <div class="stat-value" id="s-configs">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Рёбра обновлений</div>
+            <div class="stat-value" id="s-edges">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Версий</div>
+            <div class="stat-value" id="s-versions">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Последний импорт</div>
+            <div class="stat-value" id="s-date" style="font-size:15px">—</div>
+            <div class="stat-sub" id="s-status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Расписание и конфигурация</span></div>
+      <div class="card-body">
+        <div class="field-row">
+          <div class="field">
+            <label>IMPORT_CRON</label>
+            <input id="s-cron" readonly>
+            <div class="hint">Задаётся в .env — применяется без перезапуска воркера.</div>
+          </div>
+          <div class="field">
+            <label>ITS_LOGIN</label>
+            <input id="s-its" readonly>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Последние 5 запусков</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>#</th><th>Источник</th><th>Статус</th><th>Добавлено</th><th>Без изменений</th><th>Время</th>
+          </tr></thead>
+          <tbody id="dash-runs"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGS -->
+  <div id="page-logs" class="page">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">История запусков</span>
+        <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="loadLogs()">↻ Обновить</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>#</th><th>Источник</th><th>Статус</th><th>SHA256</th>
+            <th>Размер</th><th>Конфигов</th><th>Добавлено</th><th>Без изм.</th><th>Начало</th><th>Длительность</th>
+          </tr></thead>
+          <tbody id="logs-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPORT -->
+  <div id="page-import" class="page">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Ручной запуск импорта</span></div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:18px">
+          Импорт использует двухуровневую дельту по хэшу — повторный запуск на неизменённом файле безопасен.
+        </div>
+
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+          <button class="btn btn-primary" id="btn-import-lst" onclick="triggerImport('lst')">
+            ▶ Запустить импорт LST
+          </button>
+          <button class="btn btn-ghost" id="btn-import-rel" onclick="triggerImport('releases')">
+            ▶ Импорт releases.1c.ru
+          </button>
+        </div>
+
+        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">Статус / вывод:</div>
+        <div class="log-area" id="import-log"></div>
+        <div id="import-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="page-settings" class="page">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Конфигурация сервера</span></div>
+      <div class="card-body">
+        <div class="alert alert-warn" style="margin-bottom:18px">
+          Параметры задаются через переменные окружения (.env) и применяются при перезапуске сервиса.
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>ADMIN_LOGIN</label>
+            <input id="cfg-admin-login" readonly>
+          </div>
+          <div class="field">
+            <label>ADMIN_PASSWORD</label>
+            <input value="••••••••" readonly>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>ITS_LOGIN</label>
+            <input id="cfg-its-login" readonly>
+          </div>
+          <div class="field">
+            <label>ITS_PASSWORD</label>
+            <input value="••••••••" readonly>
+          </div>
+        </div>
+        <div class="field">
+          <label>IMPORT_CRON <span style="font-weight:400;text-transform:none">(cron-выражение)</span></label>
+          <input id="cfg-cron" readonly>
+          <div class="hint">0 4 * * * — каждый день в 4:00. Изменяется в .env на сервере.</div>
+        </div>
+        <div class="field">
+          <label>DATABASE_URL</label>
+          <input id="cfg-db" readonly>
+        </div>
+        <div class="field">
+          <label>PORT</label>
+          <input id="cfg-port" readonly>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let currentPage = 'dash';
+
+function show(page) {
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelectorAll('.nav-btn')[['dash','logs','import','settings'].indexOf(page)].classList.add('active');
+  currentPage = page;
+  if (page === 'dash') loadDash();
+  if (page === 'logs') loadLogs();
+  if (page === 'settings') loadSettings();
+}
+
+function logout() {
+  // Re-authenticate with wrong creds to clear Basic Auth session.
+  // Most browsers forget credentials when a 401 is received on a new fetch.
+  fetch(location.origin + '/admin/api/status', {
+    headers: { Authorization: 'Basic ' + btoa('logout:logout') }
+  }).catch(() => {});
+  setTimeout(() => { window.location.reload(); }, 100);
+}
+
+async function apiFetch(path) {
+  const r = await fetch(location.origin + path, { credentials: 'include' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('ru', { day:'2-digit', month:'2-digit', year:'numeric',
+    hour:'2-digit', minute:'2-digit' });
+}
+function fmtDur(start, end) {
+  if (!start || !end) return '—';
+  const ms = new Date(end) - new Date(start);
+  if (ms < 2000) return ms + ' мс';
+  if (ms < 60000) return Math.round(ms/1000) + ' с';
+  return Math.round(ms/60000) + ' мин';
+}
+function fmtBytes(b) {
+  if (!b) return '—';
+  if (b < 1024) return b + ' Б';
+  if (b < 1024*1024) return Math.round(b/1024) + ' КБ';
+  return (b/1024/1024).toFixed(1) + ' МБ';
+}
+function badge(status) {
+  const map = { ok: 'badge-ok', skipped: 'badge-skipped', error: 'badge-error', running: 'badge-running' };
+  const labels = { ok: 'ok', skipped: 'пропущен', error: 'ошибка', running: '...' };
+  return `<span class="badge ${map[status] || 'badge-skipped'}">${labels[status] || status}</span>`;
+}
+function runRow(r, short) {
+  if (short) return `<tr>
+    <td class="mono">${r.id}</td>
+    <td>${r.source}</td>
+    <td>${badge(r.status)}</td>
+    <td class="mono">${(r.edgesUpserted||0).toLocaleString('ru')}</td>
+    <td class="mono" style="color:var(--muted)">${(r.edgesUnchanged||0).toLocaleString('ru')}</td>
+    <td style="color:var(--muted)">${fmtDate(r.startedAt)}</td>
+  </tr>`;
+  return `<tr>
+    <td class="mono">${r.id}</td>
+    <td>${r.source}</td>
+    <td>${badge(r.status)}</td>
+    <td class="mono" style="color:var(--muted);font-size:11px">${(r.fileSha256||'').slice(0,12)}…</td>
+    <td>${fmtBytes(r.fileBytes)}</td>
+    <td class="mono">${(r.configsFound||0).toLocaleString('ru')}</td>
+    <td class="mono">${(r.edgesUpserted||0).toLocaleString('ru')}</td>
+    <td class="mono" style="color:var(--muted)">${(r.edgesUnchanged||0).toLocaleString('ru')}</td>
+    <td style="color:var(--muted)">${fmtDate(r.startedAt)}</td>
+    <td style="color:var(--muted)">${fmtDur(r.startedAt, r.finishedAt)}</td>
+  </tr>`;
+}
+
+async function loadDash() {
+  try {
+    const [status, stats] = await Promise.all([
+      apiFetch('/admin/api/status'),
+      apiFetch('/api/stats'),
+    ]);
+    document.getElementById('s-configs').textContent = (stats.configurations||0).toLocaleString('ru');
+    document.getElementById('s-edges').textContent = (stats.edges||0).toLocaleString('ru');
+    document.getElementById('s-versions').textContent = (stats.versions||0).toLocaleString('ru');
+    const lr = stats.lastRun;
+    document.getElementById('s-date').textContent = lr ? fmtDate(lr.finishedAt) : '—';
+    document.getElementById('s-status').innerHTML = lr ? badge(lr.status) + ' ' + (lr.message||'').slice(0,60) : '';
+    document.getElementById('s-cron').value = status.cron;
+    document.getElementById('s-its').value = status.itsLogin;
+    document.getElementById('hdr-user').textContent = status.adminLogin;
+
+    const runs = status.recentRuns || [];
+    document.getElementById('dash-runs').innerHTML = runs.map(r => runRow(r, true)).join('') ||
+      '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Нет запусков</td></tr>';
+  } catch(e) {
+    console.error('loadDash error:', e);
+  }
+}
+
+async function loadLogs() {
+  try {
+    const data = await apiFetch('/admin/api/logs');
+    document.getElementById('logs-tbody').innerHTML = (data.runs || []).map(r => runRow(r, false)).join('') ||
+      '<tr><td colspan="10" style="color:var(--muted);text-align:center;padding:20px">Нет записей</td></tr>';
+  } catch(e) {
+    console.error('loadLogs error:', e);
+  }
+}
+
+async function loadSettings() {
+  try {
+    const s = await apiFetch('/admin/api/status');
+    document.getElementById('cfg-admin-login').value = s.adminLogin;
+    document.getElementById('cfg-its-login').value = s.itsLogin;
+    document.getElementById('cfg-cron').value = s.cron;
+    document.getElementById('cfg-db').value = s.dbUrl;
+    document.getElementById('cfg-port').value = s.port;
+  } catch(e) {}
+}
+
+let importPolling = null;
+async function triggerImport(source) {
+  const btnId = source === 'lst' ? 'btn-import-lst' : 'btn-import-rel';
+  const btn = document.getElementById(btnId);
+  const log = document.getElementById('import-log');
+  const statusEl = document.getElementById('import-status');
+
+  btn.disabled = true;
+  log.textContent = `[${new Date().toLocaleTimeString('ru')}] Запуск импорта (${source})...\n`;
+  statusEl.innerHTML = '<span class="spinner"></span> Импорт выполняется...';
+
+  try {
+    const r = await fetch(location.origin + '/admin/api/import/' + source, { method: 'POST', credentials: 'include' });
+    const data = await r.json();
+    if (r.status === 409) {
+      log.textContent += '⚠ Импорт уже выполняется, подождите.\n';
+      statusEl.textContent = '';
+      btn.disabled = false;
+      return;
+    }
+    if (!r.ok) {
+      log.textContent += '✗ Ошибка: ' + (data.error || r.status) + '\n';
+      statusEl.textContent = '';
+      btn.disabled = false;
+      return;
+    }
+    log.textContent += `[${new Date().toLocaleTimeString('ru')}] Запрос принят, ожидаем завершения...\n`;
+
+    // Poll for completion
+    if (importPolling) clearInterval(importPolling);
+    const startRunId = data.lastRunId || 0;
+    importPolling = setInterval(async () => {
+      try {
+        const status = await apiFetch('/admin/api/import/status');
+        if (!status.running) {
+          clearInterval(importPolling);
+          importPolling = null;
+          btn.disabled = false;
+          const run = status.lastRun;
+          if (run && run.id > startRunId) {
+            log.textContent += `[${new Date().toLocaleTimeString('ru')}] Готово.\n`;
+            log.textContent += `  Статус:      ${run.status}\n`;
+            log.textContent += `  Конфигов:    ${(run.configsFound||0).toLocaleString('ru')}\n`;
+            log.textContent += `  Добавлено:   ${(run.edgesUpserted||0).toLocaleString('ru')}\n`;
+            log.textContent += `  Без изменений: ${(run.edgesUnchanged||0).toLocaleString('ru')}\n`;
+            log.textContent += `  Сообщение:   ${run.message||''}\n`;
+            statusEl.innerHTML = badge(run.status) + ' Завершено за ' + fmtDur(run.startedAt, run.finishedAt);
+          } else {
+            log.textContent += 'Завершено (нет новых данных)\n';
+            statusEl.textContent = 'Завершено';
+          }
+          log.scrollTop = log.scrollHeight;
+        } else {
+          log.textContent += '.';
+          log.scrollTop = log.scrollHeight;
+        }
+      } catch(e) {}
+    }, 3000);
+  } catch(e) {
+    log.textContent += '✗ Сетевая ошибка\n';
+    statusEl.textContent = '';
+    btn.disabled = false;
+  }
+}
+
+// Init
+loadDash();
+</script>
+</body>
+</html>

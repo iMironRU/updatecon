@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp -r public dist/../public 2>/dev/null || true",
+    "build": "tsc -p tsconfig.json && cp -r public dist/../public 2>/dev/null || true && cp -r src/admin dist/admin 2>/dev/null || true",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "drizzle-kit migrate",
     "generate": "drizzle-kit generate",
@@ -15,6 +15,7 @@
     "dev": "tsx watch src/db/server.ts"
   },
   "dependencies": {
+    "@fastify/basic-auth": "^5.1.1",
     "@fastify/static": "^7.0.4",
     "drizzle-orm": "^0.33.0",
     "fastify": "^4.28.1",

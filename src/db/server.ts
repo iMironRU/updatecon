@@ -1,7 +1,7 @@
 /**
  * server.ts — Fastify app: API + static web UI in one service.
  *
- * Endpoints:
+ * Public endpoints:
  *   GET  /api/health
  *   GET  /api/configs?q=<substr>           -> matching configurations (enriched)
  *   GET  /api/configs?version=<v>          -> configs that contain this version
@@ -9,10 +9,20 @@
  *   GET  /api/chain?config=&from=&to=      -> computed update chain
  *   GET  /api/stats                        -> import/run summary
  *   GET  /*                                -> static UI (public/)
+ *
+ * Admin endpoints (Basic Auth via ADMIN_LOGIN / ADMIN_PASSWORD):
+ *   GET  /admin                            -> admin UI
+ *   GET  /admin/api/status                 -> cron, its_login, recent runs
+ *   GET  /admin/api/logs                   -> last 50 import runs
+ *   GET  /admin/api/import/status          -> is import running + last run
+ *   POST /admin/api/import/lst             -> trigger LST import
+ *   POST /admin/api/import/releases        -> trigger releases import
  */
 
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyBasicAuth from "@fastify/basic-auth";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { sql, eq, desc } from "drizzle-orm";
@@ -20,12 +30,158 @@ import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns } from "./schema.js";
 import { findChain } from "./chain.js";
 import { parseVersion } from "../parser/version.js";
+import { runImport } from "./import-lst.js";
+import { runReleasesImport } from "../releases/import-releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function buildServer() {
+// In-memory lock: only one import per source at a time.
+const importRunning: Record<string, boolean> = {};
+
+async function safeAdminImport(source: "lst" | "releases") {
+  if (importRunning[source]) return;
+  importRunning[source] = true;
+  try {
+    if (source === "lst") {
+      await runImport();
+    } else {
+      await runReleasesImport();
+    }
+  } catch (e) {
+    console.error(`[admin] import (${source}) error:`, (e as Error).message);
+  } finally {
+    importRunning[source] = false;
+  }
+}
+
+export async function buildServer() {
   const app = Fastify({ logger: true });
 
+  // ── Admin Basic Auth ──────────────────────────────────────────────────────
+  const adminLogin = process.env.ADMIN_LOGIN ?? "admin";
+  const adminPassword = process.env.ADMIN_PASSWORD ?? "admin";
+
+  await app.register(fastifyBasicAuth, {
+    validate(username, password, _req, _reply, done) {
+      if (username === adminLogin && password === adminPassword) {
+        done();
+      } else {
+        done(new Error("Wrong credentials"));
+      }
+    },
+    authenticate: { realm: "Updatcon Admin" },
+  });
+
+  // ── Admin HTML ────────────────────────────────────────────────────────────
+  const adminHtml = readFileSync(
+    join(__dirname, "../admin/index.html"),
+    "utf-8",
+  );
+
+  app.get(
+    "/admin",
+    { onRequest: app.basicAuth },
+    async (_req, reply) => {
+      return reply.type("text/html").send(adminHtml);
+    },
+  );
+
+  // ── Admin API ─────────────────────────────────────────────────────────────
+  app.get("/admin/api/status", { onRequest: app.basicAuth }, async () => {
+    const recentRuns = await db
+      .select()
+      .from(importRuns)
+      .orderBy(desc(importRuns.id))
+      .limit(5);
+
+    const itsLogin = process.env.ITS_LOGIN
+      ? process.env.ITS_LOGIN.slice(0, 3) + "•".repeat(Math.max(0, process.env.ITS_LOGIN.length - 3))
+      : "(не задан)";
+
+    const dbUrl = process.env.DATABASE_URL
+      ? process.env.DATABASE_URL.replace(/:([^:@]+)@/, ":••••@")
+      : "(не задан)";
+
+    return {
+      cron: process.env.IMPORT_CRON ?? "0 4 * * *",
+      itsLogin,
+      adminLogin,
+      dbUrl,
+      port: process.env.PORT ?? "3000",
+      recentRuns,
+      importRunning,
+    };
+  });
+
+  app.get("/admin/api/logs", { onRequest: app.basicAuth }, async (req) => {
+    const limit = Math.min(Number((req.query as any).limit ?? 50), 200);
+    const runs = await db
+      .select()
+      .from(importRuns)
+      .orderBy(desc(importRuns.id))
+      .limit(limit);
+    return { runs };
+  });
+
+  app.get(
+    "/admin/api/import/status",
+    { onRequest: app.basicAuth },
+    async () => {
+      const lastRun =
+        (await db
+          .select()
+          .from(importRuns)
+          .orderBy(desc(importRuns.id))
+          .limit(1))[0] ?? null;
+      return { running: importRunning, lastRun };
+    },
+  );
+
+  app.post(
+    "/admin/api/import/lst",
+    { onRequest: app.basicAuth },
+    async (_req, reply) => {
+      if (importRunning["lst"]) {
+        return reply.status(409).send({ error: "LST import already running" });
+      }
+      const lastRun =
+        (await db
+          .select()
+          .from(importRuns)
+          .orderBy(desc(importRuns.id))
+          .limit(1))[0] ?? null;
+      // Fire and forget — client polls /admin/api/import/status
+      void safeAdminImport("lst");
+      return { started: true, lastRunId: lastRun?.id ?? 0 };
+    },
+  );
+
+  app.post(
+    "/admin/api/import/releases",
+    { onRequest: app.basicAuth },
+    async (_req, reply) => {
+      if (importRunning["releases"]) {
+        return reply
+          .status(409)
+          .send({ error: "Releases import already running" });
+      }
+      if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
+        return reply
+          .status(400)
+          .send({ error: "ITS_LOGIN / ITS_PASSWORD не заданы в .env" });
+      }
+      const lastRun =
+        (await db
+          .select()
+          .from(importRuns)
+          .orderBy(desc(importRuns.id))
+          .limit(1))[0] ?? null;
+      void safeAdminImport("releases");
+      return { started: true, lastRunId: lastRun?.id ?? 0 };
+    },
+  );
+
+  // ── Public static + API ───────────────────────────────────────────────────
   app.register(fastifyStatic, {
     root: join(__dirname, "..", "..", "public"),
     prefix: "/",
@@ -201,13 +357,15 @@ export function buildServer() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const app = buildServer();
   const port = Number(process.env.PORT ?? 3000);
-  app
-    .listen({ port, host: "0.0.0.0" })
-    .then(() => app.log.info(`listening on :${port}`))
+  buildServer()
+    .then((app) =>
+      app
+        .listen({ port, host: "0.0.0.0" })
+        .then(() => app.log.info(`listening on :${port}`)),
+    )
     .catch(async (e) => {
-      app.log.error(e);
+      console.error(e);
       await pool.end();
       process.exit(1);
     });
