@@ -12,7 +12,9 @@ RUN npm ci --omit=dev || npm install --omit=dev
 # ---- build (typescript -> js) ----
 FROM base AS build
 COPY package.json package-lock.json* ./
-RUN npm install
+# NODE_ENV=production (inherited from base) skips devDependencies — override it
+# so tsc and other build tools are available.
+RUN NODE_ENV=development npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY public ./public
