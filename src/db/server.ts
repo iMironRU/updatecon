@@ -3,11 +3,12 @@
  *
  * Endpoints:
  *   GET  /api/health
- *   GET  /api/configs?q=<substr>          -> matching configurations
- *   GET  /api/versions?config=<name>      -> known versions (sorted), grouped by edition
- *   GET  /api/chain?config=&from=&to=     -> computed update chain
- *   GET  /api/stats                       -> import/run summary
- *   GET  /*                               -> static UI (public/)
+ *   GET  /api/configs?q=<substr>           -> matching configurations (enriched)
+ *   GET  /api/configs?version=<v>          -> configs that contain this version
+ *   GET  /api/versions?config=<name>       -> known versions + version_meta
+ *   GET  /api/chain?config=&from=&to=      -> computed update chain
+ *   GET  /api/stats                        -> import/run summary
+ *   GET  /*                                -> static UI (public/)
  */
 
 import Fastify from "fastify";
@@ -34,20 +35,61 @@ export function buildServer() {
 
   app.get("/api/configs", async (req) => {
     const q = String((req.query as any).q ?? "").trim();
-    const rows = await db
-      .select({
-        name: configurations.name,
-        vendor: configurations.vendor,
-      })
-      .from(configurations)
-      .where(
-        q
-          ? sql`lower(${configurations.name}) like ${"%" + q.toLowerCase() + "%"}`
-          : sql`true`,
-      )
-      .orderBy(configurations.name)
-      .limit(50);
-    return rows;
+    const version = String((req.query as any).version ?? "").trim();
+
+    // By-version lookup: find configs that contain this version in their edges.
+    if (version) {
+      const rows = await db.execute(sql`
+        SELECT DISTINCT c.id, c.name, c.display_name, c.vendor, c.releases_href
+        FROM configurations c
+        JOIN update_edges ue ON ue.config_id = c.id
+        WHERE ue.to_version = ${version} OR ue.from_version = ${version}
+        ORDER BY c.name
+        LIMIT 20
+      `);
+      return (rows as any).rows ?? rows;
+    }
+
+    // Full catalog with enrichment from version_meta and edge counts.
+    const filter = q
+      ? sql`lower(c.name) like ${"%" + q.toLowerCase() + "%"}
+            OR lower(coalesce(c.display_name, '')) like ${"%" + q.toLowerCase() + "%"}`
+      : sql`true`;
+
+    const rows = await db.execute(sql`
+      SELECT
+        c.id, c.name, c.display_name, c.vendor, c.releases_href,
+        vm.version       AS latest_version,
+        vm.release_date  AS latest_date,
+        vm.min_platform  AS latest_platform,
+        COALESCE(vc.cnt, 0) AS version_count,
+        avgd.avg_days
+      FROM configurations c
+      LEFT JOIN LATERAL (
+        SELECT version, release_date, min_platform
+        FROM version_meta
+        WHERE config_id = c.id AND release_date IS NOT NULL
+        ORDER BY release_date DESC
+        LIMIT 1
+      ) vm ON true
+      LEFT JOIN LATERAL (
+        SELECT count(DISTINCT to_version)::int AS cnt
+        FROM update_edges WHERE config_id = c.id
+      ) vc ON true
+      LEFT JOIN LATERAL (
+        SELECT round(avg(diff))::int AS avg_days
+        FROM (
+          SELECT (release_date - lag(release_date) OVER (ORDER BY release_date)) AS diff
+          FROM version_meta
+          WHERE config_id = c.id AND release_date IS NOT NULL
+        ) t
+        WHERE diff > 0 AND diff < 365
+      ) avgd ON true
+      WHERE ${filter}
+      ORDER BY coalesce(c.display_name, c.name)
+      LIMIT 1000
+    `);
+    return (rows as any).rows ?? rows;
   });
 
   app.get("/api/versions", async (req) => {
@@ -88,11 +130,27 @@ export function buildServer() {
       arr.push(v);
       byEdition.set(ed, arr);
     }
+
+    // Fetch release_date + min_platform from version_meta.
+    const metaRows = await db.execute(sql`
+      SELECT version, release_date::text, min_platform
+      FROM version_meta
+      WHERE config_id = ${cfg[0].id}
+    `);
+    const meta: Record<string, { release_date: string | null; min_platform: string | null }> = {};
+    for (const r of (metaRows as any).rows ?? metaRows) {
+      meta[(r as any).version] = {
+        release_date: (r as any).release_date ?? null,
+        min_platform: (r as any).min_platform ?? null,
+      };
+    }
+
     return {
       versions: list,
       editions: [...byEdition.entries()]
         .sort((a, b) => a[0] - b[0])
         .map(([edition, versions]) => ({ edition, versions })),
+      meta,
     };
   });
 
@@ -120,23 +178,22 @@ export function buildServer() {
   });
 
   app.get("/api/stats", async () => {
-    const cfgCount = await db.execute(
-      sql`SELECT count(*)::int c FROM configurations`,
-    );
-    const edgeCount = await db.execute(
-      sql`SELECT count(*)::int c FROM update_edges`,
-    );
-    const lastRun = await db
-      .select()
-      .from(importRuns)
-      .orderBy(desc(importRuns.id))
-      .limit(1);
+    const [cfgCount, edgeCount, verCount, lastRun] = await Promise.all([
+      db.execute(sql`SELECT count(*)::int c FROM configurations`),
+      db.execute(sql`SELECT count(*)::int c FROM update_edges`),
+      db.execute(sql`SELECT count(DISTINCT to_version)::int c FROM update_edges`),
+      db.select().from(importRuns).orderBy(desc(importRuns.id)).limit(1),
+    ]);
     const cfgC = ((cfgCount as any).rows ?? cfgCount)[0]?.c ?? 0;
     const edgeC = ((edgeCount as any).rows ?? edgeCount)[0]?.c ?? 0;
+    const verC = ((verCount as any).rows ?? verCount)[0]?.c ?? 0;
+    const run = lastRun[0] ?? null;
     return {
       configurations: cfgC,
       edges: edgeC,
-      lastRun: lastRun[0] ?? null,
+      versions: verC,
+      last_updated: run?.finishedAt?.toISOString().slice(0, 10) ?? null,
+      lastRun: run,
     };
   });
 

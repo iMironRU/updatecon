@@ -1,178 +1,1368 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Калькулятор цепочек обновлений 1С</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Апдейкон — Навигатор обновлений 1С</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;900&family=Russo+One&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg:#0b0f14; --panel:#11171f; --panel-2:#0e131a; --line:#1f2935;
-    --ink:#d7e0ea; --ink-dim:#7d8da0; --accent:#3fd07f; --accent-dim:#1c6b42;
-    --warn:#e0a23f; --err:#e0533f; --mono:'JetBrains Mono','SFMono-Regular',ui-monospace,Menlo,Consolas,monospace;
-    --sans:'Inter Tight',-apple-system,Segoe UI,Roboto,sans-serif;
+:root {
+  --bg: #EEF1F8; --bg-header: rgba(238,241,248,0.9);
+  --surface: #FFFFFF; --surface2: #F5F7FC; --surface3: #EBEEf6;
+  --border: #DDE3EF; --border-strong: #C8D0E4;
+  --text: #171E33; --text-muted: #6472A0; --text-light: #9BA5C2;
+  --accent: #1355FF; --accent-h: #0D41D4; --accent-dim: #EEF2FF;
+  --orange: #F97316; --orange-dim: #FFF4ED;
+  --green: #059669; --green-dim: #ECFDF5;
+  --red: #DC2626; --red-dim: #FEF2F2;
+  --purple: #7C3AED; --purple-dim: #F5F3FF;
+  --yellow: #D97706; --yellow-dim: #FFFBEB;
+  --shadow-xs: 0 1px 2px rgba(20,30,80,0.06);
+  --shadow-sm: 0 2px 6px rgba(20,30,80,0.08);
+  --shadow: 0 4px 16px rgba(20,30,80,0.08), 0 2px 4px rgba(20,30,80,0.04);
+  --shadow-lg: 0 12px 32px rgba(20,30,80,0.1), 0 4px 8px rgba(20,30,80,0.06);
+  --r-xl: 16px; --r: 12px; --r-sm: 8px; --r-xs: 5px;
+  --hdr: 64px; --mono: 'JetBrains Mono', monospace; --ease: cubic-bezier(.4,0,.2,1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0C1120; --bg-header: rgba(12,17,32,0.9);
+    --surface: #141B2D; --surface2: #1A2340; --surface3: #1F293A;
+    --border: #263048; --border-strong: #354268;
+    --text: #E4EAF8; --text-muted: #7C88B0; --text-light: #48566E;
+    --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545;
+    --orange: #FB923C; --orange-dim: #251500;
+    --green: #34D399; --green-dim: #022C1C;
+    --red: #F87171; --red-dim: #2A0F0F;
+    --purple: #A78BFA; --purple-dim: #1C1035;
+    --yellow: #FCD34D; --yellow-dim: #261E00;
+    --shadow-xs: 0 1px 2px rgba(0,0,0,0.3); --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
+    --shadow: 0 4px 16px rgba(0,0,0,0.3); --shadow-lg: 0 12px 32px rgba(0,0,0,0.4);
   }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    background:
-      radial-gradient(900px 500px at 85% -10%,rgba(63,208,127,.06),transparent 60%),
-      var(--bg);
-    color:var(--ink);font-family:var(--sans);
-    min-height:100vh;padding:32px 20px;-webkit-font-smoothing:antialiased;
-  }
-  .wrap{max-width:980px;margin:0 auto}
-  header{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:24px}
-  header h1{font-size:18px;font-weight:650;letter-spacing:-.02em}
-  header .tag{font-family:var(--mono);font-size:11px;color:var(--accent);border:1px solid var(--accent-dim);padding:2px 7px;border-radius:4px}
-  header .stat{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-dim)}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
-  .card.full{grid-column:1/-1}
-  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-dim);margin-bottom:7px}
-  input,select{
-    width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
-    font-family:var(--mono);font-size:13px;padding:9px 11px;border-radius:6px;outline:none;
-  }
-  input:focus,select:focus{border-color:var(--accent-dim)}
-  select{cursor:pointer}
-  optgroup{color:var(--ink-dim);font-style:normal}
-  option{color:var(--ink);background:var(--panel-2)}
-  .row{display:flex;gap:10px;margin-top:12px}
-  button{
-    background:var(--accent);color:#03130a;border:0;font-family:var(--sans);font-weight:650;
-    font-size:13px;padding:10px 20px;border-radius:6px;cursor:pointer;transition:filter .15s;
-  }
-  button:hover{filter:brightness(1.08)}
-  button:disabled{opacity:.4;cursor:not-allowed}
-  .hint{font-size:12px;color:var(--ink-dim);margin-top:8px;line-height:1.5}
-  #result{margin-top:18px}
-  .chain{border:1px solid var(--line);border-radius:8px;overflow:hidden}
-  .chain-head{display:flex;justify-content:space-between;align-items:center;background:var(--panel-2);padding:11px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px}
-  .badge{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid}
-  .badge.ok{color:var(--accent);border-color:var(--accent-dim)}
-  .badge.no{color:var(--warn);border-color:#5a4420}
-  .step{display:grid;grid-template-columns:34px 1fr;gap:14px;padding:13px 16px;border-bottom:1px solid var(--line);align-items:start}
-  .step:last-child{border-bottom:0}
-  .step .n{font-family:var(--mono);font-size:12px;color:var(--ink-dim);text-align:right;padding-top:2px}
-  .vmove{font-family:var(--mono);font-size:14px;letter-spacing:-.01em}
-  .vmove .v0{color:var(--ink-dim)}
-  .vmove .arr{color:var(--accent);margin:0 9px}
-  .vmove .v1{color:var(--ink);font-weight:600}
-  .cfu{font-family:var(--mono);font-size:11px;color:var(--ink-dim);margin-top:5px;word-break:break-all}
-  .msg{padding:16px;font-size:13px;line-height:1.6;color:var(--ink-dim);border:1px solid var(--line);border-radius:8px;background:var(--panel)}
-  .msg.warn{color:var(--warn);border-color:#5a4420}
-  footer{margin-top:30px;font-family:var(--mono);font-size:11px;color:var(--ink-dim);text-align:center}
+}
+[data-theme="dark"] {
+  --bg: #0C1120; --bg-header: rgba(12,17,32,0.9);
+  --surface: #141B2D; --surface2: #1A2340; --surface3: #1F293A;
+  --border: #263048; --border-strong: #354268;
+  --text: #E4EAF8; --text-muted: #7C88B0; --text-light: #48566E;
+  --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545;
+  --orange: #FB923C; --orange-dim: #251500;
+  --green: #34D399; --green-dim: #022C1C;
+  --red: #F87171; --red-dim: #2A0F0F;
+  --purple: #A78BFA; --purple-dim: #1C1035;
+  --yellow: #FCD34D; --yellow-dim: #261E00;
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.3); --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
+  --shadow: 0 4px 16px rgba(0,0,0,0.3); --shadow-lg: 0 12px 32px rgba(0,0,0,0.4);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body { font-family: 'Golos Text', sans-serif; background: var(--bg); color: var(--text);
+  line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column;
+  transition: background .2s, color .2s; }
+a { color: inherit; text-decoration: none; }
+button { cursor: pointer; font-family: inherit; border: none; background: none; }
+input, select, textarea { font-family: inherit; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 20px; width: 100%; }
+.main { flex: 1; padding-top: var(--hdr); }
+.header { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: var(--hdr);
+  background: var(--bg-header); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border); transition: background .2s, border-color .2s; }
+.header-inner { height: var(--hdr); display: flex; align-items: center; gap: 24px; }
+.logo { display: flex; align-items: center; gap: 10px; font-family: 'Russo One', sans-serif;
+  font-size: 20px; letter-spacing: -.3px; color: var(--text); flex-shrink: 0; }
+.logo-icon { width: 34px; height: 34px; background: var(--accent); border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.logo-icon svg { width: 18px; height: 18px; color: #fff; }
+.nav { display: flex; align-items: center; gap: 2px; margin-left: 12px; }
+.nav-link { padding: 6px 14px; border-radius: 8px; font-size: 14px; font-weight: 500;
+  color: var(--text-muted); transition: color .15s, background .15s; }
+.nav-link:hover, .nav-link.active { color: var(--text); background: var(--surface3); }
+.nav-link.active { color: var(--accent); }
+.header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.btn-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center;
+  justify-content: center; color: var(--text-muted); transition: color .15s, background .15s; }
+.btn-icon:hover { background: var(--surface3); color: var(--text); }
+.btn-icon svg { width: 18px; height: 18px; }
+.btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px;
+  border-radius: var(--r-sm); font-size: 14px; font-weight: 600;
+  transition: all .15s var(--ease); cursor: pointer; border: 1px solid transparent; }
+.btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-h); border-color: var(--accent-h); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(19,85,255,.3); }
+.btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { background: var(--surface2); border-color: var(--border-strong); }
+.btn-ghost { background: transparent; color: var(--text-muted); }
+.btn-ghost:hover { background: var(--surface2); color: var(--text); }
+.btn-danger { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+.btn-sm { padding: 6px 12px; font-size: 13px; border-radius: var(--r-xs); }
+.btn-lg { padding: 13px 28px; font-size: 16px; border-radius: var(--r); }
+.btn-full { width: 100%; justify-content: center; }
+.field { margin-bottom: 16px; }
+.label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted);
+  margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+.input, .select { width: 100%; padding: 10px 14px; border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); background: var(--surface); color: var(--text);
+  font-size: 15px; transition: border-color .15s, box-shadow .15s; outline: none; }
+.input:focus, .select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(19,85,255,.12); }
+.input-mono { font-family: var(--mono); font-size: 14px; }
+.input-lg { padding: 14px 18px; font-size: 17px; border-radius: var(--r); }
+.select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236472A0' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
+.hint { font-size: 12px; color: var(--text-light); margin-top: 4px; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
+  border-radius: 99px; font-size: 12px; font-weight: 600; letter-spacing: .2px; }
+.badge svg { width: 11px; height: 11px; }
+.badge-blue { background: var(--accent-dim); color: var(--accent); }
+.badge-orange { background: var(--orange-dim); color: var(--orange); }
+.badge-green { background: var(--green-dim); color: var(--green); }
+.badge-red { background: var(--red-dim); color: var(--red); }
+.badge-purple { background: var(--purple-dim); color: var(--purple); }
+.badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+.badge-gray { background: var(--surface3); color: var(--text-muted); }
+.card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); box-shadow: var(--shadow-xs); transition: box-shadow .2s, transform .2s, border-color .2s; }
+.card:hover { box-shadow: var(--shadow); }
+.card-clickable:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow); cursor: pointer; }
+.card-body { padding: 20px; }
+.card-header { padding: 20px 20px 0; }
+.card-footer { padding: 0 20px 20px; }
+.divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.search-wrap { position: relative; }
+.search-wrap svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; color: var(--text-light); pointer-events: none; }
+.search-input { padding-left: 44px !important; }
+.tabs { display: flex; gap: 2px; background: var(--surface2); padding: 3px;
+  border-radius: var(--r-sm); width: fit-content; }
+.tab { padding: 7px 16px; border-radius: var(--r-xs); font-size: 13px; font-weight: 600;
+  color: var(--text-muted); transition: all .15s; cursor: pointer; }
+.tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+.tab:hover:not(.active) { color: var(--text); }
+.chain-wrap { display: flex; flex-direction: column; gap: 0; }
+.chain-group { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); overflow: hidden; margin-bottom: 20px; }
+.chain-group-header { padding: 14px 20px; background: var(--surface2);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center;
+  justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.chain-group-title { font-weight: 700; font-size: 15px; }
+.chain-group-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.chain-step { display: flex; align-items: flex-start; gap: 0; padding: 0 20px; position: relative; }
+.chain-step:last-child .step-line { display: none; }
+.step-indicator { display: flex; flex-direction: column; align-items: center; flex-shrink: 0;
+  margin-right: 16px; padding-top: 18px; }
+.step-dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  border: 2px solid var(--border); background: var(--surface); color: var(--text-muted); }
+.step-dot.start { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+.step-dot.required { background: var(--orange-dim); border-color: var(--orange); color: var(--orange); }
+.step-dot.final { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.step-dot svg { width: 14px; height: 14px; }
+.step-line { width: 2px; flex: 1; min-height: 24px; background: var(--border);
+  margin: 4px 0; border-radius: 2px; }
+.step-content { flex: 1; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.chain-step:last-child .step-content { border-bottom: none; }
+.step-version { font-family: var(--mono); font-size: 15px; font-weight: 500; color: var(--text); }
+.step-date { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.step-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.step-size { font-size: 13px; color: var(--text-muted); }
+.step-platform { font-family: var(--mono); font-size: 11px; padding: 2px 7px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-muted); }
+.step-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.step-note { font-size: 12px; color: var(--orange); background: var(--orange-dim);
+  padding: 4px 10px; border-radius: var(--r-xs); margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; }
+.chain-summary { padding: 16px 20px; background: var(--surface2);
+  border-top: 1px solid var(--border); display: flex; align-items: center; gap: 16px;
+  flex-wrap: wrap; justify-content: space-between; }
+.chain-stat { text-align: center; }
+.chain-stat-val { font-size: 22px; font-weight: 800; color: var(--accent); }
+.chain-stat-lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
+.chain-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.config-card { display: flex; flex-direction: column; }
+.config-card-body { padding: 18px; flex: 1; display: flex; flex-direction: column; }
+.config-card-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.config-avatar { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center;
+  justify-content: center; font-weight: 800; font-size: 13px; flex-shrink: 0;
+  font-family: var(--mono); letter-spacing: -1px; }
+.config-avatar.std { background: var(--accent-dim); color: var(--accent); }
+.config-avatar.partner { background: var(--purple-dim); color: var(--purple); }
+.config-avatar.industry { background: var(--green-dim); color: var(--green); }
+.config-card-name { font-size: 15px; font-weight: 700; line-height: 1.3; }
+.config-card-short { font-size: 12px; color: var(--text-muted); margin-top: 2px; font-family: var(--mono); }
+.config-card-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.config-card-desc { font-size: 13px; color: var(--text-muted); line-height: 1.55; flex: 1;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.config-card-footer { padding: 12px 18px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.config-card-version { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--text); }
+.config-card-date { font-size: 12px; color: var(--text-muted); }
+.config-card-platform { font-size: 11px; font-family: var(--mono); color: var(--text-light); }
+.config-detail-header { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 24px; margin-bottom: 20px; display: flex;
+  align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+.config-detail-avatar { width: 60px; height: 60px; border-radius: 14px; display: flex;
+  align-items: center; justify-content: center; font-weight: 800; font-size: 16px;
+  flex-shrink: 0; font-family: var(--mono); letter-spacing: -1px; }
+.config-detail-info { flex: 1; min-width: 0; }
+.config-detail-name { font-size: 24px; font-weight: 800; line-height: 1.2; }
+.config-detail-sub { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
+.config-detail-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.config-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.config-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.meta-item-label { font-size: 11px; color: var(--text-light); text-transform: uppercase; letter-spacing: .5px; }
+.meta-item-value { font-size: 14px; font-weight: 600; margin-top: 2px; }
+.meta-item-value.mono { font-family: var(--mono); font-size: 13px; }
+.version-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.version-list-header { padding: 14px 18px; background: var(--surface2);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center;
+  justify-content: space-between; gap: 8px; }
+.version-list-title { font-size: 14px; font-weight: 700; }
+.version-item { border-bottom: 1px solid var(--border); transition: background .1s; }
+.version-item:last-child { border-bottom: none; }
+.version-item-head { padding: 14px 18px; display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.version-item-head:hover { background: var(--surface2); }
+.version-num { font-family: var(--mono); font-size: 14px; font-weight: 500; min-width: 120px; }
+.version-date { font-size: 13px; color: var(--text-muted); }
+.version-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.version-size { font-size: 12px; color: var(--text-muted); margin-left: 8px; }
+.version-chevron { width: 16px; height: 16px; color: var(--text-light); transition: transform .2s; flex-shrink: 0; }
+.version-chevron.open { transform: rotate(90deg); }
+.version-body { padding: 0 18px 14px; display: none; }
+.version-body.open { display: block; }
+.patches-title { font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px; }
+.patch-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px; }
+.patch-item:last-child { border-bottom: none; }
+.version-show-more { text-align: center; padding: 14px; border-top: 1px solid var(--border); }
+.hero { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: 32px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
+.hero-title { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
+.hero-sub { color: var(--text-muted); margin-bottom: 24px; font-size: 15px; }
+.chain-builder { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+.suggestion-chip { padding: 4px 12px; border: 1px solid var(--border); border-radius: 99px;
+  font-size: 12px; font-family: var(--mono); cursor: pointer; transition: all .15s;
+  color: var(--text-muted); background: var(--surface2); }
+.suggestion-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.matched-configs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.matched-config-item { padding: 6px 14px; background: var(--surface2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); cursor: pointer; font-size: 13px; font-weight: 600;
+  transition: all .15s; display: flex; align-items: center; gap: 6px; }
+.matched-config-item:hover, .matched-config-item.selected { border-color: var(--accent);
+  background: var(--accent-dim); color: var(--accent); }
+.stats-banner { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-h) 100%);
+  border-radius: var(--r-xl); padding: 24px 28px; color: white; margin-bottom: 24px;
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.stats-banner-title { font-size: 14px; opacity: .85; font-weight: 500; }
+.stats-banner-grid { display: flex; gap: 28px; flex-wrap: wrap; }
+.stats-banner-item .val { font-size: 28px; font-weight: 800; font-family: var(--mono); }
+.stats-banner-item .lbl { font-size: 12px; opacity: .75; text-transform: uppercase; letter-spacing: .4px; }
+.stats-banner-action { margin-left: auto; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
+.stat-card-val { font-size: 32px; font-weight: 800; color: var(--accent); font-family: var(--mono); }
+.stat-card-lbl { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.freq-table { width: 100%; border-collapse: collapse; }
+.freq-table th { text-align: left; padding: 10px 12px; font-size: 12px; font-weight: 600;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px;
+  border-bottom: 1px solid var(--border); }
+.freq-table td { padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.freq-table tr:last-child td { border-bottom: none; }
+.freq-bar-wrap { display: flex; align-items: center; gap: 10px; }
+.freq-bar { height: 6px; border-radius: 3px; background: var(--accent); min-width: 4px; }
+.settings-section { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 24px; margin-bottom: 20px; }
+.settings-section-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.settings-section-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+.alert { display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--r-sm);
+  font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+.alert svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
+.alert-warning { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
+.alert-info { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
+.theme-opts { display: flex; gap: 10px; flex-wrap: wrap; }
+.theme-opt { padding: 10px 18px; border: 2px solid var(--border); border-radius: var(--r-sm);
+  cursor: pointer; font-size: 14px; font-weight: 600; transition: all .15s; display: flex;
+  align-items: center; gap: 8px; color: var(--text-muted); }
+.theme-opt:hover { border-color: var(--border-strong); color: var(--text); }
+.theme-opt.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.theme-opt svg { width: 16px; height: 16px; }
+.catalog-layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; align-items: start; }
+.filters-panel { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 18px; position: sticky; top: calc(var(--hdr) + 16px); }
+.filters-title { font-size: 13px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--text-muted); margin-bottom: 16px; display: flex;
+  align-items: center; justify-content: space-between; }
+.filter-group { margin-bottom: 18px; }
+.filter-group-label { font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px; }
+.filter-opt { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer;
+  font-size: 14px; color: var(--text-muted); transition: color .15s; }
+.filter-opt:hover { color: var(--text); }
+.filter-opt input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.filter-opt-count { margin-left: auto; font-size: 11px; background: var(--surface3);
+  color: var(--text-light); padding: 1px 7px; border-radius: 99px; }
+.catalog-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.catalog-count { font-size: 13px; color: var(--text-muted); }
+.sort-select { min-width: 180px; }
+.empty { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+.empty svg { width: 48px; height: 48px; opacity: .3; margin-bottom: 12px; }
+.empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.empty-sub { font-size: 14px; }
+.page-head { padding: 28px 0 20px; display: flex; align-items: center;
+  gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.page-title { font-size: 22px; font-weight: 800; }
+.breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 13px;
+  color: var(--text-muted); margin-bottom: 6px; }
+.breadcrumb a { color: var(--text-muted); }
+.breadcrumb a:hover { color: var(--accent); }
+.breadcrumb svg { width: 12px; height: 12px; }
+#toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+  background: var(--text); color: var(--bg); padding: 10px 20px; border-radius: 99px;
+  font-size: 14px; font-weight: 500; z-index: 9999; transition: transform .25s var(--ease);
+  white-space: nowrap; box-shadow: var(--shadow-lg); pointer-events: none; }
+#toast.show { transform: translateX(-50%) translateY(0); }
+.footer { border-top: 1px solid var(--border); padding: 20px 0; margin-top: 48px; background: var(--surface); }
+.footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.footer-brand { font-size: 13px; color: var(--text-muted); }
+.footer-brand strong { color: var(--text); font-family: 'Russo One', sans-serif; font-size: 14px; }
+.footer-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.made-in-russia { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.russia-flag { display: flex; flex-direction: column; width: 18px; height: 13px; border-radius: 2px; overflow: hidden; border: 1px solid var(--border); }
+.russia-flag span { flex: 1; display: block; }
+.footer-link { font-size: 12px; color: var(--text-muted); transition: color .15s; }
+.footer-link:hover { color: var(--accent); }
+.footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
+@media (max-width: 900px) {
+  .catalog-layout { grid-template-columns: 1fr; }
+  .filters-panel { position: static; }
+  .chain-builder { grid-template-columns: 1fr 1fr; }
+  .chain-builder .btn-lg { grid-column: 1/-1; }
+}
+@media (max-width: 640px) {
+  .hero { padding: 20px; } .hero-title { font-size: 20px; }
+  .chain-builder { grid-template-columns: 1fr; }
+  .nav { display: none; }
+  .config-detail-header { flex-direction: column; }
+  .config-detail-actions { width: 100%; }
+  .stats-banner { flex-direction: column; align-items: flex-start; }
+  .stats-banner-action { margin-left: 0; }
+  .catalog-grid { grid-template-columns: 1fr; }
+  .chain-summary { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 480px) { .wrap { padding: 0 12px; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.fade-up { animation: fadeUp .3s var(--ease) both; }
+.fade-up-1 { animation-delay: .05s; } .fade-up-2 { animation-delay: .1s; }
+.fade-up-3 { animation-delay: .15s; } .fade-up-4 { animation-delay: .2s; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>Калькулятор цепочек обновлений</h1>
-    <span class="tag">1С · v8cscdsc.lst</span>
-    <span class="stat" id="stat">…</span>
-  </header>
 
-  <div class="grid">
-    <div class="card full">
-      <label for="cfg">Конфигурация</label>
-      <input id="cfg" list="cfglist" placeholder="начните вводить: Бухгалтерия, ЗУП, Розница…" autocomplete="off" />
-      <datalist id="cfglist"></datalist>
-      <div class="hint" id="cfghint">Выберите конфигурацию, чтобы загрузить список версий.</div>
-    </div>
-
-    <div class="card">
-      <label for="from">Версия «откуда»</label>
-      <select id="from" disabled><option>—</option></select>
-    </div>
-    <div class="card">
-      <label for="to">Версия «куда»</label>
-      <select id="to" disabled><option>—</option></select>
-    </div>
-
-    <div class="card full">
-      <div class="row">
-        <button id="calc" disabled>Построить цепочку</button>
-      </div>
-      <div id="result"></div>
+<header class="header">
+  <div class="wrap header-inner">
+    <a href="#/" class="logo" onclick="navigate('/')">
+      <span class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
+        </svg>
+      </span>
+      <span>Апдейкон</span>
+    </a>
+    <nav class="nav">
+      <a class="nav-link" href="#/" onclick="navigate('/')">Главная</a>
+      <a class="nav-link" href="#/catalog" onclick="navigate('/catalog')">Каталог</a>
+      <a class="nav-link" href="#/stats" onclick="navigate('/stats')">Статистика</a>
+      <a class="nav-link" href="#/settings" onclick="navigate('/settings')">Настройки</a>
+    </nav>
+    <div class="header-actions">
+      <button class="btn-icon" onclick="toggleTheme()" id="theme-btn" title="Переключить тему">
+        <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+        </svg>
+        <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+        </svg>
+      </button>
+      <button class="btn btn-sm btn-secondary" onclick="navigate('/settings')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
+          <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M21 12h-3M17.66 17.66l-1.41-1.41M12 21v-3M6.34 17.66l1.41-1.41M3 12h3M6.34 6.34l1.41 1.41"/>
+        </svg>
+        ИТС
+      </button>
     </div>
   </div>
+</header>
 
-  <footer>переходы между редакциями не входят в цепочку — это отдельная процедура</footer>
-</div>
+<main class="main" id="main-content"></main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand"><strong>Апдейкон</strong> &mdash; навигатор обновлений 1С</div>
+    <div class="footer-right">
+      <span class="made-in-russia">
+        <span class="russia-flag">
+          <span style="background:#fff"></span>
+          <span style="background:#0039A6"></span>
+          <span style="background:#D52B1E"></span>
+        </span>
+        Сделано в России
+      </span>
+      <a href="https://imiron.ru" target="_blank" rel="noopener" class="footer-link">imiron.ru</a>
+      <span class="footer-ver" id="footer-ver">v1.0</span>
+    </div>
+  </div>
+</footer>
+
+<div id="toast"></div>
 
 <script>
-const $ = s => document.querySelector(s);
-const api = (p, q) => fetch(p + (q ? "?" + new URLSearchParams(q) : "")).then(r => r.json());
+/* ================================================================
+   API + DATA LAYER
+   ================================================================ */
+let CONFIGS = [];
+let DB_META = { last_updated: null, total_configs: 0, total_versions: 0 };
+let CONFIGS_LOADED = false;
+const CHAIN_CACHE = {};   // `${cfgId}:${fromV}:${toV}` -> steps[]
 
-async function loadStats(){
-  try{
-    const s = await api("/api/stats");
-    $("#stat").textContent = `${s.configurations} конфигураций · ${s.edges} рёбер`;
-  }catch{ $("#stat").textContent = "БД недоступна"; }
+async function apiFetch(path, params) {
+  const url = path + (params ? '?' + new URLSearchParams(params) : '');
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
 }
 
-let cfgTimer;
-$("#cfg").addEventListener("input", e => {
-  clearTimeout(cfgTimer);
-  const v = e.target.value.trim();
-  cfgTimer = setTimeout(async () => {
-    if (v.length < 2) return;
-    const rows = await api("/api/configs", { q: v });
-    const dl = $("#cfglist"); dl.innerHTML = "";
-    rows.forEach(r => { const o = document.createElement("option"); o.value = r.name; dl.appendChild(o); });
-    if (rows.some(r => r.name === v)) loadVersions(v);
-  }, 200);
-});
-$("#cfg").addEventListener("change", e => loadVersions(e.target.value.trim()));
-
-async function loadVersions(name){
-  const data = await api("/api/versions", { config: name });
-  const fromSel = $("#from"), toSel = $("#to");
-  if (!data.versions || !data.versions.length){
-    $("#cfghint").textContent = "Для этой конфигурации в базе нет версий.";
-    fromSel.disabled = toSel.disabled = $("#calc").disabled = true;
-    return;
-  }
-  const opts = (data.editions || [{edition:0,versions:data.versions}])
-    .map(g => `<optgroup label="Редакция ${g.edition}.x">` +
-      g.versions.map(v => `<option>${v}</option>`).join("") + `</optgroup>`).join("");
-  fromSel.innerHTML = opts; toSel.innerHTML = opts;
-  toSel.selectedIndex = toSel.options.length - 1;
-  fromSel.disabled = toSel.disabled = $("#calc").disabled = false;
-  $("#cfghint").textContent = `${data.versions.length} версий в базе. Цепочка строится в пределах одной редакции.`;
+function nick_from_href(href) {
+  return href ? href.replace('/project/', '') : '';
 }
 
-$("#calc").addEventListener("click", async () => {
-  const config = $("#cfg").value.trim();
-  const from = $("#from").value, to = $("#to").value;
-  $("#result").innerHTML = `<div class="msg">Вычисляю…</div>`;
-  const r = await api("/api/chain", { config, from, to });
+function adapt_config(row) {
+  const id = String(row.id);
+  const nick = nick_from_href(row.releases_href);
+  const displayName = row.display_name || row.name;
+  const latestV = row.latest_version || '';
+  const seg = latestV.split('.');
+  const edition = seg.length >= 2 ? seg[0] + '.' + seg[1] : seg[0] || '';
+  return {
+    id,
+    configName: row.name,       // DB internal name used for API calls
+    nick,
+    name: displayName,
+    short: (row.display_name || row.name || '').split(',')[0].trim(),
+    edition,
+    type: 'standard',           // placeholder — not yet in DB
+    vendor: row.vendor || '1С',
+    status: 'active',           // placeholder — not yet in DB
+    description: '',            // placeholder — not yet in DB
+    platform_min: row.latest_platform || '—',
+    url_1c: row.releases_href ? 'https://releases.1c.ru' + row.releases_href : '',
+    release_year: row.latest_date ? new Date(row.latest_date).getFullYear() : null,
+    avg_update_days: row.avg_days ? Number(row.avg_days) : null,
+    version_count: Number(row.version_count) || 0,
+    latestV,
+    latestDate: row.latest_date || null,
+    latestPlat: row.latest_platform || null,
+    versions: [],   // loaded lazily
+    _meta: {},      // version -> {release_date, min_platform}
+  };
+}
 
-  if (r.error){ $("#result").innerHTML = `<div class="msg warn">${r.error}</div>`; return; }
-  if (r.note && !r.found){ $("#result").innerHTML = `<div class="msg warn">${r.note}</div>`; return; }
-  if (!r.found){
-    $("#result").innerHTML = `<div class="msg warn">Непрерывная цепочка <b>${from} → ${to}</b> не найдена. Возможно, отсутствуют промежуточные обновления или версии на разных ветках.</div>`;
-    return;
+async function initData() {
+  if (CONFIGS_LOADED) return;
+  try {
+    const [rows, stats] = await Promise.all([
+      apiFetch('/api/configs'),
+      apiFetch('/api/stats'),
+    ]);
+    CONFIGS = rows.map(adapt_config);
+    CONFIGS_LOADED = true;
+    DB_META = {
+      last_updated: stats.last_updated || null,
+      total_configs: stats.configurations || 0,
+      total_versions: stats.versions || 0,
+    };
+    const v = document.getElementById('footer-ver');
+    if (v) v.textContent = 'live · ' + (stats.last_updated || '—');
+  } catch(e) {
+    console.error('initData failed:', e);
+    // Do NOT set CONFIGS_LOADED on failure — allows retry on next route() call.
   }
-  if (r.length === 0){ $("#result").innerHTML = `<div class="msg">Версии совпадают — обновление не требуется.</div>`; return; }
+}
 
-  const steps = r.steps.map((s,i) => `
-    <div class="step">
-      <div class="n">${String(i+1).padStart(2,"0")}</div>
-      <div>
-        <div class="vmove"><span class="v0">${s.fromVersion}</span><span class="arr">→</span><span class="v1">${s.toVersion}</span></div>
-        ${s.cfuPath ? `<div class="cfu">${s.cfuPath}</div>` : ""}
+async function loadVersionsForConfig(cfgId) {
+  const cfg = CONFIGS.find(c => c.id === String(cfgId));
+  if (!cfg || cfg.versions.length > 0) return cfg;
+  try {
+    const data = await apiFetch('/api/versions', { config: cfg.configName });
+    cfg._meta = data.meta || {};
+    // API returns oldest→newest; reverse for display (newest first)
+    const vers = [...(data.versions || [])].reverse();
+    cfg.versions = vers.map(v => {
+      const m = cfg._meta[v] || {};
+      const dl = cfg.nick
+        ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + v +
+          '&path=' + cfg.nick + '%5c' + v.replace(/\./g, '_') + '%5cupdsetup.zip'
+        : '';
+      return { v, date: m.release_date || null, mb: 0, plat: m.min_platform || null, req: false, patches: [], dl };
+    });
+    if (cfg.versions.length && !cfg.latestV) {
+      cfg.latestV = cfg.versions[0].v;
+      cfg.latestDate = cfg.versions[0].date;
+      cfg.latestPlat = cfg.versions[0].plat;
+    }
+  } catch(e) {
+    console.error('loadVersions(' + cfgId + ') failed:', e);
+  }
+  return cfg;
+}
+
+async function find_configs_by_version_api(ver) {
+  try {
+    const rows = await apiFetch('/api/configs', { version: ver });
+    return rows.map(r => CONFIGS.find(c => c.id === String(r.id))).filter(Boolean);
+  } catch(e) { return []; }
+}
+
+function chain_response_to_steps(apiResult, cfg) {
+  if (!apiResult || !apiResult.found || !apiResult.steps?.length) return null;
+  return apiResult.steps.map(s => ({
+    v: s.toVersion,
+    date: cfg?._meta?.[s.toVersion]?.release_date || null,
+    mb: 0,
+    plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
+    req: false,
+    patches: [],
+    dl: '',  // render_chain_steps constructs from cfg.nick
+  }));
+}
+
+/* ================================================================
+   STATE
+   ================================================================ */
+const state = {
+  page: '/',
+  catalogFilters: { types: [], statuses: [], search: '', sort: 'date_desc' },
+};
+
+/* ================================================================
+   UTILS
+   ================================================================ */
+function fmt_date(d) {
+  if (!d) return '—';
+  const [y, m, day] = d.split('-');
+  return `${day}.${m}.${y}`;
+}
+function fmt_mb(mb) {
+  if (!mb) return '—';
+  if (mb >= 1000) return (mb/1000).toFixed(1) + ' ГБ';
+  return mb + ' МБ';
+}
+function days_ago(dateStr) {
+  if (!dateStr) return '';
+  const diff = (new Date() - new Date(dateStr)) / 864e5;
+  if (diff < 1) return 'сегодня';
+  if (diff < 2) return 'вчера';
+  if (diff < 30) return `${Math.round(diff)} дн. назад`;
+  if (diff < 365) return `${Math.round(diff/30)} мес. назад`;
+  return `${Math.round(diff/365)} г. назад`;
+}
+function type_label(t) {
+  return { standard: 'Типовая', partner: 'Партнёрская', industry: 'Отраслевая' }[t] || t;
+}
+function type_badge(t) {
+  const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green' }[t] || 'badge-gray';
+  const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry() };
+  return `<span class="badge ${cls}">${icons[t]||''} ${type_label(t)}</span>`;
+}
+function status_badge(s) {
+  if (s === 'discontinued') return `<span class="badge badge-red">${icn_x()} Поддержка прекращена</span>`;
+  return `<span class="badge badge-green">${icn_check()} Поддерживается</span>`;
+}
+function avatar_cls(t) {
+  return { standard: 'std', partner: 'partner', industry: 'industry' }[t] || 'std';
+}
+function config_avatar(cfg) {
+  const src = cfg.short || cfg.name || '';
+  const abbr = src.replace(/[^A-ZА-ЯЁ0-9\s]/gi,'').split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,3) || '?';
+  return `<div class="config-avatar ${avatar_cls(cfg.type)}">${abbr}</div>`;
+}
+function config_detail_avatar(cfg) {
+  const src = cfg.short || cfg.name || '';
+  const abbr = src.replace(/[^A-ZА-ЯЁ0-9\s]/gi,'').split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,3) || '?';
+  return `<div class="config-detail-avatar ${avatar_cls(cfg.type)}">${abbr}</div>`;
+}
+function toast(msg, dur=2200) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+function get_its() {
+  return {
+    login: localStorage.getItem('uc_its_login') || '',
+    password: localStorage.getItem('uc_its_pw') ? atob(localStorage.getItem('uc_its_pw')) : ''
+  };
+}
+function save_its(login, pw) {
+  localStorage.setItem('uc_its_login', login);
+  localStorage.setItem('uc_its_pw', btoa(pw));
+}
+function current_theme() {
+  return document.documentElement.getAttribute('data-theme') || 'auto';
+}
+function apply_theme(th) {
+  if (th === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', th);
+  localStorage.setItem('uc_theme', th);
+  update_theme_icon();
+}
+function update_theme_icon() {
+  const dark = current_theme() === 'dark' ||
+    (current_theme() !== 'light' && window.matchMedia('(prefers-color-scheme:dark)').matches);
+  document.getElementById('icon-sun').style.display = dark ? '' : 'none';
+  document.getElementById('icon-moon').style.display = dark ? 'none' : '';
+}
+function toggleTheme() {
+  apply_theme(current_theme() === 'dark' ? 'light' : 'dark');
+}
+
+/* ================================================================
+   SVG ICONS
+   ================================================================ */
+function icn(path, extra='') {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${path}</svg>`;
+}
+const icn_check   = () => icn('<polyline points="20 6 9 17 4 12"/>');
+const icn_x       = () => icn('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+const icn_dl      = () => icn('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+const icn_copy    = () => icn('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>');
+const icn_share   = () => icn('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>');
+const icn_link    = () => icn('<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>');
+const icn_clock   = () => icn('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+const icn_pkg     = () => icn('<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>');
+const icn_alert   = () => icn('<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
+const icn_info    = () => icn('<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>');
+const icn_star    = () => icn('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>');
+const icn_partner = () => icn('<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>');
+const icn_industry= () => icn('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/>');
+const icn_chevron_r=() => icn('<polyline points="9 18 15 12 9 6"/>');
+const icn_search  = () => icn('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+const icn_filter  = () => icn('<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>');
+const icn_bar     = () => icn('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');
+const icn_spin_svg= () => `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;display:block;margin:0 auto 8px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>`;
+
+function render_loading(msg) {
+  return `<div class="wrap" style="padding-top:80px"><div class="empty">${icn_spin_svg()}<div class="empty-title">${msg || 'Загрузка...'}</div></div></div>`;
+}
+
+/* ================================================================
+   CHAIN RENDERING
+   ================================================================ */
+function render_chain_steps(steps, fromV, cfg) {
+  if (!steps || !steps.length) return `<div class="empty"><p>Обновление не требуется или цепочка не найдена</p></div>`;
+  const total_mb = steps.reduce((s,x) => s + (x.mb||0), 0);
+  let html = `<div class="chain-wrap"><div class="chain-group fade-up">`;
+  html += `<div class="chain-group-header">
+    <span class="chain-group-title">${cfg ? cfg.name : ''}</span>
+    <div class="chain-group-meta">
+      <span class="badge badge-blue">${steps.length} шаг${steps.length===1?'':steps.length<5?'а':'ов'}</span>
+    </div>
+  </div>`;
+  // Start step
+  html += `<div class="chain-step">
+    <div class="step-indicator"><div class="step-dot start">${icn_check()}</div><div class="step-line"></div></div>
+    <div class="step-content"><div class="step-version">${fromV}</div><div class="step-date">Текущая версия</div></div>
+  </div>`;
+  steps.forEach((s, i) => {
+    const is_final = i === steps.length - 1;
+    const dot_cls = is_final ? 'final' : (s.req ? 'required' : '');
+    const dot_icon = is_final ? icn_check() : (i+1);
+    const dl_url = s.dl || (cfg?.nick
+      ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + s.v +
+        '&path=' + cfg.nick + '%5c' + s.v.replace(/\./g,'_') + '%5cupdsetup.zip'
+      : '');
+    html += `<div class="chain-step">
+      <div class="step-indicator">
+        <div class="step-dot ${dot_cls}">${dot_icon}</div>
+        ${!is_final ? '<div class="step-line"></div>' : ''}
       </div>
-    </div>`).join("");
-  $("#result").innerHTML = `
-    <div class="chain">
-      <div class="chain-head">
-        <span>${config}</span>
-        <span class="badge ok">${r.length} шаг(ов) · ${from} → ${to}</span>
-      </div>${steps}
+      <div class="step-content">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="step-version">${s.v}</div>
+          ${is_final ? '<span class="badge badge-blue">Целевая версия</span>' : ''}
+          ${s.req && !is_final ? '<span class="badge badge-orange">Обязательный</span>' : ''}
+        </div>
+        ${s.date ? `<div class="step-date">${fmt_date(s.date)}</div>` : ''}
+        <div class="step-meta">
+          ${s.plat ? `<span class="step-platform">Платформа &ge; ${s.plat}</span>` : ''}
+        </div>
+        ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
+        <div class="step-actions">
+          <a href="${dl_url}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${dl_url}')">${icn_dl()} Скачать</a>
+        </div>
+      </div>
     </div>`;
-});
+  });
+  html += `</div>`;
+  html += `<div class="card fade-up fade-up-1">
+    <div class="chain-summary">
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        <div class="chain-stat"><div class="chain-stat-val">${steps.length}</div><div class="chain-stat-lbl">Шагов</div></div>
+        ${steps[steps.length-1]?.date ? `<div class="chain-stat"><div class="chain-stat-val">${fmt_date(steps[steps.length-1].date)}</div><div class="chain-stat-lbl">Дата релиза</div></div>` : ''}
+      </div>
+      <div class="chain-actions">
+        ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${steps[steps.length-1].v}')">${icn_share()} Поделиться</button>` : ''}
+        <button class="btn btn-secondary" onclick="do_copy_chain('${cfg?.id||''}','${fromV}','${steps[steps.length-1]?.v||''}')">${icn_copy()} Скопировать</button>
+      </div>
+    </div>
+  </div></div>`;
+  return html;
+}
+function est_time(steps) {
+  const mins = steps * 30;
+  if (mins < 60) return `${mins} мин`;
+  return `${Math.floor(mins/60)} ч ${mins%60} мин`;
+}
+function handle_dl(e, url) {
+  if (!url) { e.preventDefault(); toast('Ссылка для скачивания не указана'); return; }
+  const creds = get_its();
+  if (!creds.login) {
+    e.preventDefault();
+    if (confirm('Для скачивания требуется авторизация на портале 1С.\n\nОткрыть страницу скачивания?'))
+      window.open(url, '_blank');
+  }
+}
+function do_share_chain(cfgId, fromV, toV) {
+  const url = `${location.origin}${location.pathname}#/chain?config=${cfgId}&from=${encodeURIComponent(fromV)}&to=${encodeURIComponent(toV)}`;
+  navigator.clipboard.writeText(url).then(() => toast('Ссылка скопирована')).catch(() => prompt('Скопируйте ссылку:', url));
+}
+async function do_copy_chain(cfgId, fromV, toV) {
+  const cfg = CONFIGS.find(c => c.id === cfgId);
+  if (!cfg) return;
+  const key = `${cfgId}:${fromV}:${toV}`;
+  let steps = CHAIN_CACHE[key];
+  if (!steps) {
+    try {
+      const r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV });
+      steps = chain_response_to_steps(r, cfg);
+      if (steps) CHAIN_CACHE[key] = steps;
+    } catch(e) { toast('Ошибка при получении цепочки'); return; }
+  }
+  if (!steps?.length) return;
+  let txt = `Цепочка обновлений: ${cfg.name}\nОт: ${fromV}\nДо: ${steps[steps.length-1].v}\nШагов: ${steps.length}\n\nПорядок установки:\n`;
+  steps.forEach((s,i) => { txt += `${i+1}. ${s.v}${s.date ? ' (' + fmt_date(s.date) + ')' : ''}\n`; });
+  txt += `\nСгенерировано: ${new Date().toLocaleString('ru')} | updatecon`;
+  navigator.clipboard.writeText(txt).then(() => toast('Цепочка скопирована')).catch(() => {
+    const el = document.createElement('textarea');
+    el.value = txt; document.body.appendChild(el); el.select();
+    document.execCommand('copy'); document.body.removeChild(el);
+    toast('Цепочка скопирована');
+  });
+}
 
-loadStats();
+/* ================================================================
+   ROUTER
+   ================================================================ */
+function navigate(path) { location.hash = '#' + path; }
+function parse_hash() {
+  const hash = location.hash.replace(/^#/, '') || '/';
+  const [pathRaw, qs] = hash.split('?');
+  const path = pathRaw || '/';
+  const params = {};
+  if (qs) qs.split('&').forEach(p => { const [k,v] = p.split('='); params[k] = decodeURIComponent(v||''); });
+  return { path, params };
+}
+async function route() {
+  const { path, params } = parse_hash();
+  const el = document.getElementById('main-content');
+  document.querySelectorAll('.nav-link').forEach(a => {
+    a.classList.remove('active');
+    const href = a.getAttribute('href').replace('#','');
+    if ((path === '/' && href === '/') || (path !== '/' && href !== '/' && path.startsWith(href)))
+      a.classList.add('active');
+  });
+  if (!CONFIGS_LOADED) {
+    el.innerHTML = render_loading('Загрузка базы данных...');
+    await initData();
+  }
+  if (path === '/') { el.innerHTML = render_home(); bind_home(); }
+  else if (path === '/catalog') { el.innerHTML = render_catalog(); bind_catalog(); }
+  else if (path.startsWith('/config/')) {
+    const id = path.split('/')[2];
+    el.innerHTML = render_loading('Загрузка конфигурации...');
+    await loadVersionsForConfig(id);
+    el.innerHTML = render_config(id);
+    bind_config(id);
+  }
+  else if (path === '/chain') {
+    el.innerHTML = render_chain_page_shell();
+    await bind_chain_page(params);
+  }
+  else if (path === '/stats') { el.innerHTML = render_stats(); }
+  else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
+  else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', () => route());
+
+/* ================================================================
+   HOME VIEW
+   ================================================================ */
+function render_home() {
+  const latest = [...CONFIGS].filter(c => c.latestDate).sort((a,b) => new Date(b.latestDate) - new Date(a.latestDate)).slice(0,3);
+  return `<div class="wrap">
+    <div class="page-head"><div></div></div>
+    <div class="hero fade-up">
+      <div class="hero-title">Построить цепочку обновлений</div>
+      <div class="hero-sub">Введите текущую версию конфигурации 1С — мы найдём путь до актуальной версии</div>
+      <div class="chain-builder">
+        <div class="field" style="margin:0">
+          <label class="label">Текущая версия</label>
+          <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" oninput="home_version_input(this.value)">
+        </div>
+        <div class="field" style="margin:0">
+          <label class="label">Целевая версия <span style="font-weight:400;text-transform:none;font-size:11px">(оставьте пустым — до последней)</span></label>
+          <input id="inp-target" class="input input-mono input-lg" placeholder="Последняя">
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="home_build_chain()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
+          Построить
+        </button>
+      </div>
+      <div id="home-matches" style="margin-top:14px"></div>
+    </div>
+    <div id="home-chain-result"></div>
+    <div class="stats-banner fade-up fade-up-2">
+      <div>
+        <div class="stats-banner-title">База данных обновлений Апдейкон</div>
+        <div style="font-size:12px;opacity:.7;margin-top:2px">${DB_META.last_updated ? 'Обновлено: ' + fmt_date(DB_META.last_updated) + ' · ' + days_ago(DB_META.last_updated) : 'Загрузка...'}</div>
+      </div>
+      <div class="stats-banner-grid">
+        <div class="stats-banner-item"><div class="val">${DB_META.total_configs}</div><div class="lbl">Конфигураций</div></div>
+        <div class="stats-banner-item"><div class="val">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="lbl">Версий</div></div>
+      </div>
+      <div class="stats-banner-action">
+        <a href="#/stats" onclick="navigate('/stats')" class="btn btn-secondary btn-sm" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff">${icn_bar()} Статистика</a>
+      </div>
+    </div>
+    ${latest.length ? `<div style="margin-bottom:16px" class="fade-up fade-up-3">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:16px;font-weight:700">Последние обновления</div>
+        <a href="#/catalog" onclick="navigate('/catalog')" class="btn btn-ghost btn-sm">Весь каталог ${icn_chevron_r()}</a>
+      </div>
+      <div class="catalog-grid">${latest.map(c => config_card_html(c)).join('')}</div>
+    </div>` : ''}
+  </div>`;
+}
+function bind_home() {
+  const { params } = parse_hash();
+  if (params.v) {
+    document.getElementById('inp-version').value = params.v;
+    home_version_input(params.v);
+  }
+}
+
+let _verSearchTimer;
+function home_version_input(ver) {
+  ver = ver.trim();
+  const el = document.getElementById('home-matches');
+  if (!el) return;
+  if (!ver || ver.length < 5) { el.innerHTML = ''; return; }
+  clearTimeout(_verSearchTimer);
+  _verSearchTimer = setTimeout(async () => {
+    const found = await find_configs_by_version_api(ver);
+    if (!found.length) {
+      el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Конфигурации с версией <code style="font-family:var(--mono)">${ver}</code> не найдены</div>`;
+      return;
+    }
+    let html = `<div style="font-size:12px;color:var(--text-light);margin-bottom:6px">Найдены конфигурации (выберите для уточнения):</div><div class="matched-configs">`;
+    found.forEach(c => {
+      html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">${type_badge(c.type)} ${c.name}</div>`;
+    });
+    html += `</div>`;
+    el.innerHTML = html;
+    el.dataset.found = found.map(c=>c.id).join(',');
+  }, 300);
+}
+function home_select_config(id, ver) {
+  document.querySelectorAll('.matched-config-item').forEach(el => el.classList.toggle('selected', el.dataset.cfgId === id));
+  document.getElementById('home-matches').dataset.selected = id;
+}
+async function home_build_chain() {
+  const fromV = document.getElementById('inp-version').value.trim();
+  const toVRaw = document.getElementById('inp-target').value.trim();
+  const result = document.getElementById('home-chain-result');
+  if (!fromV) { toast('Введите текущую версию'); return; }
+
+  const matchesEl = document.getElementById('home-matches');
+  const selectedId = matchesEl?.dataset.selected;
+  const foundIds = (matchesEl?.dataset.found || '').split(',').filter(Boolean);
+
+  let configs_to_check = [];
+  if (selectedId) {
+    configs_to_check = [CONFIGS.find(c => c.id === selectedId)].filter(Boolean);
+  } else if (foundIds.length) {
+    configs_to_check = foundIds.map(id => CONFIGS.find(c => c.id === id)).filter(Boolean);
+  } else {
+    result.innerHTML = `<div class="card card-body">${render_loading('Ищем конфигурацию...')}</div>`;
+    configs_to_check = await find_configs_by_version_api(fromV);
+    if (!configs_to_check.length) {
+      result.innerHTML = `<div class="card card-body fade-up"><div class="empty"><p>Версия <code style="font-family:var(--mono)">${fromV}</code> не найдена в базе данных</p></div></div>`;
+      return;
+    }
+  }
+
+  result.innerHTML = `<div class="card card-body">${render_loading('Строим цепочку...')}</div>`;
+  await Promise.all(configs_to_check.map(c => loadVersionsForConfig(c.id)));
+
+  let html = '';
+  for (const cfg of configs_to_check) {
+    const toV = toVRaw || cfg.latestV;
+    if (!toV) continue;
+    let r;
+    try { r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV }); }
+    catch(e) { continue; }
+
+    if (r.note && !r.found) {
+      html += `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br><span style="color:var(--text-muted);font-size:14px">${r.note}</span></div></div>`;
+      continue;
+    }
+    if (!r.found) {
+      const msg = r.length === 0
+        ? `<span style="color:var(--green)">${icn_check()} Версия ${fromV} уже является актуальной</span>`
+        : `<span style="color:var(--text-muted)">Цепочка не найдена</span>`;
+      html += `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br>${msg}</div></div>`;
+      continue;
+    }
+    const steps = chain_response_to_steps(r, cfg);
+    if (!steps?.length) continue;
+    CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
+    html += `<div style="margin-bottom:24px">${render_chain_steps(steps, fromV, cfg)}</div>`;
+  }
+  result.innerHTML = html || `<div class="empty"><p>Цепочка не найдена</p></div>`;
+}
+
+/* ================================================================
+   CATALOG VIEW
+   ================================================================ */
+function render_catalog() {
+  const vendors = [...new Set(CONFIGS.map(c=>c.vendor))].sort();
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Каталог конфигураций</div></div>
+    <div class="catalog-layout">
+      <aside class="filters-panel fade-up">
+        <div class="filters-title">
+          <span>${icn_filter()} Фильтры</span>
+          <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
+        </div>
+        <div class="filter-group">
+          <div class="filter-group-label">Тип</div>
+          <label class="filter-opt"><input type="checkbox" value="standard" onchange="apply_filters()" id="f-std"> Типовая <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='standard').length}</span></label>
+          <label class="filter-opt"><input type="checkbox" value="partner" onchange="apply_filters()" id="f-partner"> Партнёрская <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='partner').length}</span></label>
+          <label class="filter-opt"><input type="checkbox" value="industry" onchange="apply_filters()" id="f-industry"> Отраслевая <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='industry').length}</span></label>
+        </div>
+        <div class="filter-group">
+          <div class="filter-group-label">Разработчик</div>
+          ${vendors.map(v => `<label class="filter-opt"><input type="checkbox" value="v_${v}" onchange="apply_filters()" id="f-v-${v.replace(/[^a-z0-9]/gi,'')}"> ${v} <span class="filter-opt-count">${CONFIGS.filter(c=>c.vendor===v).length}</span></label>`).join('')}
+        </div>
+      </aside>
+      <div>
+        <div class="catalog-toolbar fade-up">
+          <div class="search-wrap" style="flex:1">
+            ${icn_search()}
+            <input class="input search-input" id="catalog-search" placeholder="Поиск по названию..." oninput="apply_filters()">
+          </div>
+          <select class="select sort-select" id="catalog-sort" onchange="apply_filters()">
+            <option value="date_desc">Дата обновления ↓</option>
+            <option value="date_asc">Дата обновления ↑</option>
+            <option value="name_asc">Название А→Я</option>
+            <option value="name_desc">Название Я→А</option>
+            <option value="freq_asc">Частота обновлений ↓</option>
+          </select>
+        </div>
+        <div id="catalog-grid" class="catalog-grid"></div>
+        <div id="catalog-count" class="catalog-count" style="margin-top:12px;text-align:right"></div>
+      </div>
+    </div>
+  </div>`;
+}
+function config_card_html(c) {
+  const freq = c.avg_update_days;
+  const freq_cls = !freq ? 'badge-gray' : freq <= 40 ? 'badge-green' : freq <= 80 ? 'badge-yellow' : 'badge-gray';
+  const freq_text = freq ? `~${freq} дн.` : 'нет данных';
+  return `<div class="card config-card card-clickable fade-up" onclick="navigate('/config/${c.id}')">
+    <div class="config-card-body">
+      <div class="config-card-top">
+        ${config_avatar(c)}
+        <div>
+          <div class="config-card-name">${c.name}</div>
+          <div class="config-card-short">${c.vendor}${c.edition ? ' · ред. ' + c.edition : ''}</div>
+        </div>
+      </div>
+      <div class="config-card-badges">
+        ${type_badge(c.type)}
+        ${c.status === 'discontinued' ? status_badge(c.status) : ''}
+        <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
+      </div>
+      <div class="config-card-desc">${c.description || c.short || c.name}</div>
+    </div>
+    <div class="config-card-footer">
+      <div>
+        <div class="config-card-version">${c.latestV || '—'}</div>
+        <div class="config-card-date">${c.latestDate ? fmt_date(c.latestDate) + ' · ' + days_ago(c.latestDate) : '—'}</div>
+      </div>
+      <div class="config-card-platform">${c.latestPlat ? 'Платформа ≥ ' + c.latestPlat : ''}</div>
+    </div>
+  </div>`;
+}
+function bind_catalog() { apply_filters(); }
+function reset_filters() {
+  document.querySelectorAll('.filters-panel input[type=checkbox]').forEach(el => el.checked = false);
+  const s = document.getElementById('catalog-search'); if (s) s.value = '';
+  apply_filters();
+}
+function apply_filters() {
+  const types    = Array.from(document.querySelectorAll('.filter-opt input[value="standard"],.filter-opt input[value="partner"],.filter-opt input[value="industry"]')).filter(el=>el.checked).map(el=>el.value);
+  const vendors  = Array.from(document.querySelectorAll('.filter-opt input[value^="v_"]')).filter(el=>el.checked).map(el=>el.value.replace('v_',''));
+  const search   = (document.getElementById('catalog-search')?.value || '').toLowerCase();
+  const sortVal  = document.getElementById('catalog-sort')?.value || 'date_desc';
+
+  let list = [...CONFIGS];
+  if (types.length)   list = list.filter(c=>types.includes(c.type));
+  if (vendors.length) list = list.filter(c=>vendors.includes(c.vendor));
+  if (search) list = list.filter(c=>(c.name||'').toLowerCase().includes(search)||(c.vendor||'').toLowerCase().includes(search));
+
+  list.sort((a,b) => {
+    if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
+    if (sortVal==='date_asc')  return new Date(a.latestDate||0) - new Date(b.latestDate||0);
+    if (sortVal==='name_asc')  return (a.name||'').localeCompare(b.name||'','ru');
+    if (sortVal==='name_desc') return (b.name||'').localeCompare(a.name||'','ru');
+    if (sortVal==='freq_asc')  return (a.avg_update_days||9999) - (b.avg_update_days||9999);
+    return 0;
+  });
+
+  const grid = document.getElementById('catalog-grid');
+  const cnt  = document.getElementById('catalog-count');
+  if (grid) grid.innerHTML = list.length
+    ? list.map(config_card_html).join('')
+    : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте изменить фильтры</div></div>`;
+  if (cnt) cnt.textContent = `Показано: ${list.length} из ${CONFIGS.length}`;
+}
+
+/* ================================================================
+   CONFIG DETAIL VIEW
+   ================================================================ */
+function render_config(id) {
+  const cfg = CONFIGS.find(c=>c.id===id);
+  if (!cfg) return `<div class="wrap"><div class="empty"><div class="empty-title">Конфигурация не найдена</div></div></div>`;
+  const SHOW_INIT = 5;
+  const latest = cfg.versions[0] || { v: cfg.latestV, date: cfg.latestDate, plat: cfg.latestPlat };
+
+  let versions_html = '';
+  cfg.versions.forEach((ver, i) => {
+    const hidden = i >= SHOW_INIT;
+    versions_html += `<div class="version-item${hidden?' hidden-version':''}">
+      <div class="version-item-head" onclick="toggle_version('ver-${id}-${i}')">
+        <span class="version-num">${ver.v}</span>
+        <span class="version-date">${ver.date ? fmt_date(ver.date) : '—'}</span>
+        <div class="version-tags">
+          ${ver.req ? `<span class="badge badge-orange">Обязательный</span>` : ''}
+        </div>
+        ${ver.plat ? `<span class="version-size" style="margin-left:auto;font-family:var(--mono);font-size:11px">≥ ${ver.plat}</span>` : ''}
+      </div>
+      <div class="version-body" id="ver-${id}-${i}">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          ${ver.plat ? `<span class="step-platform">Платформа ≥ ${ver.plat}</span>` : ''}
+          ${ver.dl ? `<a href="${ver.dl}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${ver.dl}')">${icn_dl()} Скачать</a>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="cfg_build_from_ver('${id}','${ver.v}')">${icn_chevron_r()} Цепочка отсюда</button>
+        </div>
+      </div>
+    </div>`;
+  });
+  if (cfg.versions.length > SHOW_INIT) {
+    versions_html += `<div class="version-show-more" id="ver-show-more">
+      <button class="btn btn-ghost btn-sm" onclick="show_more_versions()">Показать все ${cfg.versions.length} версии</button>
+    </div>`;
+  }
+  if (!cfg.versions.length) {
+    versions_html = `<div class="empty" style="padding:32px"><p>История версий не загружена</p></div>`;
+  }
+
+  return `<div class="wrap">
+    <div class="breadcrumb" style="padding-top:20px">
+      <a href="#/catalog" onclick="navigate('/catalog')">Каталог</a>${icn_chevron_r()}<span>${cfg.name}</span>
+    </div>
+    <div class="config-detail-header fade-up">
+      ${config_detail_avatar(cfg)}
+      <div class="config-detail-info">
+        <div class="config-detail-name">${cfg.name}</div>
+        <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
+        <div class="config-detail-badges">${type_badge(cfg.type)} ${status_badge(cfg.status)}</div>
+        ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
+        <div class="config-meta-grid">
+          <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
+          <div><div class="meta-item-label">Дата выхода</div><div class="meta-item-value">${fmt_date(latest?.date)}</div></div>
+          <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || cfg.platform_min || '—'}</div></div>
+          ${cfg.release_year ? `<div><div class="meta-item-label">Год выпуска</div><div class="meta-item-value">${cfg.release_year}</div></div>` : ''}
+          ${cfg.avg_update_days ? `<div><div class="meta-item-label">Частота обновлений</div><div class="meta-item-value">~${cfg.avg_update_days} дн.</div></div>` : ''}
+          <div><div class="meta-item-label">Всего версий</div><div class="meta-item-value">${cfg.versions.length || cfg.version_count || '—'}</div></div>
+        </div>
+      </div>
+      <div class="config-detail-actions">
+        ${cfg.url_1c ? `<a href="${cfg.url_1c}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icn_link()} На releases.1c.ru</a>` : ''}
+        ${cfg.status==='discontinued'?`<span class="badge badge-red" style="padding:8px 14px">${icn_alert()} Поддержка прекращена</span>`:''}
+      </div>
+    </div>
+
+    <div class="card fade-up fade-up-1" style="margin-bottom:20px">
+      <div class="card-header" style="padding-bottom:16px">
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Построить цепочку обновлений</div>
+        <div style="font-size:13px;color:var(--text-muted)">Выберите исходную версию и целевую (по умолчанию — до последней)</div>
+      </div>
+      <div class="card-body" style="padding-top:0">
+        ${cfg.versions.length ? `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="field" style="margin:0">
+            <label class="label">Из версии</label>
+            <select class="select input-mono" id="cfg-from-ver">
+              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===cfg.versions.length-1?' selected':''}>${v.v}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin:0">
+            <label class="label">До версии</label>
+            <select class="select input-mono" id="cfg-to-ver">
+              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===0?' selected':''}>${v.v}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="cfg_do_chain('${id}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
+          Построить цепочку
+        </button>` : `<div class="hint">Список версий не загружен</div>`}
+      </div>
+      <div id="cfg-chain-result" style="padding:0 20px 20px"></div>
+    </div>
+
+    <div class="version-list fade-up fade-up-2" style="margin-bottom:32px">
+      <div class="version-list-header">
+        <div class="version-list-title">История версий</div>
+        <span class="badge badge-gray">${cfg.versions.length || cfg.version_count} версий</span>
+      </div>
+      ${versions_html}
+    </div>
+  </div>`;
+}
+function bind_config(id) { /* versions already loaded by route() */ }
+function toggle_version(bodyId) {
+  const el = document.getElementById(bodyId); if (!el) return;
+  el.classList.toggle('open');
+  const chev = document.getElementById(bodyId.replace('ver-','chev-'));
+  if (chev) chev.classList.toggle('open');
+}
+function show_more_versions() {
+  document.querySelectorAll('.hidden-version').forEach(el => el.classList.remove('hidden-version'));
+  document.getElementById('ver-show-more')?.remove();
+}
+function cfg_build_from_ver(cfgId, fromV) {
+  const fromEl = document.getElementById('cfg-from-ver');
+  if (fromEl) fromEl.value = fromV;
+  cfg_do_chain(cfgId);
+  document.getElementById('cfg-chain-result')?.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function cfg_do_chain(id) {
+  const cfg = CONFIGS.find(c=>c.id===id);
+  if (!cfg) return;
+  const fromV = document.getElementById('cfg-from-ver')?.value;
+  const toV   = document.getElementById('cfg-to-ver')?.value;
+  const result = document.getElementById('cfg-chain-result');
+  if (!fromV || !toV) return;
+
+  result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Строю цепочку...</span></div>`;
+  let r;
+  try { r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV }); }
+  catch(e) { result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>Ошибка сервера</span></div>`; return; }
+
+  if (r.note && !r.found) {
+    result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>${r.note}</span></div>`;
+    return;
+  }
+  if (!r.found) {
+    result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Версия ${fromV} уже актуальна или совпадает с целевой</span></div>`;
+    return;
+  }
+  const steps = chain_response_to_steps(r, cfg);
+  if (!steps?.length) {
+    result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Обновление не требуется</span></div>`;
+    return;
+  }
+  CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
+  result.innerHTML = render_chain_steps(steps, fromV, cfg);
+}
+
+/* ================================================================
+   CHAIN PAGE VIEW
+   ================================================================ */
+function render_chain_page_shell() {
+  return `<div class="wrap"><div class="page-head"><div class="page-title">Цепочка обновлений</div></div><div id="chain-page-content" class="fade-up">${render_loading('Загрузка...')}</div></div>`;
+}
+async function bind_chain_page(params) {
+  const { config, from, to } = params;
+  const el = document.getElementById('chain-page-content');
+  if (!config || !from) {
+    el.innerHTML = `<div class="empty"><div class="empty-title">Параметры цепочки не указаны</div><div class="empty-sub">Воспользуйтесь формой на главной странице</div></div>`;
+    return;
+  }
+  const cfg = CONFIGS.find(c => c.id === config);
+  if (!cfg) { el.innerHTML = `<div class="empty"><div class="empty-title">Конфигурация не найдена</div></div>`; return; }
+
+  await loadVersionsForConfig(config);
+  const toV = to || cfg.latestV;
+  let r;
+  try { r = await apiFetch('/api/chain', { config: cfg.configName, from, to: toV }); }
+  catch(e) { el.innerHTML = `<div class="alert alert-warning">${icn_alert()} Ошибка сервера</div>`; return; }
+
+  const steps = chain_response_to_steps(r, cfg);
+  if (!steps?.length) {
+    el.innerHTML = `<div class="alert alert-info">${icn_info()} <span>Версия ${from} уже актуальна</span></div>`;
+    return;
+  }
+  CHAIN_CACHE[`${cfg.id}:${from}:${toV}`] = steps;
+  el.innerHTML = `<div style="margin-bottom:8px"><div class="breadcrumb"><a href="#/config/${cfg.id}" onclick="navigate('/config/${cfg.id}')">${cfg.name}</a>${icn_chevron_r()}<span>Цепочка</span></div></div>${render_chain_steps(steps, from, cfg)}`;
+}
+
+/* ================================================================
+   STATS VIEW
+   ================================================================ */
+function render_stats() {
+  const sorted_freq = [...CONFIGS].filter(c=>c.avg_update_days).sort((a,b)=>a.avg_update_days-b.avg_update_days).slice(0,50);
+  const max_freq = Math.max(...sorted_freq.map(c=>c.avg_update_days), 1);
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Статистика</div></div>
+    <div class="stats-grid fade-up">
+      <div class="stat-card"><div class="stat-card-val">${DB_META.total_configs}</div><div class="stat-card-lbl">Конфигураций в базе</div></div>
+      <div class="stat-card"><div class="stat-card-val">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="stat-card-lbl">Версий в базе</div></div>
+      <div class="stat-card"><div class="stat-card-val">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : '—'}</div><div class="stat-card-lbl">Последнее обновление базы</div></div>
+    </div>
+    ${sorted_freq.length ? `<div class="card fade-up fade-up-1" style="margin-bottom:24px">
+      <div class="version-list-header"><div class="version-list-title">Частота обновлений (топ-50)</div></div>
+      <div style="padding:8px 0">
+        <table class="freq-table">
+          <thead><tr>
+            <th>Конфигурация</th><th>Частота</th><th style="min-width:180px">График</th><th>Последнее</th>
+          </tr></thead>
+          <tbody>${sorted_freq.map(c => `<tr>
+            <td style="font-weight:600"><a href="#/config/${c.id}" onclick="navigate('/config/${c.id}')" style="color:var(--accent)">${c.name}</a></td>
+            <td style="font-family:var(--mono);font-size:13px">~${c.avg_update_days} дн.</td>
+            <td><div class="freq-bar-wrap"><div class="freq-bar" style="width:${Math.round(c.avg_update_days/max_freq*140)}px;${c.avg_update_days<=40?'background:var(--green)':c.avg_update_days<=80?'background:var(--yellow)':'background:var(--text-light)'}"></div></div></td>
+            <td style="font-size:13px;color:var(--text-muted)">${fmt_date(c.latestDate)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : ''}
+  </div>`;
+}
+
+/* ================================================================
+   SETTINGS VIEW
+   ================================================================ */
+function render_settings() {
+  const creds = get_its();
+  const th = current_theme();
+  return `<div class="wrap" style="max-width:720px">
+    <div class="page-head"><div class="page-title">Настройки</div></div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Учётные данные портала 1С (ИТС)</div>
+      <div class="settings-section-sub">Используются для прямого скачивания обновлений с releases.1c.ru</div>
+      <div class="alert alert-warning">
+        ${icn_alert()}
+        <div><strong>Данные хранятся только в вашем браузере</strong> (localStorage) и никуда не передаются. Пароль сохраняется в base64-кодировке — не используйте эту функцию на публичных компьютерах.</div>
+      </div>
+      <div class="field">
+        <label class="label">Логин</label>
+        <input class="input" id="its-login" type="text" placeholder="56341-53" value="${creds.login}">
+      </div>
+      <div class="field">
+        <label class="label">Пароль</label>
+        <input class="input" id="its-pw" type="password" placeholder="••••••••" value="${creds.password}">
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="save_its_form()">${icn_check()} Сохранить</button>
+        <button class="btn btn-secondary" onclick="clear_its()">Удалить данные</button>
+      </div>
+      ${creds.login ? `<div class="hint" style="margin-top:10px;color:var(--green)">${icn_check()} Данные сохранены для: ${creds.login}</div>` : ''}
+    </div>
+    <div class="settings-section fade-up fade-up-1">
+      <div class="settings-section-title">Тема оформления</div>
+      <div class="settings-section-sub">По умолчанию используется системная тема браузера</div>
+      <div class="theme-opts">
+        <div class="theme-opt ${th==='auto'?'active':''}" onclick="set_theme('auto')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 010 20V2z"/></svg>
+          Авто
+        </div>
+        <div class="theme-opt ${th==='light'?'active':''}" onclick="set_theme('light')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+          Светлая
+        </div>
+        <div class="theme-opt ${th==='dark'?'active':''}" onclick="set_theme('dark')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          Тёмная
+        </div>
+      </div>
+    </div>
+    <div class="settings-section fade-up fade-up-2">
+      <div class="settings-section-title">API эндпоинты</div>
+      <div class="settings-section-sub">Серверная часть Апдейкон</div>
+      <div style="display:flex;flex-direction:column;gap:8px;font-family:var(--mono);font-size:12px">
+        ${[
+          ['GET', '/api/configs', 'Список конфигураций с метаданными'],
+          ['GET', '/api/configs?version=X', 'Конфигурации по версии'],
+          ['GET', '/api/versions?config=NAME', 'Версии + даты + платформы'],
+          ['GET', '/api/chain?config=&from=&to=', 'Построить цепочку обновлений'],
+          ['GET', '/api/stats', 'Статистика базы данных'],
+        ].map(([m,u,d]) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface2);border-radius:var(--r-xs);flex-wrap:wrap">
+          <span style="color:var(--accent);font-weight:700;min-width:40px">${m}</span>
+          <span style="color:var(--text)">${u}</span>
+          <span style="color:var(--text-muted);font-size:12px;margin-left:auto">${d}</span>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+function bind_settings() {}
+function save_its_form() {
+  const login = document.getElementById('its-login')?.value.trim();
+  const pw    = document.getElementById('its-pw')?.value;
+  save_its(login, pw);
+  toast('Данные ИТС сохранены');
+  setTimeout(() => navigate('/settings'), 500);
+}
+function clear_its() {
+  localStorage.removeItem('uc_its_login');
+  localStorage.removeItem('uc_its_pw');
+  toast('Данные ИТС удалены');
+  setTimeout(() => navigate('/settings'), 500);
+}
+function set_theme(t) {
+  apply_theme(t);
+  document.querySelectorAll('.theme-opt').forEach(el => el.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+}
+
+/* ================================================================
+   INIT
+   ================================================================ */
+const _style = document.createElement('style');
+_style.textContent = `.hidden-version { display: none; }`;
+document.head.appendChild(_style);
+
+apply_theme(localStorage.getItem('uc_theme') || 'auto');
+update_theme_icon();
+route();
 </script>
 </body>
 </html>
