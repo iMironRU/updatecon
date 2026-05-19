@@ -202,6 +202,11 @@ for i in $(seq 1 30); do
 done
 printf "\r  ${GREEN}✓${NC}  PostgreSQL готов   \n"
 
+# Если volume существовал до установки, пароль в БД мог отличаться от нового .env.
+# Синхронизируем на случай переустановки с сохранёнными данными.
+DB_PW_SYNC="$(grep -E '^POSTGRES_PASSWORD=' .env | cut -d= -f2)"
+$DC exec -T db psql -U upd -d upd -c "ALTER USER upd PASSWORD '${DB_PW_SYNC}'" >> "$LOG_FILE" 2>&1 || true
+
 # ── 8. Восстановление дампа ───────────────────────────────────────────────────
 if $IS_FRESH && [[ "${RESTORE_SEED:-n}" =~ ^[Yy] ]] && [ -f "$SEED_FILE" ]; then
   # Запускаем воркер только для применения миграций
