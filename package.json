@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp -r public dist/../public 2>/dev/null || true && cp -r src/admin dist/admin 2>/dev/null || true",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "drizzle-kit migrate",
     "generate": "drizzle-kit generate",
