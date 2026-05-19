@@ -258,11 +258,20 @@ export async function buildServer() {
       .limit(1);
     if (cfg.length === 0) return { versions: [] };
 
+    // Only include versions from the dominant edition (most edges) so that
+    // cross-edition migration edges (e.g. 10.x→11.x stored under UT 11) don't
+    // pollute the version list with entries from a different product generation.
     const rows = await db.execute(sql`
+      WITH dom AS (
+        SELECT edition FROM update_edges WHERE config_id = ${cfg[0].id}
+        GROUP BY edition ORDER BY count(*) DESC LIMIT 1
+      )
       SELECT DISTINCT v FROM (
-        SELECT from_version v FROM update_edges WHERE config_id = ${cfg[0].id}
+        SELECT from_version v FROM update_edges
+          WHERE config_id = ${cfg[0].id} AND edition = (SELECT edition FROM dom)
         UNION
-        SELECT to_version   v FROM update_edges WHERE config_id = ${cfg[0].id}
+        SELECT to_version   v FROM update_edges
+          WHERE config_id = ${cfg[0].id} AND edition = (SELECT edition FROM dom)
       ) t
     `);
     const list: string[] = (

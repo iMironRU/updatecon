@@ -390,12 +390,6 @@ input, select, textarea { font-family: inherit; }
           <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
         </svg>
       </button>
-      <button class="btn btn-sm btn-secondary" onclick="navigate('/settings')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
-          <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M21 12h-3M17.66 17.66l-1.41-1.41M12 21v-3M6.34 17.66l1.41-1.41M3 12h3M6.34 6.34l1.41 1.41"/>
-        </svg>
-        ИТС
-      </button>
     </div>
   </div>
 </header>
@@ -730,12 +724,6 @@ function est_time(steps) {
 }
 function handle_dl(e, url) {
   if (!url) { e.preventDefault(); toast('Ссылка для скачивания не указана'); return; }
-  const creds = get_its();
-  if (!creds.login) {
-    e.preventDefault();
-    if (confirm('Для скачивания требуется авторизация на портале 1С.\n\nОткрыть страницу скачивания?'))
-      window.open(url, '_blank');
-  }
 }
 function do_share_chain(cfgId, fromV, toV) {
   const url = `${location.origin}${location.pathname}#/chain?config=${cfgId}&from=${encodeURIComponent(fromV)}&to=${encodeURIComponent(toV)}`;
@@ -1271,32 +1259,10 @@ function render_stats() {
    SETTINGS VIEW
    ================================================================ */
 function render_settings() {
-  const creds = get_its();
   const th = current_theme();
   return `<div class="wrap" style="max-width:720px">
     <div class="page-head"><div class="page-title">Настройки</div></div>
     <div class="settings-section fade-up">
-      <div class="settings-section-title">Учётные данные портала 1С (ИТС)</div>
-      <div class="settings-section-sub">Используются для прямого скачивания обновлений с releases.1c.ru</div>
-      <div class="alert alert-warning">
-        ${icn_alert()}
-        <div><strong>Данные хранятся только в вашем браузере</strong> (localStorage) и никуда не передаются. Пароль сохраняется в base64-кодировке — не используйте эту функцию на публичных компьютерах.</div>
-      </div>
-      <div class="field">
-        <label class="label">Логин</label>
-        <input class="input" id="its-login" type="text" placeholder="56341-53" value="${creds.login}">
-      </div>
-      <div class="field">
-        <label class="label">Пароль</label>
-        <input class="input" id="its-pw" type="password" placeholder="••••••••" value="${creds.password}">
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="save_its_form()">${icn_check()} Сохранить</button>
-        <button class="btn btn-secondary" onclick="clear_its()">Удалить данные</button>
-      </div>
-      ${creds.login ? `<div class="hint" style="margin-top:10px;color:var(--green)">${icn_check()} Данные сохранены для: ${creds.login}</div>` : ''}
-    </div>
-    <div class="settings-section fade-up fade-up-1">
       <div class="settings-section-title">Тема оформления</div>
       <div class="settings-section-sub">По умолчанию используется системная тема браузера</div>
       <div class="theme-opts">
