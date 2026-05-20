@@ -40,16 +40,28 @@ function edgeHash(
   return sha256(`${configName}\u0000${from}\u0000${to}\u0000${cfu}`);
 }
 
-export async function runImport(argPath?: string) {
+export interface LstImportOptions {
+  /** Log callback for admin UI; if absent, output goes to stdout */
+  onLog?: (msg: string) => void;
+}
+
+export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
+  const log = (msg: string) => {
+    if (opts.onLog) opts.onLog(msg); else console.log(msg);
+  };
+
   // Source: explicit file arg / LST_FILE env -> file mode (dev/replay);
   // otherwise stream from ITS with Basic auth (production).
   const _argPath = argPath ?? process.argv[2];
   const startedAt = new Date();
+
+  log("Загрузка файла...");
   const fetched = await resolveLst(_argPath);
   const raw = fetched.text;
   const fileSha = sha256(raw);
   const fileBytes = fetched.bytes;
-  console.log(`source: ${fetched.source} (${(fileBytes/1024/1024).toFixed(1)} MB)`);
+  log(`Источник: ${fetched.source} (${(fileBytes / 1024 / 1024).toFixed(1)} МБ)`);
+  log(`SHA-256: ${fileSha.slice(0, 16)}…`);
 
   // ── File-level delta ──────────────────────────────────────────────────
   const lastOk = await db
@@ -68,19 +80,18 @@ export async function runImport(argPath?: string) {
       message: "identical file (sha match) — no-op",
       finishedAt: new Date(),
     });
-    console.log(
-      `SKIP: file identical to last successful import (sha ${fileSha.slice(0, 12)}…). Nothing to do.`,
-    );
-    await pool.end();
+    log(`Файл не изменился (sha совпадает) — импорт пропущен`);
     return;
   }
 
   // ── Config id cache (name -> id), created on demand ───────────────────
+  log("Загрузка списка конфигураций из БД...");
   const cfgCache = new Map<string, number>();
   const existingCfgs = await db
     .select({ id: configurations.id, name: configurations.name })
     .from(configurations);
   for (const c of existingCfgs) cfgCache.set(c.name, c.id);
+  log(`Известно конфигураций: ${cfgCache.size}`);
 
   async function configId(name: string, vendor: string): Promise<number> {
     const hit = cfgCache.get(name);
@@ -163,7 +174,11 @@ export async function runImport(argPath?: string) {
     pending.push(p);
   }
 
+  log("Парсинг LST...");
   const stats = parseLstStream(raw, handleRecord);
+  log(`Распарсено: ${stats.configsFound} конфигов, ${stats.packagesEmitted} пакетов`);
+
+  log(`Запись в БД (${pending.length} операций)...`);
   await Promise.all(pending);
 
   await db.insert(importRuns).values({
@@ -179,19 +194,18 @@ export async function runImport(argPath?: string) {
     finishedAt: new Date(),
   });
 
-  console.log(
-    `OK: configs=${stats.configsFound} packages=${stats.packagesEmitted} ` +
-      `edges new/changed=${edgesUpserted} unchanged=${edgesUnchanged} ` +
-      `(${((Date.now() - startedAt.getTime()) / 1000).toFixed(1)}s)`,
+  const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
+  log(
+    `Готово: конфигов=${stats.configsFound}, пакетов=${stats.packagesEmitted}, ` +
+    `новых/изменённых рёбер=${edgesUpserted}, без изменений=${edgesUnchanged} (${elapsed}с)`,
   );
-  await pool.end();
 }
 
 import { fileURLToPath } from "node:url";
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runImport().catch(async (e) => {
+  runImport().then(() => pool.end()).catch(async (e) => {
     console.error("IMPORT FAILED:", e);
-    try { await pool.end(); } catch {}
+    try { await pool.end(); } catch (_) { /* ignore */ }
     process.exit(1);
   });
 }

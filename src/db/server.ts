@@ -68,8 +68,7 @@ async function safeAdminImport(source: "lst" | "releases") {
   addImportLog(source, "Импорт запущен");
   try {
     if (source === "lst") {
-      await runImport();
-      addImportLog(source, "LST импорт завершён");
+      await runImport(undefined, { onLog: (msg) => addImportLog(source, msg) });
     } else {
       await runReleasesImport(undefined, undefined, {
         syncTotalPage: true,

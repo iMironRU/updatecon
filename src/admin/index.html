@@ -500,9 +500,8 @@ async function triggerImport(source) {
       logLine(logEl, now(), '✗ Ошибка: ' + (data.error || r.status));
       setImportRunning(false, source);
       return;
-    } else {
-      logLine(logEl, now(), 'Запрос принят, ожидаем...');
     }
+    // success: server logs will appear via polling — no client-side "accepted" line
 
     // Start polling live log
     if (importPolling) clearInterval(importPolling);
