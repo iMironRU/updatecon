@@ -26,6 +26,8 @@ services:
       PORT: 3000
       ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      ITS_LOGIN: ${ITS_LOGIN:-}
+      ITS_PASSWORD: ${ITS_PASSWORD:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
     command: ["node", "dist/db/server.js"]
