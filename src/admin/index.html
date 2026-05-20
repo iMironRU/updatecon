@@ -293,12 +293,7 @@ function show(page) {
 }
 
 function logout() {
-  // Re-authenticate with wrong creds to clear Basic Auth session.
-  // Most browsers forget credentials when a 401 is received on a new fetch.
-  fetch(location.origin + '/admin/api/status', {
-    headers: { Authorization: 'Basic ' + btoa('logout:logout') }
-  }).catch(() => {});
-  setTimeout(() => { window.location.reload(); }, 100);
+  window.location.href = '/admin/logout';
 }
 
 async function apiFetch(path) {

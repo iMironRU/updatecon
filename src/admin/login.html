@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Апдейкон — Вход</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
+  --border: #30363d; --text: #e6edf3; --muted: #8b949e; --light: #484f58;
+  --blue: #58a6ff; --green: #3fb950; --red: #f85149;
+  --orange: #d29922; --purple: #bc8cff;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6;
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 20px;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.login-card {
+  width: 100%; max-width: 360px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+}
+.login-header {
+  padding: 28px 28px 20px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.login-logo {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 20px; font-weight: 700; color: var(--text);
+  margin-bottom: 4px;
+}
+.login-logo-badge {
+  background: var(--orange); color: #000; font-size: 10px;
+  font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing: .5px;
+}
+.login-subtitle { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+.login-body { padding: 24px 28px 28px; }
+
+.error-alert {
+  background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3);
+  color: var(--red); border-radius: 6px; padding: 10px 14px;
+  font-size: 13px; margin-bottom: 18px; display: none; align-items: center; gap: 8px;
+}
+.error-alert.show { display: flex; }
+
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-size: 12px; color: var(--muted);
+  margin-bottom: 6px; font-weight: 500;
+}
+.field input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 12px; color: var(--text); font-size: 14px;
+  font-family: inherit; outline: none; transition: border-color .15s;
+}
+.field input:focus { border-color: var(--blue); }
+.field input::placeholder { color: var(--light); }
+
+.btn-submit {
+  width: 100%; padding: 9px 16px; background: #238636; color: #fff;
+  border: 1px solid rgba(240,246,252,.1); border-radius: 6px;
+  font-size: 14px; font-weight: 500; cursor: pointer;
+  font-family: inherit; transition: background .15s; margin-top: 4px;
+}
+.btn-submit:hover { background: #2ea043; }
+
+.login-footer {
+  text-align: center; padding: 14px 28px;
+  border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--muted);
+}
+
+/* Lock icon */
+.lock-icon {
+  width: 40px; height: 40px; margin: 0 auto 12px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="login-header">
+    <div class="lock-icon">🔒</div>
+    <div class="login-logo">
+      Апдейкон
+      <span class="login-logo-badge">ADMIN</span>
+    </div>
+    <div class="login-subtitle">Вход в панель управления</div>
+  </div>
+
+  <div class="login-body">
+    <div class="error-alert" id="err-alert">
+      <span>⚠</span>
+      <span>Неверный логин или пароль</span>
+    </div>
+
+    <form method="POST" action="/admin/login">
+      <div class="field">
+        <label for="username">Логин</label>
+        <input type="text" id="username" name="username"
+               placeholder="admin" autocomplete="username"
+               autofocus required>
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input type="password" id="password" name="password"
+               placeholder="••••••••" autocomplete="current-password"
+               required>
+      </div>
+      <button type="submit" class="btn-submit">Войти</button>
+    </form>
+  </div>
+
+  <div class="login-footer">
+    <a href="/admin/forgot-password">Забыли пароль?</a>
+  </div>
+</div>
+
+<script>
+  // Show error if ?error=1 in URL
+  if (new URLSearchParams(location.search).get('error') === '1') {
+    document.getElementById('err-alert').classList.add('show');
+  }
+</script>
+</body>
+</html>

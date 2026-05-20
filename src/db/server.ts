@@ -11,7 +11,7 @@
  *   GET  /api/stats                        -> import/run summary
  *   GET  /*                                -> static UI (public/)
  *
- * Admin endpoints (Basic Auth via ADMIN_LOGIN / ADMIN_PASSWORD):
+ * Admin endpoints (cookie session auth via ADMIN_LOGIN / ADMIN_PASSWORD):
  *   GET  /admin                            -> admin UI
  *   GET  /admin/api/status                 -> cron, its_login, recent runs
  *   GET  /admin/api/logs                   -> last 50 import runs
@@ -22,11 +22,13 @@
 
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
-import fastifyBasicAuth from "@fastify/basic-auth";
+import fastifyCookie from "@fastify/cookie";
+import fastifyFormbody from "@fastify/formbody";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { request as httpsRequest } from "node:https";
+import { randomBytes } from "node:crypto";
 import { sql, eq, desc } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns, patches } from "./schema.js";
@@ -59,37 +61,87 @@ async function safeAdminImport(source: "lst" | "releases") {
 export async function buildServer() {
   const app = Fastify({ logger: true });
 
-  // ── Admin Basic Auth ──────────────────────────────────────────────────────
-  const adminLogin = process.env.ADMIN_LOGIN ?? "admin";
+  // ── Admin session auth (cookie-based) ─────────────────────────────────────
+  const adminLogin    = process.env.ADMIN_LOGIN    ?? "admin";
   const adminPassword = process.env.ADMIN_PASSWORD ?? "admin";
+  const COOKIE_NAME   = "uc_admin_session";
+  const COOKIE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
-  await app.register(fastifyBasicAuth, {
-    validate(username, password, _req, _reply, done) {
-      if (username === adminLogin && password === adminPassword) {
-        done();
-      } else {
-        done(new Error("Wrong credentials"));
+  // In-memory session store: token → expiry timestamp
+  const sessions = new Map<string, number>();
+
+  function createSession(): string {
+    const token = randomBytes(32).toString("hex");
+    sessions.set(token, Date.now() + COOKIE_TTL_MS);
+    // Purge expired sessions
+    for (const [t, exp] of sessions) if (exp < Date.now()) sessions.delete(t);
+    return token;
+  }
+
+  function isValidSession(token: string | undefined): boolean {
+    if (!token) return false;
+    const exp = sessions.get(token);
+    if (!exp || exp < Date.now()) { sessions.delete(token ?? ""); return false; }
+    return true;
+  }
+
+  await app.register(fastifyCookie);
+  await app.register(fastifyFormbody);
+
+  // Hook: protect all /admin/* routes (except login pages)
+  app.addHook("onRequest", async (req, reply) => {
+    const url = req.url.split("?")[0];
+    if (!url.startsWith("/admin")) return;
+    if (url === "/admin/login" || url === "/admin/forgot-password") return;
+    const token = (req.cookies as Record<string, string>)[COOKIE_NAME];
+    if (!isValidSession(token)) {
+      if (url.startsWith("/admin/api/")) {
+        return reply.status(401).send({ error: "Unauthorized" });
       }
-    },
-    authenticate: { realm: "Updatcon Admin" },
+      return reply.redirect("/admin/login");
+    }
+  });
+
+  // ── Admin login pages ─────────────────────────────────────────────────────
+  const loginHtml       = readFileSync(join(__dirname, "../admin/login.html"), "utf-8");
+  const forgotHtml      = readFileSync(join(__dirname, "../admin/forgot-password.html"), "utf-8");
+
+  app.get("/admin/login", async (_req, reply) =>
+    reply.type("text/html").send(loginHtml));
+
+  app.get("/admin/forgot-password", async (_req, reply) =>
+    reply.type("text/html").send(forgotHtml));
+
+  app.post("/admin/login", async (req, reply) => {
+    const body = req.body as Record<string, string> | undefined ?? {};
+    const { username = "", password = "" } = body;
+    if (username === adminLogin && password === adminPassword) {
+      const token = createSession();
+      reply.setCookie(COOKIE_NAME, token, {
+        path: "/admin",
+        httpOnly: true,
+        sameSite: "strict",
+        maxAge: COOKIE_TTL_MS / 1000,
+      });
+      return reply.redirect("/admin");
+    }
+    // Wrong credentials — redirect back with error flag
+    return reply.redirect("/admin/login?error=1");
+  });
+
+  app.get("/admin/logout", async (_req, reply) => {
+    reply.clearCookie(COOKIE_NAME, { path: "/admin" });
+    return reply.redirect("/admin/login");
   });
 
   // ── Admin HTML ────────────────────────────────────────────────────────────
-  const adminHtml = readFileSync(
-    join(__dirname, "../admin/index.html"),
-    "utf-8",
-  );
+  const adminHtml = readFileSync(join(__dirname, "../admin/index.html"), "utf-8");
 
-  app.get(
-    "/admin",
-    { onRequest: app.basicAuth },
-    async (_req, reply) => {
-      return reply.type("text/html").send(adminHtml);
-    },
-  );
+  app.get("/admin", async (_req, reply) =>
+    reply.type("text/html").send(adminHtml));
 
   // ── Admin API ─────────────────────────────────────────────────────────────
-  app.get("/admin/api/status", { onRequest: app.basicAuth }, async () => {
+  app.get("/admin/api/status", async () => {
     const recentRuns = await db
       .select()
       .from(importRuns)
@@ -115,7 +167,7 @@ export async function buildServer() {
     };
   });
 
-  app.get("/admin/api/logs", { onRequest: app.basicAuth }, async (req) => {
+  app.get("/admin/api/logs", async (req) => {
     const limit = Math.min(Number((req.query as any).limit ?? 50), 200);
     const runs = await db
       .select()
@@ -127,7 +179,6 @@ export async function buildServer() {
 
   app.get(
     "/admin/api/import/status",
-    { onRequest: app.basicAuth },
     async () => {
       const lastRun =
         (await db
@@ -141,7 +192,6 @@ export async function buildServer() {
 
   app.post(
     "/admin/api/import/lst",
-    { onRequest: app.basicAuth },
     async (_req, reply) => {
       if (importRunning["lst"]) {
         return reply.status(409).send({ error: "LST import already running" });
@@ -160,7 +210,6 @@ export async function buildServer() {
 
   app.post(
     "/admin/api/import/releases",
-    { onRequest: app.basicAuth },
     async (_req, reply) => {
       if (importRunning["releases"]) {
         return reply
