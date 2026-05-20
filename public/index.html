@@ -1225,17 +1225,14 @@ async function cfg_do_chain(id) {
   try { r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV }); }
   catch(e) { result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>Ошибка сервера</span></div>`; return; }
 
-  if (r.note && !r.found) {
-    result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>${r.note}</span></div>`;
-    return;
-  }
   if (!r.found) {
-    result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Версия ${fromV} уже актуальна или совпадает с целевой</span></div>`;
+    const msg = r.note || 'Цепочка не найдена';
+    result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>${msg}</span></div>`;
     return;
   }
   const steps = chain_response_to_steps(r, cfg);
   if (!steps?.length) {
-    result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Обновление не требуется</span></div>`;
+    result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Версия ${fromV} уже актуальна</span></div>`;
     return;
   }
   CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
@@ -1264,6 +1261,11 @@ async function bind_chain_page(params) {
   try { r = await apiFetch('/api/chain', { config: cfg.configName, from, to: toV }); }
   catch(e) { el.innerHTML = `<div class="alert alert-warning">${icn_alert()} Ошибка сервера</div>`; return; }
 
+  if (!r.found) {
+    const msg = r.note || 'Цепочка не найдена';
+    el.innerHTML = `<div class="alert alert-warning">${icn_alert()} <span>${msg}</span></div>`;
+    return;
+  }
   const steps = chain_response_to_steps(r, cfg);
   if (!steps?.length) {
     el.innerHTML = `<div class="alert alert-info">${icn_info()} <span>Версия ${from} уже актуальна</span></div>`;

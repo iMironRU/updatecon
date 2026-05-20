@@ -26,6 +26,7 @@ export interface ChainResult {
   steps: ChainStep[];
   /** number of update packages to apply */
   length: number;
+  note?: string;
 }
 
 interface Predecessor {
@@ -90,7 +91,26 @@ export async function findChain(
     frontier = nextFrontier;
   }
 
-  return { found: false, steps: [], length: 0 };
+  // BFS exhausted without reaching `to`. Diagnose why for a helpful message.
+  // Case 1: from_version has no outgoing edges at all → data gap (version too old).
+  const fromEdgeCheck = await db.execute(sql`
+    SELECT 1 FROM update_edges
+    WHERE config_id = ${configId} AND edition = ${edition} AND from_version = ${from}
+    LIMIT 1
+  `);
+  const hasFromEdges = ((fromEdgeCheck as any).rows ?? fromEdgeCheck).length > 0;
+  if (!hasFromEdges) {
+    return {
+      found: false,
+      steps: [],
+      length: 0,
+      note:
+        `Версия ${fromVersion} слишком старая — данных об обновлениях из неё нет в базе ` +
+        `(1С не публикует переходы из давних версий). ` +
+        `Сначала обновитесь вручную до любой версии из списка, затем постройте цепочку отсюда.`,
+    };
+  }
+  return { found: false, steps: [], length: 0, note: "Цепочка не найдена — нет пути в базе данных." };
 }
 
 function reconstructPath(
