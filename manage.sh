@@ -136,7 +136,8 @@ main_menu() {
   if [ "$inst" = "not_installed" ]; then
     echo -e "  ${BOLD}1.${NC}  Установить"
     echo -e "  ${DIM}2.  Обновить          — сначала установите${NC}"
-    echo -e "  ${DIM}3.  Удалить            — не установлено${NC}"
+    echo -e "  ${DIM}3.  Настройки .env    — сначала установите${NC}"
+    echo -e "  ${DIM}4.  Удалить            — не установлено${NC}"
   else
     echo -e "  ${DIM}1.  Установить        — уже установлено${NC}"
     case "$upd" in
@@ -150,7 +151,8 @@ main_menu() {
         echo -e "  ${BOLD}2.${NC}  Обновить"
         ;;
     esac
-    echo -e "  ${BOLD}3.${NC}  Удалить"
+    echo -e "  ${BOLD}3.${NC}  Настройки .env    ${DIM}(пароли, ИТС, порт)${NC}"
+    echo -e "  ${BOLD}4.${NC}  Удалить"
   fi
 
   echo
@@ -165,7 +167,7 @@ main_menu() {
   case "$choice" in
     1)
       if [ "$inst" = "installed" ]; then
-        warn "Уже установлен. Для переустановки сначала удалите (пункт 3)."
+        warn "Уже установлен. Для переустановки сначала удалите (пункт 4)."
         echo; read -rp "  Нажмите Enter..." _; main_menu
       else
         do_install
@@ -181,6 +183,13 @@ main_menu() {
         do_update
       fi ;;
     3)
+      if [ "$inst" = "not_installed" ]; then
+        err "Апдейкон не установлен."; echo
+        read -rp "  Нажмите Enter..." _; main_menu
+      else
+        do_settings
+      fi ;;
+    4)
       if [ "$inst" = "not_installed" ]; then
         err "Апдейкон не установлен."; echo
         read -rp "  Нажмите Enter..." _; main_menu
@@ -352,6 +361,137 @@ do_install() {
   echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
   echo
   rm -f "$LOG_FILE"
+}
+
+# ── Настройки .env ───────────────────────────────────────────────────────────
+do_settings() {
+  local dir; dir="$(_find_project_dir)"
+  local dc; dc="$(_detect_dc)"
+  local env_file="${dir}/.env"
+
+  if [ ! -f "$env_file" ]; then
+    err "Файл .env не найден: $env_file"; echo
+    read -rp "  Нажмите Enter..." _; main_menu; return
+  fi
+
+  # ── Вспомогательные функции ──────────────────────────────────────────────────
+  # Читает значение переменной из .env
+  _env_get() { grep -E "^${1}=" "$env_file" 2>/dev/null | cut -d= -f2- || true; }
+
+  # Устанавливает (или добавляет) переменную в .env
+  _env_set() {
+    local key="$1" val="$2"
+    if grep -qE "^${key}=" "$env_file" 2>/dev/null; then
+      # Заменяем существующую строку
+      local tmpf; tmpf=$(mktemp)
+      grep -v "^${key}=" "$env_file" > "$tmpf"
+      echo "${key}=${val}" >> "$tmpf"
+      mv "$tmpf" "$env_file"
+    else
+      echo "${key}=${val}" >> "$env_file"
+    fi
+  }
+
+  settings_menu() {
+    echo
+    echo -e "${CYAN}${BOLD}  ▶  Настройки .env${NC}"
+    echo -e "${CYAN}  ──────────────────────────────────────────${NC}"
+    echo
+
+    local admin_login; admin_login="$(_env_get ADMIN_LOGIN)"
+    local its_login;   its_login="$(_env_get ITS_LOGIN)"
+    local web_port;    web_port="$(_env_get WEB_PORT)"
+
+    # Маскируем пароли — показываем только наличие
+    local admin_set its_set
+    [ -n "$(_env_get ADMIN_PASSWORD)" ] && admin_set="${GREEN}задан${NC}" || admin_set="${YELLOW}не задан${NC}"
+    [ -n "$(_env_get ITS_PASSWORD)" ]   && its_set="${GREEN}задан${NC}"   || its_set="${YELLOW}не задан${NC}"
+
+    echo -e "  ${BOLD}1.${NC}  Логин админки       ${DIM}${admin_login:-не задан}${NC}"
+    echo -e "  ${BOLD}2.${NC}  Пароль админки      $(echo -e "${admin_set}")"
+    echo -e "  ${BOLD}3.${NC}  ИТС логин           ${DIM}${its_login:-не задан}${NC}"
+    echo -e "  ${BOLD}4.${NC}  ИТС пароль          $(echo -e "${its_set}")"
+    echo -e "  ${BOLD}5.${NC}  Внешний порт        ${DIM}${web_port:-80}${NC}"
+    echo
+    echo -e "  ${BOLD}0.${NC}  Назад"
+    echo
+    echo -e "${CYAN}  ──────────────────────────────────────────${NC}"
+    echo
+
+    local schoice
+    read -rp "  Введите номер: " schoice
+
+    case "$schoice" in
+      1)
+        local cur; cur="$(_env_get ADMIN_LOGIN)"
+        read -rp "  Логин админки [${cur:-admin}]: " v
+        v="${v:-${cur:-admin}}"
+        _env_set ADMIN_LOGIN "$v"
+        log "ADMIN_LOGIN сохранён: $v"
+        _apply_env "$dir" "$dc" && echo
+        settings_menu ;;
+      2)
+        local p1 p2
+        read -rsp "  Новый пароль: " p1; echo
+        [ -z "$p1" ] && { warn "Пустой пароль — отмена."; echo; settings_menu; return; }
+        read -rsp "  Повторите:   " p2; echo
+        [ "$p1" != "$p2" ] && { err "Пароли не совпадают."; echo; settings_menu; return; }
+        _env_set ADMIN_PASSWORD "$p1"
+        log "ADMIN_PASSWORD сохранён"
+        _apply_env "$dir" "$dc" && echo
+        settings_menu ;;
+      3)
+        local cur; cur="$(_env_get ITS_LOGIN)"
+        read -rp "  ИТС логин [${cur}]: " v
+        v="${v:-$cur}"
+        [ -z "$v" ] && { warn "Пусто — оставляем без изменений."; echo; settings_menu; return; }
+        _env_set ITS_LOGIN "$v"
+        log "ITS_LOGIN сохранён: $v"
+        _apply_env "$dir" "$dc" && echo
+        settings_menu ;;
+      4)
+        local p1 p2
+        read -rsp "  ИТС пароль: " p1; echo
+        [ -z "$p1" ] && { warn "Пустой пароль — отмена."; echo; settings_menu; return; }
+        read -rsp "  Повторите:  " p2; echo
+        [ "$p1" != "$p2" ] && { err "Пароли не совпадают."; echo; settings_menu; return; }
+        _env_set ITS_PASSWORD "$p1"
+        log "ITS_PASSWORD сохранён"
+        _apply_env "$dir" "$dc" && echo
+        settings_menu ;;
+      5)
+        local cur; cur="$(_env_get WEB_PORT)"
+        read -rp "  Внешний порт [${cur:-80}]: " v
+        v="${v:-${cur:-80}}"
+        if ! echo "$v" | grep -qE '^[0-9]+$' || [ "$v" -lt 1 ] || [ "$v" -gt 65535 ]; then
+          err "Некорректный порт."; echo; settings_menu; return
+        fi
+        _env_set WEB_PORT "$v"
+        log "WEB_PORT сохранён: $v"
+        _apply_env "$dir" "$dc" && echo
+        settings_menu ;;
+      0|"")
+        main_menu ;;
+      *)
+        err "Неверный выбор."; echo; settings_menu ;;
+    esac
+  }
+
+  settings_menu
+}
+
+# Применяет изменения .env — перезапускает web и worker без остановки БД
+_apply_env() {
+  local dir="$1" dc="$2"
+  printf "  ${CYAN}⠋${NC}  Применяем настройки..."
+  (cd "$dir" && $dc up -d web worker) >> "$LOG_FILE" 2>&1
+  local rc=$?
+  if [ $rc -eq 0 ]; then
+    printf "\r  ${GREEN}✓${NC}  Настройки применены — сервисы перезапущены   \n"
+  else
+    printf "\r  ${YELLOW}!${NC}  Не удалось перезапустить — проверьте: $dc logs web\n"
+  fi
+  return $rc
 }
 
 # ── Обновление ────────────────────────────────────────────────────────────────
