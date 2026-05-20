@@ -523,8 +523,9 @@ async function pollImportLog(source) {
     const wasAtBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
 
     // Append new lines
-    for (const entry of (data.lines || [])) {
-      logLine(logEl, entry.ts, entry.text);
+    var lines = data.lines || [];
+    for (var li = 0; li < lines.length; li++) {
+      logLine(logEl, lines[li].ts, lines[li].text);
     }
     importLogOffset = data.total;
 
@@ -540,22 +541,24 @@ async function pollImportLog(source) {
       clearInterval(importPolling);
       importPolling = null;
       setImportRunning(false, source);
-      updateProgress(data.progress?.total || 0, data.progress?.total || 0);
+      var progTotal = (data.progress && data.progress.total) ? data.progress.total : 0;
+      updateProgress(progTotal, progTotal);
 
       // Show summary from import_runs
       try {
-        const status = await apiFetch('/admin/api/import/status');
-        const run = status.lastRun;
+        var st = await apiFetch('/admin/api/import/status');
+        var run = st.lastRun;
         if (run) {
           document.getElementById('import-summary').innerHTML =
             badge(run.status) + ' &nbsp; Завершено за ' + fmtDur(run.startedAt, run.finishedAt) +
             (run.edgesUpserted ? ' &nbsp;·&nbsp; добавлено: ' + run.edgesUpserted.toLocaleString('ru') : '') +
             (run.edgesUnchanged ? ' &nbsp;·&nbsp; без изменений: ' + run.edgesUnchanged.toLocaleString('ru') : '');
         }
-      } catch(_) {}
+      } catch(ignored) { /* summary is optional */ }
     }
-  } catch(e) {
+  } catch(pollErr) {
     // network blip — keep polling
+    void pollErr;
   }
 }
 
@@ -573,19 +576,21 @@ function now() {
 
 // Resume monitoring if import is already running when page is opened
 async function checkRunningImport() {
-  try {
-    for (const src of ['lst', 'releases']) {
-      const data = await apiFetch('/admin/api/import/log?source=' + src + '&offset=0');
-      if (data.running) {
+  var sources = ['lst', 'releases'];
+  for (var si = 0; si < sources.length; si++) {
+    var src = sources[si];
+    try {
+      var chkData = await apiFetch('/admin/api/import/log?source=' + src + '&offset=0');
+      if (chkData.running) {
         importActiveSource = src;
-        importLogOffset = data.total; // start from current end, only new lines
+        importLogOffset = chkData.total;
         setImportRunning(true, src);
         if (importPolling) clearInterval(importPolling);
-        importPolling = setInterval(() => pollImportLog(src), 1500);
+        importPolling = setInterval(function() { pollImportLog(importActiveSource); }, 1500);
         break;
       }
-    }
-  } catch(_) {}
+    } catch(chkErr) { void chkErr; }
+  }
 }
 
 // Init

@@ -385,10 +385,10 @@ do_settings() {
       # Заменяем существующую строку
       local tmpf; tmpf=$(mktemp)
       grep -v "^${key}=" "$env_file" > "$tmpf"
-      echo "${key}=${val}" >> "$tmpf"
+      printf '%s=%s\n' "$key" "$val" >> "$tmpf"
       mv "$tmpf" "$env_file"
     else
-      echo "${key}=${val}" >> "$env_file"
+      printf '%s=%s\n' "$key" "$val" >> "$env_file"
     fi
   }
 

@@ -501,8 +501,7 @@ async function initData() {
       total_configs: stats.configurations || 0,
       total_versions: stats.versions || 0,
     };
-    const v = document.getElementById('footer-ver');
-    if (v) v.textContent = 'live · ' + (stats.last_updated || '—');
+    // footer-ver is updated by init_version_badge()
   } catch(e) {
     console.error('initData failed:', e);
     // Do NOT set CONFIGS_LOADED on failure — allows retry on next route() call.
@@ -1410,6 +1409,10 @@ async function init_version_badge() {
   const date_str = is_dev ? 'dev' : current.date.slice(0, 10); // YYYY-MM-DD
   chip.textContent = is_dev ? 'dev' : `${date_str} · ${current.commit}`;
   chip.title = `Сборка: ${current.date}`;
+
+  // Also update footer badge
+  const footerVer = document.getElementById('footer-ver');
+  if (footerVer) footerVer.textContent = is_dev ? 'dev' : `${current.commit} · ${date_str}`;
 
   if (is_dev) return; // no update check in dev mode
 
