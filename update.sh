@@ -71,22 +71,7 @@ echo
 
 cd "$PROJECT_DIR"
 
-# Фиксируем текущий digest образа (чтобы понять — было ли обновление)
-IMAGE="ghcr.io/imironru/updatecon:latest"
-BEFORE_DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo 'none')"
-
-run_spin "Скачиваем новый образ" $DC pull
-
-AFTER_DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo 'none')"
-
-if [ "$BEFORE_DIGEST" = "$AFTER_DIGEST" ] && [ "$BEFORE_DIGEST" != "none" ]; then
-  log "Уже актуальная версия — перезапуска не требуется"
-  echo
-  echo -e "${GREEN}${BOLD}  ✓  Апдейкон актуален.${NC}"
-  echo
-  rm -f "$LOG_FILE"
-  exit 0
-fi
+run_spin "Скачиваем образ из ghcr.io" $DC pull
 
 run_spin "Перезапускаем сервисы" $DC up -d
 
