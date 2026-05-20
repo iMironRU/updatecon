@@ -90,6 +90,21 @@ docker compose up -d
 
 Принудительный запуск через админку: `/admin` → вкладка «Импорт».
 
+## Обновление
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/update.sh)
+```
+
+Или если директория уже есть:
+
+```bash
+bash ~/updatecon/update.sh
+```
+
+Скрипт: получает изменения из GitHub, пересобирает образы, перезапускает сервисы.
+`.env` и данные PostgreSQL не трогаются. Если версия уже актуальна — пересборки не будет.
+
 ## Удаление
 
 ```bash
