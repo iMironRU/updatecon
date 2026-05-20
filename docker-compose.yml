@@ -15,6 +15,7 @@ services:
       retries: 10
 
   web:
+    image: ghcr.io/imironru/updatecon:latest
     build: .
     restart: unless-stopped
     depends_on:
@@ -30,6 +31,7 @@ services:
     command: ["node", "dist/db/server.js"]
 
   worker:
+    image: ghcr.io/imironru/updatecon:latest
     build: .
     restart: unless-stopped
     depends_on:

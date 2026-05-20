@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# update.sh — обновление Апдейкон до последней версии из GitHub.
+# update.sh — обновление Апдейкон до последней версии.
 #
 #   bash update.sh
 #   bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/update.sh)
 #
-# Безопасен для повторного запуска: .env и данные не трогаются.
+# Скачивает готовый Docker-образ из ghcr.io и перезапускает сервисы.
+# .env и данные PostgreSQL не трогаются.
 
 set -euo pipefail
 
@@ -14,7 +15,6 @@ CYAN='\033[1;36m'; BOLD='\033[1m'; NC='\033[0m'
 log()  { printf "${GREEN}  ✓${NC}  %s\n" "$*"; }
 warn() { printf "${YELLOW}  !${NC}  %s\n" "$*"; }
 err()  { printf "${RED}  ✗${NC}  %s\n" "$*" >&2; }
-step() { printf "${CYAN}${BOLD}▶${NC}  %s\n" "$*"; }
 
 LOG_FILE="/tmp/updatecon-update-$(date +%Y%m%d-%H%M%S).log"
 
@@ -61,8 +61,7 @@ if docker compose version >/dev/null 2>&1; then
 elif command -v docker-compose >/dev/null 2>&1; then
   DC="docker-compose"
 else
-  err "Docker Compose не найден."
-  exit 1
+  err "Docker Compose не найден."; exit 1
 fi
 
 echo
@@ -72,31 +71,24 @@ echo
 
 cd "$PROJECT_DIR"
 
-# ── Получаем обновления ───────────────────────────────────────────────────────
-BEFORE="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
+# Фиксируем текущий digest образа (чтобы понять — было ли обновление)
+IMAGE="ghcr.io/imironru/updatecon:latest"
+BEFORE_DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo 'none')"
 
-run_spin "Получаем обновления из GitHub" git pull --ff-only
+run_spin "Скачиваем новый образ" $DC pull
 
-AFTER="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
+AFTER_DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo 'none')"
 
-if [ "$BEFORE" = "$AFTER" ]; then
-  log "Уже актуальная версия — пересборки не требуется"
+if [ "$BEFORE_DIGEST" = "$AFTER_DIGEST" ] && [ "$BEFORE_DIGEST" != "none" ]; then
+  log "Уже актуальная версия — перезапуска не требуется"
   echo
   echo -e "${GREEN}${BOLD}  ✓  Апдейкон актуален.${NC}"
   echo
+  rm -f "$LOG_FILE"
   exit 0
 fi
 
-# Показываем что изменилось
-echo
-echo -e "  ${BOLD}Изменения:${NC}"
-git log --oneline "${BEFORE}..${AFTER}" | sed 's/^/    /' || true
-echo
-
-# ── Пересборка и перезапуск ───────────────────────────────────────────────────
-run_spin "Сборка образов" $DC build
-
-run_spin "Перезапуск сервисов" $DC up -d
+run_spin "Перезапускаем сервисы" $DC up -d
 
 # ── Проверка ──────────────────────────────────────────────────────────────────
 PORT="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d= -f2 || echo 3000)"
