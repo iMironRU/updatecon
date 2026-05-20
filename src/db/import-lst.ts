@@ -116,70 +116,76 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
     return id;
   }
 
-  let configsFound = 0;
   let edgesUpserted = 0;
   let edgesUnchanged = 0;
-  const pending: Promise<void>[] = [];
 
   // Process one parsed record: fan out into from->to edges.
-  function handleRecord(rec: UpdateRecord) {
-    configsFound++;
-    const p = (async () => {
-      const cid = await configId(rec.name, rec.vendor);
-      const toPv = parseVersion(rec.version);
-      if (!toPv) return;
-      const edition = toPv.segments[0] ?? 0;
+  async function processRecord(rec: UpdateRecord): Promise<void> {
+    const cid = await configId(rec.name, rec.vendor);
+    const toPv = parseVersion(rec.version);
+    if (!toPv) return;
+    const edition = toPv.segments[0] ?? 0;
 
-      for (const from of rec.fromVersions) {
-        const h = edgeHash(rec.name, from, rec.version, rec.cfuPath);
-        const res = await db
-          .insert(updateEdges)
-          .values({
-            configId: cid,
-            fromVersion: from,
-            toVersion: rec.version,
-            edition,
-            cfuPath: rec.cfuPath,
-            contentHash: h,
-            rawJson: rec,
+    for (const from of rec.fromVersions) {
+      const h = edgeHash(rec.name, from, rec.version, rec.cfuPath);
+      const res = await db
+        .insert(updateEdges)
+        .values({
+          configId: cid,
+          fromVersion: from,
+          toVersion: rec.version,
+          edition,
+          cfuPath: rec.cfuPath,
+          contentHash: h,
+          rawJson: rec,
+          lastSeenAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [
+            updateEdges.configId,
+            updateEdges.fromVersion,
+            updateEdges.toVersion,
+          ],
+          set: {
             lastSeenAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [
-              updateEdges.configId,
-              updateEdges.fromVersion,
-              updateEdges.toVersion,
-            ],
-            set: {
-              lastSeenAt: new Date(),
-              // Rewrite payload only when the content actually changed.
-              cfuPath: sql`CASE WHEN ${updateEdges.contentHash} <> ${h}
-                                THEN excluded.cfu_path ELSE ${updateEdges.cfuPath} END`,
-              contentHash: sql`excluded.content_hash`,
-              rawJson: sql`CASE WHEN ${updateEdges.contentHash} <> ${h}
-                                THEN excluded.raw_json ELSE ${updateEdges.rawJson} END`,
-            },
-            setWhere: sql`true`,
-          })
-          .returning({
-            inserted: sql<boolean>`(xmax = 0)`,
-            hashNow: updateEdges.contentHash,
-          });
+            // Rewrite payload only when the content actually changed.
+            cfuPath: sql`CASE WHEN ${updateEdges.contentHash} <> ${h}
+                              THEN excluded.cfu_path ELSE ${updateEdges.cfuPath} END`,
+            contentHash: sql`excluded.content_hash`,
+            rawJson: sql`CASE WHEN ${updateEdges.contentHash} <> ${h}
+                              THEN excluded.raw_json ELSE ${updateEdges.rawJson} END`,
+          },
+          setWhere: sql`true`,
+        })
+        .returning({
+          inserted: sql<boolean>`(xmax = 0)`,
+          hashNow: updateEdges.contentHash,
+        });
 
-        // Heuristic: a brand-new row, or hash differs from what we wrote.
-        if (res.length > 0 && (res[0] as any).inserted) edgesUpserted++;
-        else edgesUnchanged++;
-      }
-    })();
-    pending.push(p);
+      // Heuristic: a brand-new row, or hash differs from what we wrote.
+      if (res.length > 0 && (res[0] as any).inserted) edgesUpserted++;
+      else edgesUnchanged++;
+    }
   }
 
+  // Collect all records first (parser is synchronous)
   log("Парсинг LST...");
-  const stats = parseLstStream(raw, handleRecord);
+  const allRecords: UpdateRecord[] = [];
+  const stats = parseLstStream(raw, (rec) => allRecords.push(rec));
   log(`Распарсено: ${stats.configsFound} конфигов, ${stats.packagesEmitted} пакетов`);
 
-  log(`Запись в БД (${pending.length} операций)...`);
-  await Promise.all(pending);
+  // Write to DB in chunks of 300 — gives progress visibility and
+  // avoids saturating the connection pool with 10k concurrent queries.
+  const CHUNK = 300;
+  const total = allRecords.length;
+  log(`Запись в БД: 0 / ${total}...`);
+  for (let i = 0; i < total; i += CHUNK) {
+    const batch = allRecords.slice(i, i + CHUNK);
+    await Promise.all(batch.map((rec) => processRecord(rec)));
+    const done = Math.min(i + CHUNK, total);
+    const pct = Math.round(done / total * 100);
+    log(`Запись в БД: ${done} / ${total} (${pct}%)`);
+  }
 
   await db.insert(importRuns).values({
     source: "lst",
