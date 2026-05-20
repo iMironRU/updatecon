@@ -25,6 +25,7 @@ import fastifyBasicAuth from "@fastify/basic-auth";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { request as httpsRequest } from "node:https";
 import { sql, eq, desc } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns } from "./schema.js";
@@ -187,7 +188,72 @@ export async function buildServer() {
     prefix: "/",
   });
 
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/health", async () => ({
+    ok: true,
+    has_its: !!(process.env.ITS_LOGIN && process.env.ITS_PASSWORD),
+  }));
+
+  // ── Proxy download via ITS (credentials stay server-side) ─────────────────
+  app.get("/api/download", async (req, reply) => {
+    const { config, from, to } = req.query as Record<string, string>;
+    if (!config || !from || !to) {
+      return reply.status(400).send({ error: "config, from, to are required" });
+    }
+    if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
+      return reply.status(503).send({ error: "ITS credentials not configured" });
+    }
+
+    // Resolve cfu_path from the edge
+    const rows = await db.execute(sql`
+      SELECT ue.cfu_path
+      FROM update_edges ue
+      JOIN configurations c ON c.id = ue.config_id
+      WHERE c.name = ${config} AND ue.from_version = ${from} AND ue.to_version = ${to}
+      LIMIT 1
+    `);
+    const edge = ((rows as any).rows ?? rows)[0] as { cfu_path: string } | undefined;
+    if (!edge?.cfu_path) {
+      return reply.status(404).send({ error: "Update edge not found" });
+    }
+
+    const urlPath = "/tmplts/" + edge.cfu_path.replace(/\\/g, "/");
+    const auth =
+      "Basic " +
+      Buffer.from(`${process.env.ITS_LOGIN}:${process.env.ITS_PASSWORD}`).toString("base64");
+    const filename = edge.cfu_path.split(/[\\/]/).pop() ?? "1cv8.cfu";
+
+    return new Promise<void>((resolve, reject) => {
+      const upstream = httpsRequest(
+        {
+          host: "downloads.v8.1c.ru",
+          path: urlPath,
+          headers: { Authorization: auth, "User-Agent": "1C+Enterprise/8.3" },
+        },
+        (res) => {
+          if (res.statusCode === 401) {
+            res.resume();
+            reply.status(502).send({ error: "ITS auth failed" });
+            return resolve();
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            reply.status(502).send({ error: `ITS returned ${res.statusCode}` });
+            return resolve();
+          }
+          void reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+          void reply.header("Content-Type", "application/octet-stream");
+          if (res.headers["content-length"]) {
+            void reply.header("Content-Length", res.headers["content-length"]);
+          }
+          reply.send(res);
+          res.on("end", resolve);
+          res.on("error", reject);
+        },
+      );
+      upstream.on("error", reject);
+      upstream.end();
+    });
+  });
 
   app.get("/api/configs", async (req) => {
     const q = String((req.query as any).q ?? "").trim();

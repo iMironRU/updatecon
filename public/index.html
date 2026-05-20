@@ -246,12 +246,14 @@ input, select, textarea { font-family: inherit; }
   font-size: 12px; font-family: var(--mono); cursor: pointer; transition: all .15s;
   color: var(--text-muted); background: var(--surface2); }
 .suggestion-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-.matched-configs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-.matched-config-item { padding: 6px 14px; background: var(--surface2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); cursor: pointer; font-size: 13px; font-weight: 600;
-  transition: all .15s; display: flex; align-items: center; gap: 6px; }
-.matched-config-item:hover, .matched-config-item.selected { border-color: var(--accent);
-  background: var(--accent-dim); color: var(--accent); }
+.matched-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-top: 8px; }
+.matched-list-header { padding: 8px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.matched-config-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background .1s; }
+.matched-config-item:last-child { border-bottom: none; }
+.matched-config-item:hover, .matched-config-item.selected { background: var(--accent-dim); }
+.matched-config-item.selected .matched-cfg-name { color: var(--accent); }
+.matched-cfg-name { font-size: 13px; font-weight: 600; flex: 1; }
+.matched-cfg-sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .stats-banner { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-h) 100%);
   border-radius: var(--r-xl); padding: 24px 28px; color: white; margin-bottom: 24px;
   display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
@@ -423,7 +425,9 @@ input, select, textarea { font-family: inherit; }
 let CONFIGS = [];
 let DB_META = { last_updated: null, total_configs: 0, total_versions: 0 };
 let CONFIGS_LOADED = false;
-const CHAIN_CACHE = {};   // `${cfgId}:${fromV}:${toV}` -> steps[]
+const CHAIN_CACHE = {};        // `${cfgId}:${fromV}:${toV}` -> steps[]
+const CHAIN_RENDER_STATE = {}; // blockId -> { steps, fromV, cfg, reversed }
+let HAS_ITS = false;           // set from /api/health
 
 async function apiFetch(path, params) {
   const url = path + (params ? '?' + new URLSearchParams(params) : '');
@@ -470,10 +474,12 @@ function adapt_config(row) {
 async function initData() {
   if (CONFIGS_LOADED) return;
   try {
-    const [rows, stats] = await Promise.all([
+    const [rows, stats, health] = await Promise.all([
       apiFetch('/api/configs'),
       apiFetch('/api/stats'),
+      apiFetch('/api/health'),
     ]);
+    HAS_ITS = !!(health?.has_its);
     CONFIGS = rows.map(adapt_config);
     CONFIGS_LOADED = true;
     DB_META = {
@@ -527,12 +533,14 @@ function chain_response_to_steps(apiResult, cfg) {
   if (!apiResult || !apiResult.found || !apiResult.steps?.length) return null;
   return apiResult.steps.map(s => ({
     v: s.toVersion,
+    from: s.fromVersion,
+    cfuPath: s.cfuPath || '',
     date: cfg?._meta?.[s.toVersion]?.release_date || null,
     mb: 0,
     plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
     req: false,
     patches: [],
-    dl: '',  // render_chain_steps constructs from cfg.nick
+    dl: '',
   }));
 }
 
@@ -657,29 +665,49 @@ function render_loading(msg) {
 /* ================================================================
    CHAIN RENDERING
    ================================================================ */
-function render_chain_steps(steps, fromV, cfg) {
+function render_chain_steps(steps, fromV, cfg, reversed) {
   if (!steps || !steps.length) return `<div class="empty"><p>Обновление не требуется или цепочка не найдена</p></div>`;
-  const total_mb = steps.reduce((s,x) => s + (x.mb||0), 0);
-  let html = `<div class="chain-wrap"><div class="chain-group fade-up">`;
+  const toV = steps[steps.length - 1].v;
+  const blockId = 'chain-' + (cfg?.id||'x') + '-' + fromV.replace(/\./g,'') + '-' + toV.replace(/\./g,'');
+  CHAIN_RENDER_STATE[blockId] = { steps, fromV, cfg, reversed: !!reversed };
+
+  const display = reversed ? [...steps].reverse() : steps;
+  const startLabel = reversed ? 'Целевая версия' : 'Текущая версия';
+  const startV = reversed ? toV : fromV;
+  const endV = reversed ? fromV : toV;
+
+  let html = `<div class="chain-wrap" id="${blockId}"><div class="chain-group fade-up">`;
   html += `<div class="chain-group-header">
     <span class="chain-group-title">${cfg ? cfg.name : ''}</span>
     <div class="chain-group-meta">
       <span class="badge badge-blue">${steps.length} шаг${steps.length===1?'':steps.length<5?'а':'ов'}</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:2px 8px" onclick="toggle_chain_dir('${blockId}')">
+        ${reversed ? '↓ Старые первыми' : '↑ Новые первыми'}
+      </button>
     </div>
   </div>`;
-  // Start step
+
+  // Start node
   html += `<div class="chain-step">
     <div class="step-indicator"><div class="step-dot start">${icn_check()}</div><div class="step-line"></div></div>
-    <div class="step-content"><div class="step-version">${fromV}</div><div class="step-date">Текущая версия</div></div>
+    <div class="step-content"><div class="step-version">${startV}</div><div class="step-date">${startLabel}</div></div>
   </div>`;
-  steps.forEach((s, i) => {
-    const is_final = i === steps.length - 1;
+
+  display.forEach((s, i) => {
+    const is_final = i === display.length - 1;
     const dot_cls = is_final ? 'final' : (s.req ? 'required' : '');
-    const dot_icon = is_final ? icn_check() : (i+1);
-    const dl_url = s.dl || (cfg?.nick
+    const dot_icon = is_final ? icn_check() : (reversed ? display.length - i : i + 1);
+    const dl_1c = s.dl || (cfg?.nick
       ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + s.v +
         '&path=' + cfg.nick + '%5c' + s.v.replace(/\./g,'_') + '%5cupdsetup.zip'
       : '');
+    const dl_its = (HAS_ITS && cfg?.configName && s.from && s.v)
+      ? '/api/download?config=' + encodeURIComponent(cfg.configName) +
+        '&from=' + encodeURIComponent(s.from) + '&to=' + encodeURIComponent(s.v)
+      : '';
+    const step_label = reversed
+      ? (is_final ? 'Текущая версия' : '')
+      : (is_final ? 'Целевая версия' : '');
     html += `<div class="chain-step">
       <div class="step-indicator">
         <div class="step-dot ${dot_cls}">${dot_icon}</div>
@@ -688,7 +716,7 @@ function render_chain_steps(steps, fromV, cfg) {
       <div class="step-content">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <div class="step-version">${s.v}</div>
-          ${is_final ? '<span class="badge badge-blue">Целевая версия</span>' : ''}
+          ${step_label ? `<span class="badge badge-blue">${step_label}</span>` : ''}
           ${s.req && !is_final ? '<span class="badge badge-orange">Обязательный</span>' : ''}
         </div>
         ${s.date ? `<div class="step-date">${fmt_date(s.date)}</div>` : ''}
@@ -697,11 +725,13 @@ function render_chain_steps(steps, fromV, cfg) {
         </div>
         ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
         <div class="step-actions">
-          <a href="${dl_url}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${dl_url}')">${icn_dl()} Скачать</a>
+          ${dl_1c ? `<a href="${dl_1c}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru</a>` : ''}
+          ${dl_its ? `<a href="${dl_its}" class="btn btn-sm btn-secondary">${icn_dl()} downloads (ИТС)</a>` : ''}
         </div>
       </div>
     </div>`;
   });
+
   html += `</div>`;
   html += `<div class="card fade-up fade-up-1">
     <div class="chain-summary">
@@ -710,12 +740,20 @@ function render_chain_steps(steps, fromV, cfg) {
         ${steps[steps.length-1]?.date ? `<div class="chain-stat"><div class="chain-stat-val">${fmt_date(steps[steps.length-1].date)}</div><div class="chain-stat-lbl">Дата релиза</div></div>` : ''}
       </div>
       <div class="chain-actions">
-        ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${steps[steps.length-1].v}')">${icn_share()} Поделиться</button>` : ''}
-        <button class="btn btn-secondary" onclick="do_copy_chain('${cfg?.id||''}','${fromV}','${steps[steps.length-1]?.v||''}')">${icn_copy()} Скопировать</button>
+        ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${toV}')">${icn_share()} Поделиться</button>` : ''}
+        <button class="btn btn-secondary" onclick="do_copy_chain('${cfg?.id||''}','${fromV}','${toV}')">${icn_copy()} Скопировать</button>
       </div>
     </div>
   </div></div>`;
   return html;
+}
+function toggle_chain_dir(blockId) {
+  const s = CHAIN_RENDER_STATE[blockId];
+  if (!s) return;
+  const el = document.getElementById(blockId);
+  if (!el) return;
+  const newHtml = render_chain_steps(s.steps, s.fromV, s.cfg, !s.reversed);
+  el.outerHTML = newHtml;
 }
 function est_time(steps) {
   const mins = steps * 30;
@@ -865,16 +903,28 @@ function home_version_input(ver) {
   _verSearchTimer = setTimeout(async () => {
     const found = await find_configs_by_version_api(ver);
     if (!found.length) {
-      el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Конфигурации с версией <code style="font-family:var(--mono)">${ver}</code> не найдены</div>`;
+      el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Версия <code style="font-family:var(--mono)">${ver}</code> не найдена в базе</div>`;
       return;
     }
-    let html = `<div style="font-size:12px;color:var(--text-light);margin-bottom:6px">Найдены конфигурации (выберите для уточнения):</div><div class="matched-configs">`;
+    el.dataset.found = found.map(c=>c.id).join(',');
+    // Single match — auto-select silently, no list needed
+    if (found.length === 1) {
+      el.dataset.selected = found[0].id;
+      el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Конфигурация: <strong>${found[0].name}</strong></div>`;
+      return;
+    }
+    let html = `<div class="matched-list">`;
+    html += `<div class="matched-list-header">Версия встречается в ${found.length} конфигурациях — выберите нужную:</div>`;
     found.forEach(c => {
-      html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">${type_badge(c.type)} ${c.name}</div>`;
+      const sub = [c.vendor, c.version_count ? c.version_count + ' версий' : ''].filter(Boolean).join(' · ');
+      html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">
+        ${type_badge(c.type)}
+        <span class="matched-cfg-name">${c.name}</span>
+        <span class="matched-cfg-sub">${sub}</span>
+      </div>`;
     });
     html += `</div>`;
     el.innerHTML = html;
-    el.dataset.found = found.map(c=>c.id).join(',');
   }, 300);
 }
 function home_select_config(id, ver) {
