@@ -407,11 +407,9 @@ do_settings() {
     [ -n "$(_env_get ADMIN_PASSWORD)" ] && admin_set="${GREEN}задан${NC}" || admin_set="${YELLOW}не задан${NC}"
     [ -n "$(_env_get ITS_PASSWORD)" ]   && its_set="${GREEN}задан${NC}"   || its_set="${YELLOW}не задан${NC}"
 
-    echo -e "  ${BOLD}1.${NC}  Логин админки       ${DIM}${admin_login:-не задан}${NC}"
-    echo -e "  ${BOLD}2.${NC}  Пароль админки      $(echo -e "${admin_set}")"
-    echo -e "  ${BOLD}3.${NC}  ИТС логин           ${DIM}${its_login:-не задан}${NC}"
-    echo -e "  ${BOLD}4.${NC}  ИТС пароль          $(echo -e "${its_set}")"
-    echo -e "  ${BOLD}5.${NC}  Внешний порт        ${DIM}${web_port:-80}${NC}"
+    echo -e "  ${BOLD}1.${NC}  Логин + пароль ИТС  ${DIM}${its_login:-не задан}${NC}  пароль: $(echo -e "${its_set}")"
+    echo -e "  ${BOLD}2.${NC}  Логин + пароль админки  ${DIM}${admin_login:-не задан}${NC}  пароль: $(echo -e "${admin_set}")"
+    echo -e "  ${BOLD}3.${NC}  Внешний порт        ${DIM}${web_port:-80}${NC}"
     echo
     echo -e "  ${BOLD}0.${NC}  Назад"
     echo
@@ -423,43 +421,39 @@ do_settings() {
 
     case "$schoice" in
       1)
-        local cur; cur="$(_env_get ADMIN_LOGIN)"
-        read -rp "  Логин админки [${cur:-admin}]: " v
-        v="${v:-${cur:-admin}}"
-        _env_set ADMIN_LOGIN "$v"
-        log "ADMIN_LOGIN сохранён: $v"
+        local cur_l; cur_l="$(_env_get ITS_LOGIN)"
+        read -rp "  ИТС логин [${cur_l}]: " v_l
+        v_l="${v_l:-$cur_l}"
+        [ -z "$v_l" ] && { warn "Логин не может быть пустым — отмена."; echo; settings_menu; return; }
+        local p1 p2
+        read -rsp "  ИТС пароль (Enter — оставить без изменений): " p1; echo
+        if [ -n "$p1" ]; then
+          read -rsp "  Повторите пароль: " p2; echo
+          [ "$p1" != "$p2" ] && { err "Пароли не совпадают — отмена."; echo; settings_menu; return; }
+          _env_set ITS_PASSWORD "$p1"
+          log "ITS_PASSWORD сохранён"
+        fi
+        _env_set ITS_LOGIN "$v_l"
+        log "ITS_LOGIN сохранён: $v_l"
         _apply_env "$dir" "$dc" && echo
         settings_menu ;;
       2)
+        local cur_a; cur_a="$(_env_get ADMIN_LOGIN)"
+        read -rp "  Логин админки [${cur_a:-admin}]: " v_a
+        v_a="${v_a:-${cur_a:-admin}}"
         local p1 p2
-        read -rsp "  Новый пароль: " p1; echo
-        [ -z "$p1" ] && { warn "Пустой пароль — отмена."; echo; settings_menu; return; }
-        read -rsp "  Повторите:   " p2; echo
-        [ "$p1" != "$p2" ] && { err "Пароли не совпадают."; echo; settings_menu; return; }
-        _env_set ADMIN_PASSWORD "$p1"
-        log "ADMIN_PASSWORD сохранён"
+        read -rsp "  Пароль админки (Enter — оставить без изменений): " p1; echo
+        if [ -n "$p1" ]; then
+          read -rsp "  Повторите пароль: " p2; echo
+          [ "$p1" != "$p2" ] && { err "Пароли не совпадают — отмена."; echo; settings_menu; return; }
+          _env_set ADMIN_PASSWORD "$p1"
+          log "ADMIN_PASSWORD сохранён"
+        fi
+        _env_set ADMIN_LOGIN "$v_a"
+        log "ADMIN_LOGIN сохранён: $v_a"
         _apply_env "$dir" "$dc" && echo
         settings_menu ;;
       3)
-        local cur; cur="$(_env_get ITS_LOGIN)"
-        read -rp "  ИТС логин [${cur}]: " v
-        v="${v:-$cur}"
-        [ -z "$v" ] && { warn "Пусто — оставляем без изменений."; echo; settings_menu; return; }
-        _env_set ITS_LOGIN "$v"
-        log "ITS_LOGIN сохранён: $v"
-        _apply_env "$dir" "$dc" && echo
-        settings_menu ;;
-      4)
-        local p1 p2
-        read -rsp "  ИТС пароль: " p1; echo
-        [ -z "$p1" ] && { warn "Пустой пароль — отмена."; echo; settings_menu; return; }
-        read -rsp "  Повторите:  " p2; echo
-        [ "$p1" != "$p2" ] && { err "Пароли не совпадают."; echo; settings_menu; return; }
-        _env_set ITS_PASSWORD "$p1"
-        log "ITS_PASSWORD сохранён"
-        _apply_env "$dir" "$dc" && echo
-        settings_menu ;;
-      5)
         local cur; cur="$(_env_get WEB_PORT)"
         read -rp "  Внешний порт [${cur:-80}]: " v
         v="${v:-${cur:-80}}"
