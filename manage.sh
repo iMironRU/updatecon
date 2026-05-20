@@ -365,6 +365,18 @@ do_update() {
   echo
 
   cd "$dir"
+
+  # Обновляем docker-compose.yml из репозитория чтобы гарантировать
+  # наличие image: ghcr.io/... (старые инсталляции могли не иметь этой строки)
+  local RAW="https://raw.githubusercontent.com/iMironRU/updatecon/main/docker-compose.yml"
+  if curl -fsSL --max-time 10 "$RAW" -o docker-compose.yml.new 2>>"$LOG_FILE"; then
+    mv docker-compose.yml.new docker-compose.yml
+    log "docker-compose.yml обновлён"
+  else
+    warn "Не удалось обновить docker-compose.yml — продолжаем с текущим"
+    rm -f docker-compose.yml.new
+  fi
+
   run_spin "Скачиваем образ из ghcr.io" $dc pull
   run_spin "Перезапускаем сервисы" $dc up -d
 
