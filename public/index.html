@@ -441,7 +441,6 @@ let DB_META = { last_updated: null, total_configs: 0, total_versions: 0 };
 let CONFIGS_LOADED = false;
 const CHAIN_CACHE = {};        // `${cfgId}:${fromV}:${toV}` -> steps[]
 const CHAIN_RENDER_STATE = {}; // blockId -> { steps, fromV, cfg, reversed }
-let HAS_ITS = false;           // set from /api/health
 
 async function apiFetch(path, params) {
   const url = path + (params ? '?' + new URLSearchParams(params) : '');
@@ -488,12 +487,10 @@ function adapt_config(row) {
 async function initData() {
   if (CONFIGS_LOADED) return;
   try {
-    const [rows, stats, health] = await Promise.all([
+    const [rows, stats] = await Promise.all([
       apiFetch('/api/configs'),
       apiFetch('/api/stats'),
-      apiFetch('/api/health'),
     ]);
-    HAS_ITS = !!(health?.has_its);
     CONFIGS = rows.map(adapt_config);
     CONFIGS_LOADED = true;
     DB_META = {
@@ -715,9 +712,8 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
       ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + s.v +
         '&path=' + cfg.nick + '%5c' + s.v.replace(/\./g,'_') + '%5cupdsetup.zip'
       : '');
-    const dl_its = (HAS_ITS && cfg?.configName && s.from && s.v)
-      ? '/api/download?config=' + encodeURIComponent(cfg.configName) +
-        '&from=' + encodeURIComponent(s.from) + '&to=' + encodeURIComponent(s.v)
+    const dl_its = s.cfuPath
+      ? 'https://downloads.v8.1c.ru/tmplts/' + s.cfuPath
       : '';
     const step_label = reversed
       ? (is_final ? 'Текущая версия' : '')
@@ -740,7 +736,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
         ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
         <div class="step-actions">
           ${dl_1c ? `<a href="${dl_1c}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru</a>` : ''}
-          ${dl_its ? `<a href="${dl_its}" class="btn btn-sm btn-secondary">${icn_dl()} downloads (ИТС)</a>` : ''}
+          ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
         </div>
       </div>
     </div>`;
