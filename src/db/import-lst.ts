@@ -19,7 +19,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns } from "./schema.js";
 import { parseLstStream, type UpdateRecord } from "../parser/lst-parser-stream.js";
@@ -84,107 +84,120 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
     return;
   }
 
-  // ── Config id cache (name -> id), created on demand ───────────────────
-  log("Загрузка списка конфигураций из БД...");
-  const cfgCache = new Map<string, number>();
-  const existingCfgs = await db
-    .select({ id: configurations.id, name: configurations.name })
-    .from(configurations);
-  for (const c of existingCfgs) cfgCache.set(c.name, c.id);
-  log(`Известно конфигураций: ${cfgCache.size}`);
-
-  async function configId(name: string, vendor: string): Promise<number> {
-    const hit = cfgCache.get(name);
-    if (hit !== undefined) return hit;
-    const ins = await db
-      .insert(configurations)
-      .values({ name, vendor })
-      .onConflictDoNothing({ target: configurations.name })
-      .returning({ id: configurations.id });
-    let id: number;
-    if (ins.length > 0) {
-      id = ins[0].id;
-    } else {
-      const row = await db
-        .select({ id: configurations.id })
-        .from(configurations)
-        .where(eq(configurations.name, name))
-        .limit(1);
-      id = row[0].id;
-    }
-    cfgCache.set(name, id);
-    return id;
-  }
-
-  let edgesUpserted = 0;
-  let edgesUnchanged = 0;
-
-  // Process one parsed record: fan out into from->to edges.
-  async function processRecord(rec: UpdateRecord): Promise<void> {
-    const cid = await configId(rec.name, rec.vendor);
-    const toPv = parseVersion(rec.version);
-    if (!toPv) return;
-    const edition = toPv.segments[0] ?? 0;
-
-    for (const from of rec.fromVersions) {
-      const h = edgeHash(rec.name, from, rec.version, rec.cfuPath);
-      const res = await db
-        .insert(updateEdges)
-        .values({
-          configId: cid,
-          fromVersion: from,
-          toVersion: rec.version,
-          edition,
-          cfuPath: rec.cfuPath,
-          contentHash: h,
-          rawJson: rec,
-          lastSeenAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: [
-            updateEdges.configId,
-            updateEdges.fromVersion,
-            updateEdges.toVersion,
-          ],
-          set: {
-            lastSeenAt: new Date(),
-            // Rewrite payload only when the content actually changed.
-            cfuPath: sql`CASE WHEN ${updateEdges.contentHash} <> ${h}
-                              THEN excluded.cfu_path ELSE ${updateEdges.cfuPath} END`,
-            contentHash: sql`excluded.content_hash`,
-            rawJson: sql`CASE WHEN ${updateEdges.contentHash} <> ${h}
-                              THEN excluded.raw_json ELSE ${updateEdges.rawJson} END`,
-          },
-          setWhere: sql`true`,
-        })
-        .returning({
-          inserted: sql<boolean>`(xmax = 0)`,
-          hashNow: updateEdges.contentHash,
-        });
-
-      // Heuristic: a brand-new row, or hash differs from what we wrote.
-      if (res.length > 0 && (res[0] as any).inserted) edgesUpserted++;
-      else edgesUnchanged++;
-    }
-  }
-
-  // Collect all records first (parser is synchronous)
+  // ── Step 1: parse all records (sync, fast) ───────────────────────────
   log("Парсинг LST...");
   const allRecords: UpdateRecord[] = [];
   const stats = parseLstStream(raw, (rec) => allRecords.push(rec));
   log(`Распарсено: ${stats.configsFound} конфигов, ${stats.packagesEmitted} пакетов`);
 
-  // Write to DB in chunks of 300 — gives progress visibility and
-  // avoids saturating the connection pool with 10k concurrent queries.
-  const CHUNK = 300;
-  const total = allRecords.length;
-  log(`Запись в БД: 0 / ${total}...`);
-  for (let i = 0; i < total; i += CHUNK) {
-    const batch = allRecords.slice(i, i + CHUNK);
-    await Promise.all(batch.map((rec) => processRecord(rec)));
-    const done = Math.min(i + CHUNK, total);
-    const pct = Math.round(done / total * 100);
-    log(`Запись в БД: ${done} / ${total} (${pct}%)`);
+  // ── Step 2: resolve config IDs — bulk, 2 queries total ───────────────
+  log("Загрузка конфигураций из БД...");
+  const cfgCache = new Map<string, number>();
+  const existingCfgs = await db
+    .select({ id: configurations.id, name: configurations.name })
+    .from(configurations);
+  for (const c of existingCfgs) cfgCache.set(c.name, c.id);
+
+  // Find new configs not yet in DB
+  const newCfgMap = new Map<string, string>(); // name → vendor
+  for (const rec of allRecords) {
+    if (!cfgCache.has(rec.name)) newCfgMap.set(rec.name, rec.vendor);
+  }
+  if (newCfgMap.size > 0) {
+    log(`Добавляем ${newCfgMap.size} новых конфигураций...`);
+    const newCfgValues = [...newCfgMap.entries()].map(([name, vendor]) => ({ name, vendor }));
+    // Bulk insert (idempotent)
+    const CFGCHUNK = 500;
+    for (let i = 0; i < newCfgValues.length; i += CFGCHUNK) {
+      await db.insert(configurations)
+        .values(newCfgValues.slice(i, i + CFGCHUNK))
+        .onConflictDoNothing({ target: configurations.name });
+    }
+    // Fetch their IDs in one query
+    const newNames = newCfgValues.map((c) => c.name);
+    const newRows = await db
+      .select({ id: configurations.id, name: configurations.name })
+      .from(configurations)
+      .where(inArray(configurations.name, newNames));
+    for (const row of newRows) cfgCache.set(row.name, row.id);
+  }
+  log(`Конфигураций в кэше: ${cfgCache.size}`);
+
+  // ── Step 3: build all edge rows in memory ─────────────────────────────
+  interface EdgeRow {
+    configId: number;
+    fromVersion: string;
+    toVersion: string;
+    edition: number;
+    cfuPath: string;
+    contentHash: string;
+    rawJson: UpdateRecord;
+  }
+  const allEdges: EdgeRow[] = [];
+  for (const rec of allRecords) {
+    const cid = cfgCache.get(rec.name);
+    if (cid === undefined) continue;
+    const toPv = parseVersion(rec.version);
+    if (!toPv) continue;
+    const edition = toPv.segments[0] ?? 0;
+    for (const from of rec.fromVersions) {
+      allEdges.push({
+        configId: cid,
+        fromVersion: from,
+        toVersion: rec.version,
+        edition,
+        cfuPath: rec.cfuPath,
+        contentHash: edgeHash(rec.name, from, rec.version, rec.cfuPath),
+        rawJson: rec,
+      });
+    }
+  }
+  log(`Рёбер всего: ${allEdges.length}`);
+
+  // ── Step 4: bulk upsert edges — one INSERT per batch of 500 rows ──────
+  // excluded.* refers to the proposed value for EACH row in the conflict set,
+  // so the CASE WHEN logic is correct in bulk mode.
+  let edgesUpserted = 0;
+  let edgesUnchanged = 0;
+  const BULK = 500;
+  const totalEdges = allEdges.length;
+  log(`Запись в БД: 0 / ${totalEdges}...`);
+  const now = new Date();
+  for (let i = 0; i < totalEdges; i += BULK) {
+    const batch = allEdges.slice(i, i + BULK);
+    const results = await db
+      .insert(updateEdges)
+      .values(batch.map((e) => ({
+        configId:     e.configId,
+        fromVersion:  e.fromVersion,
+        toVersion:    e.toVersion,
+        edition:      e.edition,
+        cfuPath:      e.cfuPath,
+        contentHash:  e.contentHash,
+        rawJson:      e.rawJson,
+        lastSeenAt:   now,
+      })))
+      .onConflictDoUpdate({
+        target: [updateEdges.configId, updateEdges.fromVersion, updateEdges.toVersion],
+        set: {
+          lastSeenAt: now,
+          // Rewrite payload only when content actually changed
+          cfuPath:      sql`CASE WHEN ${updateEdges.contentHash} <> excluded.content_hash
+                                 THEN excluded.cfu_path ELSE ${updateEdges.cfuPath} END`,
+          contentHash:  sql`excluded.content_hash`,
+          rawJson:      sql`CASE WHEN ${updateEdges.contentHash} <> excluded.content_hash
+                                 THEN excluded.raw_json ELSE ${updateEdges.rawJson} END`,
+        },
+        setWhere: sql`true`,
+      })
+      .returning({ inserted: sql<boolean>`(xmax = 0)` });
+
+    for (const r of results) {
+      if ((r as any).inserted) edgesUpserted++;
+      else edgesUnchanged++;
+    }
+    const done = Math.min(i + BULK, totalEdges);
+    log(`Запись в БД: ${done} / ${totalEdges} (${Math.round(done / totalEdges * 100)}%)`);
   }
 
   await db.insert(importRuns).values({
