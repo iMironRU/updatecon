@@ -222,6 +222,12 @@ export interface ReleasesImportOptions {
   syncPatchesData?: boolean;
   /** Max versions to size per run */
   sizesLimit?: number;
+  /** Progress callback: called once per config with (current, total, nick) */
+  onProgress?: (current: number, total: number, nick: string) => void;
+  /** Log callback for admin UI; if absent, output goes to stdout */
+  onLog?: (msg: string) => void;
+  /** AbortSignal to cancel the import between configs */
+  signal?: AbortSignal;
 }
 
 export async function runReleasesImport(
@@ -234,37 +240,56 @@ export async function runReleasesImport(
     syncSizes = true,
     syncPatchesData = false,
     sizesLimit = 200,
+    onProgress,
+    onLog,
+    signal,
   } = opts;
 
+  const log = (msg: string) => {
+    if (onLog) onLog(msg); else console.log(msg);
+  };
+
   if (!login || !password) {
-    console.warn("[releases] ITS_LOGIN / ITS_PASSWORD not set — skipping");
+    log("⚠ ITS_LOGIN / ITS_PASSWORD не заданы — пропуск");
     return;
   }
 
   const session = new ReleasesSession();
-  console.log("[releases] Authenticating with releases.1c.ru...");
+  log("Авторизация на releases.1c.ru...");
   await session.login(login, password);
-  console.log("[releases] Auth OK");
+  log("Авторизация успешна");
 
-  console.log("[releases] Fetching /total...");
+  log("Загрузка списка проектов (/total)...");
   const totalHtml = await session.get("/total");
   const allConfigs = parseTotalPage(totalHtml);
-  console.log(`[releases] Found ${allConfigs.length} projects on /total`);
+  log(`Найдено проектов: ${allConfigs.length}`);
 
   let matched = 0, skipped = 0, metaRows = 0, totalSized = 0, totalPatches = 0;
 
   const bestMatchForConfig = new Map<number, { matches: number; href: string }>();
 
   for (let i = 0; i < allConfigs.length; i++) {
+    // Check abort signal between iterations
+    if (signal?.aborted) {
+      const e = new Error("Cancelled by user");
+      e.name = "AbortError";
+      throw e;
+    }
+
     const cfg = allConfigs[i];
-    process.stdout.write(`\r[releases] [${i + 1}/${allConfigs.length}] ${cfg.href.padEnd(40)}`);
+    const nick = cfg.href.replace(/^\/project\//, "");
+
+    onProgress?.(i + 1, allConfigs.length, nick);
+    if (!onLog) {
+      process.stdout.write(`\r[releases] [${i + 1}/${allConfigs.length}] ${cfg.href.padEnd(40)}`);
+    }
 
     let versionRows;
     try {
       const html = await session.get(`${cfg.href}?allUpdates=true`);
       versionRows = parseProjectPage(html);
     } catch (e) {
-      console.error(`\n[releases] SKIP ${cfg.href}: ${(e as Error).message}`);
+      log(`  ✗ ${nick}: ${(e as Error).message}`);
       skipped++;
       continue;
     }
@@ -280,7 +305,7 @@ export async function runReleasesImport(
     if (prev && prev.matches >= currentMatches) { skipped++; continue; }
     bestMatchForConfig.set(match.configId, { matches: currentMatches, href: cfg.href });
 
-    const nick = cfg.href.replace(/^\/project\//, "");
+    log(`  ✓ ${nick} → ${match.configName}`);
 
     // Write config enrichment (display_name, releases_href, group, planned dates)
     await db.execute(sql`
@@ -316,6 +341,7 @@ export async function runReleasesImport(
     // File sizes (incremental, limited per run)
     if (syncSizes) {
       const sized = await syncFileSizesForConfig(session, match.configId, nick, Math.ceil(sizesLimit / allConfigs.length) + 1);
+      if (sized > 0) log(`    размеры: ${sized} версий`);
       totalSized += sized;
     }
 
@@ -330,10 +356,8 @@ export async function runReleasesImport(
     matched++;
   }
 
-  process.stdout.write("\n");
-  console.log(
-    `[releases] Done: matched=${matched} skipped=${skipped} version_meta=${metaRows} sized=${totalSized} patches=${totalPatches}`,
-  );
+  if (!onLog) process.stdout.write("\n");
+  log(`Готово: совпало=${matched}, пропущено=${skipped}, метаданных=${metaRows}, размеров=${totalSized}`);
 }
 
 // CLI entry point

@@ -42,19 +42,57 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // In-memory lock: only one import per source at a time.
 const importRunning: Record<string, boolean> = {};
 
+// Per-source log buffer (cleared on each new run)
+interface LogEntry { ts: string; text: string; }
+const importLogs: Record<string, LogEntry[]> = { lst: [], releases: [] };
+const importProgress: Record<string, { current: number; total: number }> =
+  { lst: { current: 0, total: 0 }, releases: { current: 0, total: 0 } };
+const importAbort: Record<string, AbortController | null> = { lst: null, releases: null };
+
+function addImportLog(source: string, text: string) {
+  const ts = new Date().toLocaleTimeString("ru-RU",
+    { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  importLogs[source].push({ ts, text });
+  if (importLogs[source].length > 1000) importLogs[source].shift();
+  console.log(`[admin/${source}] ${text}`);
+}
+
 async function safeAdminImport(source: "lst" | "releases") {
   if (importRunning[source]) return;
   importRunning[source] = true;
+  importLogs[source] = [];
+  importProgress[source] = { current: 0, total: 0 };
+  const ac = new AbortController();
+  importAbort[source] = ac;
+
+  addImportLog(source, "Импорт запущен");
   try {
     if (source === "lst") {
       await runImport();
+      addImportLog(source, "LST импорт завершён");
     } else {
-      await runReleasesImport();
+      await runReleasesImport(undefined, undefined, {
+        syncTotalPage: true,
+        syncSizes: true,
+        syncPatchesData: false,
+        onProgress: (cur, tot, nick) => {
+          importProgress[source] = { current: cur, total: tot };
+          addImportLog(source, `[${cur}/${tot}] ${nick}`);
+        },
+        onLog: (msg) => addImportLog(source, msg),
+        signal: ac.signal,
+      });
     }
   } catch (e) {
-    console.error(`[admin] import (${source}) error:`, (e as Error).message);
+    if ((e as Error).name === "AbortError") {
+      addImportLog(source, "⛔ Импорт прерван пользователем");
+    } else {
+      addImportLog(source, `✗ Ошибка: ${(e as Error).message}`);
+      console.error(`[admin] import (${source}) error:`, (e as Error).message);
+    }
   } finally {
     importRunning[source] = false;
+    importAbort[source] = null;
   }
 }
 
@@ -231,6 +269,28 @@ export async function buildServer() {
       return { started: true, lastRunId: lastRun?.id ?? 0 };
     },
   );
+
+  // Live log stream: GET /admin/api/import/log?source=releases&offset=0
+  app.get("/admin/api/import/log", async (req) => {
+    const { source = "releases", offset = "0" } = req.query as Record<string, string>;
+    const logs = importLogs[source] ?? [];
+    const from = Math.max(0, Number(offset));
+    return {
+      lines: logs.slice(from),
+      total: logs.length,
+      running: !!importRunning[source],
+      progress: importProgress[source] ?? { current: 0, total: 0 },
+    };
+  });
+
+  // Cancel a running import
+  app.post("/admin/api/import/cancel", async (req, reply) => {
+    const { source = "releases" } = req.query as Record<string, string>;
+    const ac = importAbort[source];
+    if (!ac) return reply.status(409).send({ error: "Нет активного импорта" });
+    ac.abort();
+    return { cancelled: true };
+  });
 
   // ── Public static + API ───────────────────────────────────────────────────
   app.register(fastifyStatic, {

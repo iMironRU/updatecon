@@ -105,6 +105,28 @@ tr:hover td { background: var(--surface2); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner { width: 14px; height: 14px; border: 2px solid var(--border);
   border-top-color: var(--blue); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+
+/* Import progress */
+.progress-wrap { margin-bottom: 16px; }
+.progress-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.progress-counter { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text); }
+.progress-pct { font-size: 12px; color: var(--muted); }
+.progress-bar-bg { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: var(--blue); border-radius: 3px;
+  transition: width .4s ease; }
+.badge-server { display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(63,185,80,.12); border: 1px solid rgba(63,185,80,.25);
+  color: var(--green); border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: 500; }
+.import-log { background: #000; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 14px; font-family: var(--mono); font-size: 12px; color: #7ee787;
+  height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+.import-log:empty::before { content: 'Вывод появится здесь...'; color: var(--light); }
+.log-ts { color: var(--light); user-select: none; }
+.log-match { color: #7ee787; }
+.log-skip  { color: var(--muted); }
+.log-err   { color: var(--red); }
+.log-info  { color: var(--blue); }
+.log-done  { color: var(--orange); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -211,22 +233,44 @@ tr:hover td { background: var(--surface2); }
     <div class="card">
       <div class="card-header"><span class="card-title">Ручной запуск импорта</span></div>
       <div class="card-body">
+
         <div class="alert alert-info" style="margin-bottom:18px">
           Импорт использует двухуровневую дельту по хэшу — повторный запуск на неизменённом файле безопасен.
         </div>
 
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+        <!-- Кнопки запуска -->
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px">
           <button class="btn btn-primary" id="btn-import-lst" onclick="triggerImport('lst')">
             ▶ Запустить импорт LST
           </button>
           <button class="btn btn-ghost" id="btn-import-rel" onclick="triggerImport('releases')">
             ▶ Импорт releases.1c.ru
           </button>
+          <button class="btn btn-danger" id="btn-cancel" onclick="cancelImport()" style="display:none;margin-left:auto">
+            ✕ Прервать
+          </button>
         </div>
 
-        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">Статус / вывод:</div>
-        <div class="log-area" id="import-log"></div>
-        <div id="import-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+        <!-- Прогресс (виден только во время импорта releases) -->
+        <div id="progress-wrap" class="progress-wrap" style="display:none">
+          <div class="progress-header">
+            <span class="progress-counter" id="progress-counter">0 / 0</span>
+            <span class="progress-pct" id="progress-pct">0%</span>
+            <span class="badge-server" style="margin-left:auto">
+              ● Импорт выполняется на сервере — можно уйти со страницы
+            </span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Лог -->
+        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">Вывод:</div>
+        <div class="import-log" id="import-log"></div>
+
+        <!-- Итог -->
+        <div id="import-summary" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
       </div>
     </div>
   </div>
@@ -393,73 +437,160 @@ async function loadSettings() {
   } catch(e) {}
 }
 
+// ── Import with live log ──────────────────────────────────────────────────
 let importPolling = null;
-async function triggerImport(source) {
-  const btnId = source === 'lst' ? 'btn-import-lst' : 'btn-import-rel';
-  const btn = document.getElementById(btnId);
-  const log = document.getElementById('import-log');
-  const statusEl = document.getElementById('import-status');
+let importLogOffset = 0;
+let importActiveSource = null;
 
-  btn.disabled = true;
-  log.textContent = `[${new Date().toLocaleTimeString('ru')}] Запуск импорта (${source})...\n`;
-  statusEl.innerHTML = '<span class="spinner"></span> Импорт выполняется...';
+function logLine(el, ts, text) {
+  const div = document.createElement('div');
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'log-ts';
+  tsSpan.textContent = '[' + ts + '] ';
+  div.appendChild(tsSpan);
+  const txtSpan = document.createElement('span');
+  if (text.startsWith('  ✓')) txtSpan.className = 'log-match';
+  else if (text.startsWith('  ✗') || text.startsWith('✗')) txtSpan.className = 'log-err';
+  else if (text.startsWith('⛔')) txtSpan.className = 'log-err';
+  else if (text.startsWith('Готово') || text.startsWith('✓')) txtSpan.className = 'log-done';
+  else if (text.startsWith('[') && text.match(/^\[\d+\/\d+\]/)) txtSpan.className = 'log-skip';
+  else txtSpan.className = 'log-info';
+  txtSpan.textContent = text;
+  div.appendChild(txtSpan);
+  el.appendChild(div);
+}
+
+function setImportRunning(running, source) {
+  const btnLst = document.getElementById('btn-import-lst');
+  const btnRel = document.getElementById('btn-import-rel');
+  const btnCancel = document.getElementById('btn-cancel');
+  const progressWrap = document.getElementById('progress-wrap');
+  btnLst.disabled = running;
+  btnRel.disabled = running;
+  btnCancel.style.display = running ? '' : 'none';
+  progressWrap.style.display = (running && source === 'releases') ? '' : 'none';
+}
+
+function updateProgress(current, total) {
+  if (!total) return;
+  const pct = Math.round(current / total * 100);
+  document.getElementById('progress-counter').textContent = current + ' / ' + total;
+  document.getElementById('progress-pct').textContent = pct + '%';
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+async function triggerImport(source) {
+  const logEl = document.getElementById('import-log');
+  const summary = document.getElementById('import-summary');
+
+  logEl.innerHTML = '';
+  summary.innerHTML = '';
+  importLogOffset = 0;
+  importActiveSource = source;
+  setImportRunning(true, source);
 
   try {
-    const r = await fetch(location.origin + '/admin/api/import/' + source, { method: 'POST', credentials: 'include' });
+    const r = await fetch(location.origin + '/admin/api/import/' + source,
+      { method: 'POST', credentials: 'include' });
     const data = await r.json();
-    if (r.status === 409) {
-      log.textContent += '⚠ Импорт уже выполняется, подождите.\n';
-      statusEl.textContent = '';
-      btn.disabled = false;
-      return;
-    }
-    if (!r.ok) {
-      log.textContent += '✗ Ошибка: ' + (data.error || r.status) + '\n';
-      statusEl.textContent = '';
-      btn.disabled = false;
-      return;
-    }
-    log.textContent += `[${new Date().toLocaleTimeString('ru')}] Запрос принят, ожидаем завершения...\n`;
 
-    // Poll for completion
+    if (r.status === 409) {
+      logLine(logEl, now(), '⚠ Импорт уже выполняется — переключаемся на мониторинг...');
+    } else if (!r.ok) {
+      logLine(logEl, now(), '✗ Ошибка: ' + (data.error || r.status));
+      setImportRunning(false, source);
+      return;
+    } else {
+      logLine(logEl, now(), 'Запрос принят, ожидаем...');
+    }
+
+    // Start polling live log
     if (importPolling) clearInterval(importPolling);
-    const startRunId = data.lastRunId || 0;
-    importPolling = setInterval(async () => {
+    importPolling = setInterval(() => pollImportLog(source), 1500);
+
+  } catch(e) {
+    logLine(logEl, now(), '✗ Сетевая ошибка: ' + e.message);
+    setImportRunning(false, source);
+  }
+}
+
+async function pollImportLog(source) {
+  try {
+    const data = await apiFetch(
+      '/admin/api/import/log?source=' + source + '&offset=' + importLogOffset
+    );
+    const logEl = document.getElementById('import-log');
+    const wasAtBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+
+    // Append new lines
+    for (const entry of (data.lines || [])) {
+      logLine(logEl, entry.ts, entry.text);
+    }
+    importLogOffset = data.total;
+
+    // Update progress bar
+    if (data.progress && data.progress.total > 0) {
+      updateProgress(data.progress.current, data.progress.total);
+    }
+
+    if (wasAtBottom) logEl.scrollTop = logEl.scrollHeight;
+
+    // Import finished
+    if (!data.running) {
+      clearInterval(importPolling);
+      importPolling = null;
+      setImportRunning(false, source);
+      updateProgress(data.progress?.total || 0, data.progress?.total || 0);
+
+      // Show summary from import_runs
       try {
         const status = await apiFetch('/admin/api/import/status');
-        if (!status.running) {
-          clearInterval(importPolling);
-          importPolling = null;
-          btn.disabled = false;
-          const run = status.lastRun;
-          if (run && run.id > startRunId) {
-            log.textContent += `[${new Date().toLocaleTimeString('ru')}] Готово.\n`;
-            log.textContent += `  Статус:      ${run.status}\n`;
-            log.textContent += `  Конфигов:    ${(run.configsFound||0).toLocaleString('ru')}\n`;
-            log.textContent += `  Добавлено:   ${(run.edgesUpserted||0).toLocaleString('ru')}\n`;
-            log.textContent += `  Без изменений: ${(run.edgesUnchanged||0).toLocaleString('ru')}\n`;
-            log.textContent += `  Сообщение:   ${run.message||''}\n`;
-            statusEl.innerHTML = badge(run.status) + ' Завершено за ' + fmtDur(run.startedAt, run.finishedAt);
-          } else {
-            log.textContent += 'Завершено (нет новых данных)\n';
-            statusEl.textContent = 'Завершено';
-          }
-          log.scrollTop = log.scrollHeight;
-        } else {
-          log.textContent += '.';
-          log.scrollTop = log.scrollHeight;
+        const run = status.lastRun;
+        if (run) {
+          document.getElementById('import-summary').innerHTML =
+            badge(run.status) + ' &nbsp; Завершено за ' + fmtDur(run.startedAt, run.finishedAt) +
+            (run.edgesUpserted ? ' &nbsp;·&nbsp; добавлено: ' + run.edgesUpserted.toLocaleString('ru') : '') +
+            (run.edgesUnchanged ? ' &nbsp;·&nbsp; без изменений: ' + run.edgesUnchanged.toLocaleString('ru') : '');
         }
-      } catch(e) {}
-    }, 3000);
+      } catch(_) {}
+    }
   } catch(e) {
-    log.textContent += '✗ Сетевая ошибка\n';
-    statusEl.textContent = '';
-    btn.disabled = false;
+    // network blip — keep polling
   }
+}
+
+async function cancelImport() {
+  const source = importActiveSource || 'releases';
+  try {
+    await fetch(location.origin + '/admin/api/import/cancel?source=' + source,
+      { method: 'POST', credentials: 'include' });
+  } catch(_) {}
+}
+
+function now() {
+  return new Date().toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+// Resume monitoring if import is already running when page is opened
+async function checkRunningImport() {
+  try {
+    for (const src of ['lst', 'releases']) {
+      const data = await apiFetch('/admin/api/import/log?source=' + src + '&offset=0');
+      if (data.running) {
+        importActiveSource = src;
+        importLogOffset = data.total; // start from current end, only new lines
+        setImportRunning(true, src);
+        if (importPolling) clearInterval(importPolling);
+        importPolling = setInterval(() => pollImportLog(src), 1500);
+        break;
+      }
+    }
+  } catch(_) {}
 }
 
 // Init
 loadDash();
+checkRunningImport();
 </script>
 </body>
 </html>
