@@ -2,30 +2,32 @@
  * import-releases.ts — fetch releases.1c.ru and merge into DB as secondary source.
  *
  * Primary source (ITS / .lst) owns configurations and update_edges.
- * This adapter only writes:
- *   - configurations.display_name, configurations.releases_href  (enrichment)
- *   - version_meta rows (release_date, min_platform)
+ * This adapter writes:
+ *   - configurations: display_name, releases_href, group_name,
+ *                     next_release_version, next_release_planned_date, next_release_plan_updated
+ *   - version_meta: release_date, min_platform, file_size_bytes
+ *   - patches: uuid, patch_date, title, download_key
  *
  * Matching strategy: version-set intersection.
  *   For each releases.1c.ru project, collect its known versions.
  *   Find all our configs whose to_version set overlaps ≥ MIN_MATCH_RATIO.
  *   If exactly one config matches above threshold → link it.
- *   Unmatched projects are logged for manual review.
  */
 
 import { sql, eq } from "drizzle-orm";
 import { db, pool } from "../db/client.js";
-import { configurations, versionMeta } from "../db/schema.js";
+import { configurations, versionMeta, patches } from "../db/schema.js";
 import { ReleasesSession } from "./fetch-releases.js";
-import { parseTotalPage, parseProjectPage } from "./parse-releases.js";
+import {
+  parseTotalPage, parseProjectPage, parseVersionFiles,
+  parseFileProperties, parsePatchesPage,
+} from "./parse-releases.js";
 
 // releases→DB: ≥80% of releases versions must appear in our DB for the winning config.
-// DB→releases: the winning config must have ≥30% of its own to_versions in releases.
-//   (Popular configs like БП have thousands of versions; releases has ~600 — so 30% is fine.)
-// Also reject ambiguous matches (second candidate within 90% of first).
 const MIN_FORWARD_RATIO = 0.8;
+// DB→releases: the winning config must have ≥30% of its own to_versions in releases.
 const MIN_REVERSE_RATIO = 0.3;
-const MIN_RELEASES_VERSIONS = 10; // ignore tiny projects (libraries, tools)
+const MIN_RELEASES_VERSIONS = 10;
 
 interface MatchResult {
   configId: number;
@@ -39,13 +41,10 @@ async function findMatchingConfig(
   displayName?: string,
 ): Promise<MatchResult | null> {
   if (releasesVersions.length < MIN_RELEASES_VERSIONS) return null;
-
   const versionLiterals = sql.join(
     releasesVersions.map((v) => sql`${v}`),
     sql`, `,
   );
-
-  // Forward pass: collect all configs that meet the forward-ratio threshold.
   const rows = await db.execute(sql`
     SELECT config_id, count(*)::int AS matches
     FROM update_edges
@@ -63,10 +62,6 @@ async function findMatchingConfig(
     .filter((h) => h.matches / releasesVersions.length >= MIN_FORWARD_RATIO);
   if (!qualifying.length) return null;
 
-  // When displayName is available, use Dice coefficient to rank all qualifying
-  // candidates and pick the best name match. This prevents a low-overlap
-  // project (e.g. AccountingAI) from stealing a config just because it
-  // happens to win the version-count race — the name provides a stronger signal.
   let winnerId = Number(qualifying[0].config_id);
   let winnerMatches = Number(qualifying[0].matches);
 
@@ -88,7 +83,6 @@ async function findMatchingConfig(
     for (const cfg of cfgs) {
       const cfgNorm = norm(cfg.name);
       const lcs = longestCommonSubstring(relNorm, cfgNorm);
-      // Dice coefficient: rewards full matches, penalises extra chars on either side.
       const score = (2 * lcs) / (relNorm.length + cfgNorm.length);
       if (score > bestScore) {
         bestScore = score;
@@ -100,11 +94,9 @@ async function findMatchingConfig(
 
   const forwardRatio = winnerMatches / releasesVersions.length;
 
-  // Reverse pass for the winner.
   const totalRows = await db.execute(sql`
     SELECT count(DISTINCT to_version)::int AS total
-    FROM update_edges
-    WHERE config_id = ${winnerId}
+    FROM update_edges WHERE config_id = ${winnerId}
   `);
   const total: number =
     ((totalRows as any).rows ?? (totalRows as any))[0]?.total ?? 0;
@@ -118,12 +110,7 @@ async function findMatchingConfig(
     .limit(1);
   if (!cfgRows.length) return null;
 
-  return {
-    configId: cfgRows[0].id,
-    configName: cfgRows[0].name,
-    forwardRatio,
-    reverseRatio,
-  };
+  return { configId: cfgRows[0].id, configName: cfgRows[0].name, forwardRatio, reverseRatio };
 }
 
 function longestCommonSubstring(a: string, b: string): number {
@@ -138,42 +125,146 @@ function longestCommonSubstring(a: string, b: string): number {
   return max;
 }
 
+// ── File size fetching ────────────────────────────────────────────────────────
+
+async function syncFileSizesForConfig(
+  session: ReleasesSession,
+  configId: number,
+  nick: string,
+  limit = 50,
+): Promise<number> {
+  // Find version_meta rows for this config that have no file_size_bytes yet
+  const rows = await db.execute(sql`
+    SELECT id, version FROM version_meta
+    WHERE config_id = ${configId} AND file_size_bytes IS NULL
+    ORDER BY updated_at DESC
+    LIMIT ${limit}
+  `) as { rows: Array<{ id: number; version: string }> };
+  const items = (rows as any).rows ?? rows;
+  let sized = 0;
+
+  for (const item of items) {
+    try {
+      const html = await session.get(
+        `/version_files?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(item.version)}`
+      );
+      const files = parseVersionFiles(html);
+      // Prefer "Дистрибутив обновления" (main update zip, not base install)
+      const updateFile = files.find(f =>
+        f.title.includes("Дистрибутив обновления") && !f.title.includes("базовой")
+      ) ?? files.find(f => f.title.includes("Дистрибутив"));
+
+      if (!updateFile?.propertiesId) continue;
+
+      const propJson = await session.get(`/files/properties/version-files/${updateFile.propertiesId}`);
+      const bytes = parseFileProperties(propJson);
+      if (!bytes) continue;
+
+      await db
+        .update(versionMeta)
+        .set({ fileSizeBytes: bytes })
+        .where(eq(versionMeta.id, item.id));
+      sized++;
+      await delay(150);
+    } catch {
+      // version may not exist on releases.1c.ru — skip silently
+    }
+  }
+  return sized;
+}
+
+// ── Patches fetching ──────────────────────────────────────────────────────────
+
+async function syncPatchesForConfig(
+  session: ReleasesSession,
+  configId: number,
+  nick: string,
+  versions: string[],
+): Promise<number> {
+  let total = 0;
+  for (const ver of versions) {
+    try {
+      const html = await session.get(
+        `/patches/total?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(ver)}`
+      );
+      const patchList = parsePatchesPage(html);
+      for (const p of patchList) {
+        await db
+          .insert(patches)
+          .values({
+            configId,
+            version: ver,
+            uuid: p.uuid,
+            title: p.title ?? null,
+            patchDate: p.patchDate ?? null,
+          })
+          .onConflictDoNothing();
+        total++;
+      }
+      await delay(150);
+    } catch {
+      // version may not have patches page — skip
+    }
+  }
+  return total;
+}
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+export interface ReleasesImportOptions {
+  /** Sync group names and planned release dates from /total (fast, one page) */
+  syncTotalPage?: boolean;
+  /** Fetch file sizes for version_meta rows (slow, many pages) */
+  syncSizes?: boolean;
+  /** Fetch patches for known versions (slow, many pages) */
+  syncPatchesData?: boolean;
+  /** Max versions to size per run */
+  sizesLimit?: number;
+}
+
 export async function runReleasesImport(
   login = process.env.ITS_LOGIN,
   password = process.env.ITS_PASSWORD,
+  opts: ReleasesImportOptions = {},
 ): Promise<void> {
-  const session = new ReleasesSession();
-  console.log("Authenticating with releases.1c.ru...");
-  await session.login(login, password);
-  console.log("OK");
+  const {
+    syncTotalPage = true,
+    syncSizes = true,
+    syncPatchesData = false,
+    sizesLimit = 200,
+  } = opts;
 
-  console.log("Fetching /total...");
+  if (!login || !password) {
+    console.warn("[releases] ITS_LOGIN / ITS_PASSWORD not set — skipping");
+    return;
+  }
+
+  const session = new ReleasesSession();
+  console.log("[releases] Authenticating with releases.1c.ru...");
+  await session.login(login, password);
+  console.log("[releases] Auth OK");
+
+  console.log("[releases] Fetching /total...");
   const totalHtml = await session.get("/total");
   const allConfigs = parseTotalPage(totalHtml);
-  console.log(`Found ${allConfigs.length} projects on releases.1c.ru`);
+  console.log(`[releases] Found ${allConfigs.length} projects on /total`);
 
-  let matched = 0;
-  let skipped = 0;
-  let metaRows = 0;
+  let matched = 0, skipped = 0, metaRows = 0, totalSized = 0, totalPatches = 0;
 
-  // When multiple releases projects map to the same DB config, keep only the
-  // one with the most absolute version matches. More matches → more of the
-  // config's version history is covered → this is the canonical project.
   const bestMatchForConfig = new Map<number, { matches: number; href: string }>();
 
   for (let i = 0; i < allConfigs.length; i++) {
     const cfg = allConfigs[i];
-    process.stdout.write(
-      `\r[${i + 1}/${allConfigs.length}] ${cfg.href.padEnd(40)}`,
-    );
+    process.stdout.write(`\r[releases] [${i + 1}/${allConfigs.length}] ${cfg.href.padEnd(40)}`);
 
-    // Fetch per-version data.
     let versionRows;
     try {
       const html = await session.get(`${cfg.href}?allUpdates=true`);
       versionRows = parseProjectPage(html);
     } catch (e) {
-      console.error(`\n  SKIP ${cfg.href}: ${(e as Error).message}`);
+      console.error(`\n[releases] SKIP ${cfg.href}: ${(e as Error).message}`);
       skipped++;
       continue;
     }
@@ -186,23 +277,24 @@ export async function runReleasesImport(
 
     const prev = bestMatchForConfig.get(match.configId);
     const currentMatches = Math.round(match.forwardRatio * versions.length);
-    if (prev && prev.matches >= currentMatches) {
-      // A previous project had equal-or-better version coverage; skip.
-      skipped++;
-      continue;
-    }
-
-    // New best match for this config — overwrite any previous claim.
+    if (prev && prev.matches >= currentMatches) { skipped++; continue; }
     bestMatchForConfig.set(match.configId, { matches: currentMatches, href: cfg.href });
 
+    const nick = cfg.href.replace(/^\/project\//, "");
+
+    // Write config enrichment (display_name, releases_href, group, planned dates)
     await db.execute(sql`
-      UPDATE configurations
-      SET display_name  = ${cfg.displayName},
-          releases_href = ${cfg.href}
+      UPDATE configurations SET
+        display_name                = ${cfg.displayName},
+        releases_href               = ${cfg.href},
+        group_name                  = ${cfg.groupName || null},
+        next_release_version        = ${cfg.nextReleaseVersion ?? null},
+        next_release_planned_date   = ${cfg.nextReleasePlannedDate ?? null},
+        next_release_plan_updated   = ${cfg.nextReleasePlanUpdated ?? null}::date
       WHERE id = ${match.configId}
     `);
 
-    // Upsert version_meta rows.
+    // Upsert version_meta rows
     for (const row of versionRows) {
       if (!row.releaseDate && !row.minPlatform) continue;
       await db.execute(sql`
@@ -220,19 +312,32 @@ export async function runReleasesImport(
       `);
       metaRows++;
     }
+
+    // File sizes (incremental, limited per run)
+    if (syncSizes) {
+      const sized = await syncFileSizesForConfig(session, match.configId, nick, Math.ceil(sizesLimit / allConfigs.length) + 1);
+      totalSized += sized;
+    }
+
+    // Patches (only if explicitly requested)
+    if (syncPatchesData) {
+      // Only fetch patches for the latest 3 versions to keep it manageable
+      const recentVersions = versions.slice(-3);
+      const p = await syncPatchesForConfig(session, match.configId, nick, recentVersions);
+      totalPatches += p;
+    }
+
     matched++;
   }
 
   process.stdout.write("\n");
   console.log(
-    `Done: matched=${matched} skipped=${skipped} version_meta_rows=${metaRows}`,
+    `[releases] Done: matched=${matched} skipped=${skipped} version_meta=${metaRows} sized=${totalSized} patches=${totalPatches}`,
   );
 }
 
 // CLI entry point
-if (
-  process.argv[1] ===
-  new URL(import.meta.url).pathname
-) {
-  runReleasesImport().finally(() => pool.end());
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  runReleasesImport(undefined, undefined, { syncSizes: true, syncPatchesData: true })
+    .finally(() => pool.end());
 }

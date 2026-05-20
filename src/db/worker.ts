@@ -17,6 +17,7 @@ import { migrate as drizzleMigrate } from "drizzle-orm/node-postgres/migrator";
 import cron from "node-cron";
 import { db } from "./client.js";
 import { runImport } from "./import-lst.js";
+import { runReleasesImport } from "../releases/import-releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +36,12 @@ async function safeImport(reason: string) {
     await runImport();
   } catch (e) {
     console.error("[worker] import error:", (e as Error).message);
+  }
+  // Enrich data from releases.1c.ru (categories, planned dates, file sizes)
+  try {
+    await runReleasesImport(undefined, undefined, { syncTotalPage: true, syncSizes: true, syncPatchesData: false });
+  } catch (e) {
+    console.error("[worker] releases import error:", (e as Error).message);
   }
 }
 

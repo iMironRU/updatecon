@@ -467,10 +467,13 @@ function adapt_config(row) {
     name: displayName,
     short: (row.display_name || row.name || '').split(',')[0].trim(),
     edition,
-    type: 'standard',           // placeholder — not yet in DB
+    type: 'standard',           // placeholder
     vendor: row.vendor || '1С',
-    status: 'active',           // placeholder — not yet in DB
-    description: '',            // placeholder — not yet in DB
+    status: 'active',           // placeholder
+    description: '',            // placeholder
+    groupName: row.group_name || '',
+    nextReleaseVersion: row.next_release_version || '',
+    nextReleasePlannedDate: row.next_release_planned_date || '',
     platform_min: row.latest_platform || '—',
     url_1c: row.releases_href ? 'https://releases.1c.ru' + row.releases_href : '',
     release_year: row.latest_date ? new Date(row.latest_date).getFullYear() : null,
@@ -480,7 +483,7 @@ function adapt_config(row) {
     latestDate: row.latest_date || null,
     latestPlat: row.latest_platform || null,
     versions: [],   // loaded lazily
-    _meta: {},      // version -> {release_date, min_platform}
+    _meta: {},      // version -> {release_date, min_platform, file_size_bytes}
   };
 }
 
@@ -520,7 +523,8 @@ async function loadVersionsForConfig(cfgId) {
         ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + v +
           '&path=' + cfg.nick + '%5c' + v.replace(/\./g, '_') + '%5cupdsetup.zip'
         : '';
-      return { v, date: m.release_date || null, mb: 0, plat: m.min_platform || null, req: false, patches: [], dl };
+      const sizeBytes = m.file_size_bytes || 0;
+      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: [], dl };
     });
     if (cfg.versions.length && !cfg.latestV) {
       cfg.latestV = cfg.versions[0].v;
@@ -715,6 +719,8 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     const dl_its = s.cfuPath
       ? 'https://downloads.v8.1c.ru/tmplts/' + s.cfuPath
       : '';
+    const mb = s.mb || 0;
+    const mb_str = mb > 0 ? `${mb} МБ` : '';
     const step_label = reversed
       ? (is_final ? 'Текущая версия' : '')
       : (is_final ? 'Целевая версия' : '');
@@ -728,6 +734,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
           <div class="step-version">${s.v}</div>
           ${step_label ? `<span class="badge badge-blue">${step_label}</span>` : ''}
           ${s.req && !is_final ? '<span class="badge badge-orange">Обязательный</span>' : ''}
+          ${mb_str ? `<span class="badge badge-gray">${mb_str}</span>` : ''}
         </div>
         ${s.date ? `<div class="step-date">${fmt_date(s.date)}</div>` : ''}
         <div class="step-meta">
@@ -748,6 +755,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
       <div style="display:flex;gap:24px;flex-wrap:wrap">
         <div class="chain-stat"><div class="chain-stat-val">${steps.length}</div><div class="chain-stat-lbl">Шагов</div></div>
         ${steps[steps.length-1]?.date ? `<div class="chain-stat"><div class="chain-stat-val">${fmt_date(steps[steps.length-1].date)}</div><div class="chain-stat-lbl">Дата релиза</div></div>` : ''}
+        ${(()=>{ const total_mb = steps.reduce((s,x)=>s+(x.mb||0),0); return total_mb>0?`<div class="chain-stat"><div class="chain-stat-val">${Math.round(total_mb*10)/10} МБ</div><div class="chain-stat-lbl">Объём обновлений</div></div>`:''; })()}
       </div>
       <div class="chain-actions">
         ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${toV}')">${icn_share()} Поделиться</button>` : ''}
@@ -1150,13 +1158,15 @@ function render_config(id) {
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
-        <div class="config-detail-badges">${type_badge(cfg.type)} ${status_badge(cfg.status)}</div>
+        <div class="config-detail-badges">${type_badge(cfg.type)} ${status_badge(cfg.status)}
+          ${cfg.groupName ? `<span class="badge badge-gray" title="${cfg.groupName}">${cfg.groupName.replace(/Типовые конфигурации фирмы[^д]*для /i,'').replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая').slice(0,32)}</span>` : ''}
+        </div>
         ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
         <div class="config-meta-grid">
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
           <div><div class="meta-item-label">Дата выхода</div><div class="meta-item-value">${fmt_date(latest?.date)}</div></div>
           <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || cfg.platform_min || '—'}</div></div>
-          ${cfg.release_year ? `<div><div class="meta-item-label">Год выпуска</div><div class="meta-item-value">${cfg.release_year}</div></div>` : ''}
+          ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${cfg.nextReleaseVersion}${cfg.nextReleasePlannedDate ? ' <span style="font-weight:400;color:var(--text-muted)">·</span> ' + cfg.nextReleasePlannedDate : ''}</div></div>` : ''}
           ${cfg.avg_update_days ? `<div><div class="meta-item-label">Частота обновлений</div><div class="meta-item-value">~${cfg.avg_update_days} дн.</div></div>` : ''}
           <div><div class="meta-item-label">Всего версий</div><div class="meta-item-value">${cfg.versions.length || cfg.version_count || '—'}</div></div>
         </div>

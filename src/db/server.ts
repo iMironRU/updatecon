@@ -6,6 +6,7 @@
  *   GET  /api/configs?q=<substr>           -> matching configurations (enriched)
  *   GET  /api/configs?version=<v>          -> configs that contain this version
  *   GET  /api/versions?config=<name>       -> known versions + version_meta
+ *   GET  /api/patches?config=&ver=          -> patches list for a version
  *   GET  /api/chain?config=&from=&to=      -> computed update chain
  *   GET  /api/stats                        -> import/run summary
  *   GET  /*                                -> static UI (public/)
@@ -28,7 +29,7 @@ import { dirname, join } from "node:path";
 import { request as httpsRequest } from "node:https";
 import { sql, eq, desc } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { configurations, updateEdges, importRuns } from "./schema.js";
+import { configurations, updateEdges, importRuns, patches } from "./schema.js";
 import { findChain } from "./chain.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
@@ -281,6 +282,7 @@ export async function buildServer() {
     const rows = await db.execute(sql`
       SELECT
         c.id, c.name, c.display_name, c.vendor, c.releases_href,
+        c.group_name, c.next_release_version, c.next_release_planned_date,
         vm.version       AS latest_version,
         vm.release_date  AS latest_date,
         vm.min_platform  AS latest_platform,
@@ -362,17 +364,18 @@ export async function buildServer() {
       byEdition.set(ed, arr);
     }
 
-    // Fetch release_date + min_platform from version_meta.
+    // Fetch release_date + min_platform + file_size_bytes from version_meta.
     const metaRows = await db.execute(sql`
-      SELECT version, release_date::text, min_platform
+      SELECT version, release_date::text, min_platform, file_size_bytes
       FROM version_meta
       WHERE config_id = ${cfg[0].id}
     `);
-    const meta: Record<string, { release_date: string | null; min_platform: string | null }> = {};
+    const meta: Record<string, { release_date: string | null; min_platform: string | null; file_size_bytes: number | null }> = {};
     for (const r of (metaRows as any).rows ?? metaRows) {
       meta[(r as any).version] = {
         release_date: (r as any).release_date ?? null,
         min_platform: (r as any).min_platform ?? null,
+        file_size_bytes: (r as any).file_size_bytes ?? null,
       };
     }
 
@@ -383,6 +386,19 @@ export async function buildServer() {
         .map(([edition, versions]) => ({ edition, versions })),
       meta,
     };
+  });
+
+  app.get("/api/patches", async (req) => {
+    const { config, ver } = req.query as any;
+    if (!config || !ver) return { patches: [] };
+    const rows = await db.execute(sql`
+      SELECT p.uuid, p.title, p.patch_date::text, p.download_key
+      FROM patches p
+      JOIN configurations c ON c.id = p.config_id
+      WHERE c.name = ${String(config)} AND p.version = ${String(ver)}
+      ORDER BY p.patch_date DESC NULLS LAST
+    `);
+    return { patches: (rows as any).rows ?? rows };
   });
 
   app.get("/api/chain", async (req) => {

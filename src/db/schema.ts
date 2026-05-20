@@ -38,6 +38,12 @@ export const configurations = pgTable(
     // Populated by releases.1c.ru adapter (secondary source):
     displayName: text("display_name"),           // "Бухгалтерия предприятия, редакция 3.0"
     releasesHref: text("releases_href"),          // "/project/Accounting30"
+    // Category from releases.1c.ru /total page group name
+    groupName: text("group_name"),               // "Типовые конфигурации фирмы \"1С\" для России"
+    // Next planned release (from releases.1c.ru /total)
+    nextReleaseVersion: text("next_release_version"), // "3.0.209"
+    nextReleasePlannedDate: text("next_release_planned_date"), // "Ноябрь 2026"
+    nextReleasePlanUpdated: date("next_release_plan_updated"), // "2026-04-01"
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -149,6 +155,8 @@ export const versionMeta = pgTable(
     version: text("version").notNull(),
     releaseDate: date("release_date"),
     minPlatform: text("min_platform"),
+    // Size of the update file (.zip installer from releases.1c.ru) in bytes
+    fileSizeBytes: integer("file_size_bytes"),
     source: text("source").notNull().default("releases"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -160,7 +168,34 @@ export const versionMeta = pgTable(
   }),
 );
 
+/**
+ * Patches (hotfixes) for a specific version, from releases.1c.ru.
+ * Each patch is a small fix published between major releases.
+ */
+export const patches = pgTable(
+  "patches",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    configId: integer("config_id")
+      .notNull()
+      .references(() => configurations.id),
+    version: text("version").notNull(),           // version this patch applies to
+    uuid: text("uuid").notNull(),                  // releases.1c.ru patch UUID
+    title: text("title"),                          // patch description/name
+    patchDate: date("patch_date"),                 // date of fix
+    downloadKey: text("download_key"),             // key for download URL
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    patchUq: uniqueIndex("patches_uuid_uq").on(t.uuid),
+    configVersionIdx: index("patches_config_version_idx").on(t.configId, t.version),
+  }),
+);
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
 export type VersionMeta = typeof versionMeta.$inferSelect;
+export type Patch = typeof patches.$inferSelect;

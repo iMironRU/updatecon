@@ -15,6 +15,13 @@
       "when": 1779178707938,
       "tag": "0001_bizarre_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779260588156,
+      "tag": "0002_fancy_wither",
+      "breakpoints": true
     }
   ]
 }
