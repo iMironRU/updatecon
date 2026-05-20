@@ -428,6 +428,13 @@ export async function buildServer() {
     };
   });
 
+  // ── SPA fallback: any unmatched GET → index.html ─────────────────────────
+  // Handles hard refresh on client-side routes like /#/config/96 or
+  // /%23/config/96 (when a proxy encodes the hash fragment).
+  app.setNotFoundHandler((_req, reply) => {
+    void reply.sendFile("index.html");
+  });
+
   return app;
 }
 
