@@ -3,7 +3,9 @@ name: Build & Push Docker image
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # запуск вручную из интерфейса GitHub
+  schedule:
+    - cron: '0 2 * * *'   # каждую ночь в 2:00 UTC
+  workflow_dispatch:       # ручной запуск из интерфейса GitHub
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -18,6 +20,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Write build info into public/version.json
+        run: |
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "{\"date\":\"$DATE\",\"commit\":\"$SHORT_SHA\"}" > public/version.json
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

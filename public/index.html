@@ -336,6 +336,16 @@ input, select, textarea { font-family: inherit; }
 .footer-link { font-size: 12px; color: var(--text-muted); transition: color .15s; }
 .footer-link:hover { color: var(--accent); }
 .footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
+/* ── Version badge (bottom-right) ─────────────────────────────────────────── */
+#ver-badge { position: fixed; bottom: 16px; right: 16px; z-index: 1000;
+  display: flex; align-items: center; gap: 6px; flex-direction: column; align-items: flex-end; pointer-events: none; }
+.ver-badge-chip { display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 99px;
+  font-size: 11px; font-family: var(--mono); color: var(--text-light);
+  pointer-events: auto; opacity: .7; transition: opacity .2s; white-space: nowrap; }
+.ver-badge-chip:hover { opacity: 1; }
+.ver-badge-update { background: #2d2000; border-color: var(--orange);
+  color: var(--orange); text-decoration: none; opacity: .9 !important; font-family: inherit; font-weight: 600; }
 @media (max-width: 900px) {
   .catalog-layout { grid-template-columns: 1fr; }
   .filters-panel { position: static; }
@@ -417,6 +427,10 @@ input, select, textarea { font-family: inherit; }
 </footer>
 
 <div id="toast"></div>
+
+<div id="ver-badge">
+  <div class="ver-badge-chip" id="ver-badge-chip" title="Версия сборки">…</div>
+</div>
 
 <script>
 /* ================================================================
@@ -1372,6 +1386,68 @@ function set_theme(t) {
 }
 
 /* ================================================================
+   VERSION BADGE
+   ================================================================ */
+async function init_version_badge() {
+  const chip = document.getElementById('ver-badge-chip');
+  const badge = document.getElementById('ver-badge');
+  if (!chip || !badge) return;
+
+  // 1. Fetch current build version from the running container
+  let current = { date: 'dev', commit: 'dev' };
+  try {
+    const r = await fetch('/version.json');
+    if (r.ok) current = await r.json();
+  } catch(_) {}
+
+  const is_dev = current.date === 'dev';
+  const date_str = is_dev ? 'dev' : current.date.slice(0, 10); // YYYY-MM-DD
+  chip.textContent = is_dev ? 'dev' : `${date_str} · ${current.commit}`;
+  chip.title = `Сборка: ${current.date}`;
+
+  if (is_dev) return; // no update check in dev mode
+
+  // 2. Check for updates via GitHub API — cache result 1h in localStorage
+  const CACHE_KEY = 'uc_update_check';
+  const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+  let latest_date = null;
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      latest_date = cached.date;
+    } else {
+      const res = await fetch(
+        'https://api.github.com/repos/iMironRU/updatecon/commits/main',
+        { headers: { Accept: 'application/vnd.github.v3+json' } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        latest_date = data?.commit?.committer?.date ?? null;
+        if (latest_date) {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), date: latest_date }));
+        }
+      }
+    }
+  } catch(_) {}
+
+  if (!latest_date) return;
+
+  // Give 15 min buffer — build takes time after commit
+  const build_time = new Date(current.date).getTime();
+  const latest_time = new Date(latest_date).getTime();
+  if (latest_time - build_time > 15 * 60 * 1000) {
+    const a = document.createElement('a');
+    a.href = 'https://github.com/iMironRU/updatecon#обновление';
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'ver-badge-chip ver-badge-update';
+    a.textContent = '↑ Доступно обновление';
+    a.title = `Последний коммит: ${latest_date.slice(0, 10)}`;
+    badge.insertBefore(a, chip);
+  }
+}
+
+/* ================================================================
    INIT
    ================================================================ */
 const _style = document.createElement('style');
@@ -1381,6 +1457,7 @@ document.head.appendChild(_style);
 apply_theme(localStorage.getItem('uc_theme') || 'auto');
 update_theme_icon();
 route();
+init_version_badge();
 </script>
 </body>
 </html>
