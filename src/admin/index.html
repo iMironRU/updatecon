@@ -575,6 +575,8 @@ function now() {
 
 // Resume monitoring if import is already running when page is opened
 async function checkRunningImport() {
+  // Guard: don't start a second poller if one is already running
+  if (importPolling) return;
   var sources = ['lst', 'releases'];
   for (var si = 0; si < sources.length; si++) {
     var src = sources[si];
@@ -582,9 +584,12 @@ async function checkRunningImport() {
       var chkData = await apiFetch('/admin/api/import/log?source=' + src + '&offset=0');
       if (chkData.running) {
         importActiveSource = src;
-        importLogOffset = chkData.total;
+        // Show full history from the beginning
+        importLogOffset = 0;
+        var logEl = document.getElementById('import-log');
+        logEl.innerHTML = '';
+        document.getElementById('import-summary').innerHTML = '';
         setImportRunning(true, src);
-        if (importPolling) clearInterval(importPolling);
         importPolling = setInterval(function() { pollImportLog(importActiveSource); }, 1500);
         break;
       }

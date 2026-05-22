@@ -190,15 +190,14 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
       .onConflictDoUpdate({
         target: [updateEdges.configId, updateEdges.fromVersion, updateEdges.toVersion],
         set: {
-          lastSeenAt: now,
-          // Rewrite payload only when content actually changed
-          cfuPath:      sql`CASE WHEN ${updateEdges.contentHash} <> excluded.content_hash
-                                 THEN excluded.cfu_path ELSE ${updateEdges.cfuPath} END`,
-          contentHash:  sql`excluded.content_hash`,
-          rawJson:      sql`CASE WHEN ${updateEdges.contentHash} <> excluded.content_hash
-                                 THEN excluded.raw_json ELSE ${updateEdges.rawJson} END`,
+          lastSeenAt:  now,
+          cfuPath:     sql`excluded.cfu_path`,
+          contentHash: sql`excluded.content_hash`,
+          rawJson:     sql`excluded.raw_json`,
         },
-        setWhere: sql`true`,
+        // Only fire the UPDATE when content actually changed.
+        // Unchanged rows skip the write entirely → much faster on re-imports.
+        setWhere: sql`${updateEdges.contentHash} <> excluded.content_hash`,
       })
       .returning({ inserted: sql<boolean>`(xmax = 0)` });
 
