@@ -152,7 +152,17 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
       });
     }
   }
-  log(`Рёбер всего: ${allEdges.length}`);
+  // Deduplicate: LST may contain multiple records with the same
+  // (configId, fromVersion, toVersion) key. Bulk INSERT can't update
+  // the same row twice in one statement — keep the last occurrence.
+  const edgeMap = new Map<string, EdgeRow>();
+  for (const e of allEdges) {
+    edgeMap.set(`${e.configId}:${e.fromVersion}:${e.toVersion}`, e);
+  }
+  const dedupedEdges = [...edgeMap.values()];
+  if (dedupedEdges.length < allEdges.length) {
+    log(`Дедупликация: ${allEdges.length} → ${dedupedEdges.length} рёбер`);
+  }
 
   // ── Step 4: bulk upsert edges — one INSERT per batch of 500 rows ──────
   // excluded.* refers to the proposed value for EACH row in the conflict set,
@@ -160,11 +170,11 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
   let edgesUpserted = 0;
   let edgesUnchanged = 0;
   const BULK = 500;
-  const totalEdges = allEdges.length;
+  const totalEdges = dedupedEdges.length;
   log(`Запись в БД: 0 / ${totalEdges}...`);
   const now = new Date();
   for (let i = 0; i < totalEdges; i += BULK) {
-    const batch = allEdges.slice(i, i + BULK);
+    const batch = dedupedEdges.slice(i, i + BULK);
     const results = await db
       .insert(updateEdges)
       .values(batch.map((e) => ({
