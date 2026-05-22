@@ -165,8 +165,9 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
   }
 
   // ── Step 4: bulk upsert edges — one INSERT per batch of 500 rows ──────
-  // excluded.* refers to the proposed value for EACH row in the conflict set,
-  // so the CASE WHEN logic is correct in bulk mode.
+  // We always fire the UPDATE on conflict (setWhere: true) and use CASE WHEN
+  // to avoid rewriting payload when hash hasn't changed.
+  // last_seen_at is always bumped so every run marks all visible edges.
   let edgesUpserted = 0;
   let edgesUnchanged = 0;
   const BULK = 500;
@@ -175,31 +176,36 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
   const now = new Date();
   for (let i = 0; i < totalEdges; i += BULK) {
     const batch = dedupedEdges.slice(i, i + BULK);
-    const results = await db
-      .insert(updateEdges)
-      .values(batch.map((e) => ({
-        configId:     e.configId,
-        fromVersion:  e.fromVersion,
-        toVersion:    e.toVersion,
-        edition:      e.edition,
-        cfuPath:      e.cfuPath,
-        contentHash:  e.contentHash,
-        rawJson:      e.rawJson,
-        lastSeenAt:   now,
-      })))
-      .onConflictDoUpdate({
-        target: [updateEdges.configId, updateEdges.fromVersion, updateEdges.toVersion],
-        set: {
-          lastSeenAt:  now,
-          cfuPath:     sql`excluded.cfu_path`,
-          contentHash: sql`excluded.content_hash`,
-          rawJson:     sql`excluded.raw_json`,
-        },
-        // Only fire the UPDATE when content actually changed.
-        // Unchanged rows skip the write entirely → much faster on re-imports.
-        setWhere: sql`${updateEdges.contentHash} <> excluded.content_hash`,
-      })
-      .returning({ inserted: sql<boolean>`(xmax = 0)` });
+    let results: { inserted: boolean }[];
+    try {
+      results = await db
+        .insert(updateEdges)
+        .values(batch.map((e) => ({
+          configId:     e.configId,
+          fromVersion:  e.fromVersion,
+          toVersion:    e.toVersion,
+          edition:      e.edition,
+          cfuPath:      e.cfuPath,
+          contentHash:  e.contentHash,
+          rawJson:      e.rawJson,
+          lastSeenAt:   now,
+        })))
+        .onConflictDoUpdate({
+          target: [updateEdges.configId, updateEdges.fromVersion, updateEdges.toVersion],
+          set: {
+            lastSeenAt:   now,
+            cfuPath:      sql`excluded.cfu_path`,
+            contentHash:  sql`excluded.content_hash`,
+            rawJson:      sql`excluded.raw_json`,
+          },
+          setWhere: sql`true`,
+        })
+        .returning({ inserted: sql<boolean>`(xmax = 0)` });
+    } catch (batchErr) {
+      const msg = (batchErr as Error).message ?? String(batchErr);
+      log(`✗ Ошибка на батче ${i}–${i + batch.length}: ${msg}`);
+      throw batchErr;
+    }
 
     for (const r of results) {
       if ((r as any).inserted) edgesUpserted++;
