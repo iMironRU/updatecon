@@ -236,6 +236,13 @@ input, select, textarea { font-family: inherit; }
 .patch-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
   border-bottom: 1px solid var(--border); font-size: 13px; }
 .patch-item:last-child { border-bottom: none; }
+.patches-section { margin-top: 8px; }
+.patches-list { display: flex; flex-direction: column; gap: 2px; }
+.patch-row { display: flex; align-items: center; gap: 10px; padding: 4px 0;
+  font-size: 12px; color: var(--text-primary); text-decoration: none; }
+.patch-row:hover { color: var(--accent); }
+.patch-date { color: var(--text-muted); font-family: var(--mono); min-width: 80px; }
+.patch-title { flex: 1; }
 .version-show-more { text-align: center; padding: 14px; border-top: 1px solid var(--border); }
 .hero { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
   padding: 32px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
@@ -474,6 +481,7 @@ function adapt_config(row) {
     groupName: row.group_name || '',
     nextReleaseVersion: row.next_release_version || '',
     nextReleasePlannedDate: row.next_release_planned_date || '',
+    nextReleasePlanUpdated: row.next_release_plan_updated || '',
     platform_min: row.latest_platform || '—',
     url_1c: row.releases_href ? 'https://releases.1c.ru' + row.releases_href : '',
     release_year: row.latest_date ? new Date(row.latest_date).getFullYear() : null,
@@ -514,16 +522,19 @@ async function loadVersionsForConfig(cfgId) {
   try {
     const data = await apiFetch('/api/versions', { config: cfg.configName });
     cfg._meta = data.meta || {};
+    cfg._cfu = data.cfu || {};
     // API returns oldest→newest; reverse for display (newest first)
     const vers = [...(data.versions || [])].reverse();
-    cfg.versions = vers.map(v => {
+    cfg.versions = vers.map(function(v) {
       const m = cfg._meta[v] || {};
       const dl = cfg.nick
         ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + v +
           '&path=' + cfg.nick + '%5c' + v.replace(/\./g, '_') + '%5cupdsetup.zip'
         : '';
+      const cfuPath = cfg._cfu[v] || '';
+      const dlIts = cfuPath ? 'https://downloads.v8.1c.ru/tmplts/' + cfuPath : '';
       const sizeBytes = m.file_size_bytes || 0;
-      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: [], dl };
+      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: null, dl, dlIts };
     });
     if (cfg.versions.length && !cfg.latestV) {
       cfg.latestV = cfg.versions[0].v;
@@ -1133,9 +1144,11 @@ function render_config(id) {
       <div class="version-body" id="ver-${id}-${i}">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
           ${ver.plat ? `<span class="step-platform">Платформа ≥ ${ver.plat}</span>` : ''}
-          ${ver.dl ? `<a href="${ver.dl}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${ver.dl}')">${icn_dl()} Скачать</a>` : ''}
+          ${ver.dl ? `<a href="${ver.dl}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${ver.dl}')">${icn_dl()} releases.1c.ru</a>` : ''}
+          ${ver.dlIts ? `<a href="${ver.dlIts}" target="_blank" class="btn btn-sm btn-secondary">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="cfg_build_from_ver('${id}','${ver.v}')">${icn_chevron_r()} Цепочка отсюда</button>
         </div>
+        <div id="patches-${id}-${i}"></div>
       </div>
     </div>`;
   });
@@ -1165,7 +1178,7 @@ function render_config(id) {
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
           <div><div class="meta-item-label">Дата выхода</div><div class="meta-item-value">${fmt_date(latest?.date)}</div></div>
           <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || cfg.platform_min || '—'}</div></div>
-          ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${cfg.nextReleaseVersion}${cfg.nextReleasePlannedDate ? ' <span style="font-weight:400;color:var(--text-muted)">·</span> ' + cfg.nextReleasePlannedDate : ''}</div></div>` : ''}
+          ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${cfg.nextReleaseVersion}${cfg.nextReleasePlannedDate ? ' <span style="font-weight:400;color:var(--text-muted)">·</span> ' + cfg.nextReleasePlannedDate : ''}${cfg.nextReleasePlanUpdated ? ' <span style="font-weight:400;font-size:11px;color:var(--text-muted)">обновлено ' + fmt_date(cfg.nextReleasePlanUpdated) + '</span>' : ''}</div></div>` : ''}
           ${cfg.avg_update_days ? `<div><div class="meta-item-label">Частота обновлений</div><div class="meta-item-value">~${cfg.avg_update_days} дн.</div></div>` : ''}
           <div><div class="meta-item-label">Всего версий</div><div class="meta-item-value">${cfg.versions.length || cfg.version_count || '—'}</div></div>
         </div>
@@ -1220,6 +1233,52 @@ function toggle_version(bodyId) {
   el.classList.toggle('open');
   const chev = document.getElementById(bodyId.replace('ver-','chev-'));
   if (chev) chev.classList.toggle('open');
+  // Lazy-load patches on first expand
+  if (el.classList.contains('open')) {
+    const parts = bodyId.replace('ver-', '').split('-');
+    // bodyId format: ver-{cfgId}-{verIndex}
+    // cfgId might contain dashes, verIndex is the last part
+    const verIdx = Number(parts[parts.length - 1]);
+    const cfgId = parts.slice(0, parts.length - 1).join('-');
+    const cfg = CONFIGS.find(function(c) { return c.id === cfgId; });
+    if (cfg && cfg.versions[verIdx] && cfg.versions[verIdx].patches === null) {
+      load_version_patches(cfgId, verIdx);
+    }
+  }
+}
+async function load_version_patches(cfgId, verIdx) {
+  const cfg = CONFIGS.find(function(c) { return c.id === String(cfgId); });
+  if (!cfg || !cfg.versions[verIdx]) return;
+  const ver = cfg.versions[verIdx];
+  const patchesElId = 'patches-' + cfgId + '-' + verIdx;
+  const el = document.getElementById(patchesElId);
+  if (el) el.innerHTML = '<span style="color:var(--text-muted);font-size:13px">Загрузка патчей…</span>';
+  try {
+    const data = await apiFetch('/api/patches', { config: cfg.configName, ver: ver.v });
+    ver.patches = data.patches || [];
+  } catch(e) {
+    ver.patches = [];
+  }
+  const el2 = document.getElementById(patchesElId);
+  if (el2) el2.innerHTML = render_patches(cfgId, verIdx, ver.patches);
+}
+function render_patches(cfgId, verIdx, patchList) {
+  if (!patchList || patchList.length === 0) return '';
+  var last = patchList[0];
+  var lastDate = last && last.patch_date ? fmt_date(last.patch_date) : '';
+  var badge = '<span class="badge badge-gray">' + patchList.length + '</span>';
+  var title = '<div class="patches-title">Патчи ' + badge + (lastDate ? ' · последний ' + lastDate : '') + '</div>';
+  var links = '';
+  for (var i = 0; i < patchList.length; i++) {
+    var p = patchList[i];
+    var pDate = p.patch_date ? fmt_date(p.patch_date) : '';
+    var pTitle = p.title || p.uuid;
+    links += '<a href="https://releases.1c.ru/patches/' + p.uuid + '" target="_blank" class="patch-row">' +
+      (pDate ? '<span class="patch-date">' + pDate + '</span>' : '') +
+      '<span class="patch-title">' + pTitle + '</span>' +
+      '</a>';
+  }
+  return '<div class="patches-section" id="patches-' + cfgId + '-' + verIdx + '">' + title + '<div class="patches-list">' + links + '</div></div>';
 }
 function show_more_versions() {
   document.querySelectorAll('.hidden-version').forEach(el => el.classList.remove('hidden-version'));

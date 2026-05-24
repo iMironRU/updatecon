@@ -36,6 +36,8 @@ import { findChain } from "./chain.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
+import { ReleasesSession } from "../releases/fetch-releases.js";
+import { parsePatchesPage } from "../releases/parse-releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -390,7 +392,7 @@ export async function buildServer() {
     const rows = await db.execute(sql`
       SELECT
         c.id, c.name, c.display_name, c.vendor, c.releases_href,
-        c.group_name, c.next_release_version, c.next_release_planned_date,
+        c.group_name, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
         vm.version       AS latest_version,
         vm.release_date  AS latest_date,
         vm.min_platform  AS latest_platform,
@@ -487,26 +489,92 @@ export async function buildServer() {
       };
     }
 
+    // Fetch cfu_path per to_version: pick the edge from the most recent from_version.
+    const cfuRows = await db.execute(sql`
+      SELECT DISTINCT ON (to_version) to_version, cfu_path
+      FROM update_edges
+      WHERE config_id = ${cfg[0].id}
+      ORDER BY to_version ASC, from_version DESC
+    `);
+    const cfu: Record<string, string> = {};
+    for (const r of (cfuRows as any).rows ?? cfuRows) {
+      if ((r as any).cfu_path) cfu[(r as any).to_version] = (r as any).cfu_path;
+    }
+
     return {
       versions: list,
       editions: [...byEdition.entries()]
         .sort((a, b) => a[0] - b[0])
         .map(([edition, versions]) => ({ edition, versions })),
       meta,
+      cfu,
     };
   });
 
   app.get("/api/patches", async (req) => {
     const { config, ver } = req.query as any;
     if (!config || !ver) return { patches: [] };
-    const rows = await db.execute(sql`
-      SELECT p.uuid, p.title, p.patch_date::text, p.download_key
-      FROM patches p
-      JOIN configurations c ON c.id = p.config_id
-      WHERE c.name = ${String(config)} AND p.version = ${String(ver)}
-      ORDER BY p.patch_date DESC NULLS LAST
+
+    // 1. Look up config by name to get id and releases_href.
+    const cfgRows = await db
+      .select({ id: configurations.id, releasesHref: configurations.releasesHref })
+      .from(configurations)
+      .where(eq(configurations.name, String(config)))
+      .limit(1);
+    if (cfgRows.length === 0) return { patches: [] };
+    const configId = cfgRows[0].id;
+    const releasesHref = cfgRows[0].releasesHref ?? null;
+
+    // 2. Query DB first.
+    const dbRows = await db.execute(sql`
+      SELECT uuid, title, patch_date::text, download_key
+      FROM patches
+      WHERE config_id = ${configId} AND version = ${String(ver)}
+      ORDER BY patch_date DESC NULLS LAST
     `);
-    return { patches: (rows as any).rows ?? rows };
+    const existing = (dbRows as any).rows ?? dbRows;
+    if (existing.length > 0) return { patches: existing };
+
+    // 3. If empty and credentials + releases_href are available, lazy-fetch.
+    if (
+      process.env.ITS_LOGIN &&
+      process.env.ITS_PASSWORD &&
+      releasesHref
+    ) {
+      try {
+        const nick = releasesHref.replace("/project/", "");
+        const session = new ReleasesSession();
+        await session.login();
+        const html = await session.get(
+          "/patches/total?nick=" + nick + "&ver=" + String(ver),
+        );
+        const parsed = parsePatchesPage(html);
+        if (parsed.length > 0) {
+          const valuesToInsert = parsed.map((p) => ({
+            configId,
+            version: String(ver),
+            uuid: p.uuid,
+            title: p.title ?? null,
+            patchDate: p.patchDate ?? null,
+            downloadKey: null as string | null,
+          }));
+          await db.insert(patches).values(valuesToInsert).onConflictDoNothing();
+          return {
+            patches: parsed.map((p) => ({
+              uuid: p.uuid,
+              title: p.title ?? null,
+              patch_date: p.patchDate,
+              download_key: null,
+            })),
+          };
+        }
+      } catch (e) {
+        // Lazy fetch failure is non-fatal — return empty list.
+        console.error("[patches] lazy fetch failed:", e);
+      }
+    }
+
+    return { patches: [] };
   });
 
   app.get("/api/chain", async (req) => {
