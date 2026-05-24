@@ -483,6 +483,7 @@ function adapt_config(row) {
     status: 'active',           // placeholder
     description: '',            // placeholder
     groupName: row.group_name || '',
+    region: row.region || 'ru',
     nextReleaseVersion: row.next_release_version || '',
     nextReleasePlannedDate: row.next_release_planned_date || '',
     nextReleasePlanUpdated: row.next_release_plan_updated || '',
@@ -602,6 +603,16 @@ function days_ago(dateStr) {
   if (diff < 30) return `${Math.round(diff)} дн. назад`;
   if (diff < 365) return `${Math.round(diff/30)} мес. назад`;
   return `${Math.round(diff/365)} г. назад`;
+}
+function region_label(r) {
+  var labels = {
+    ru: 'Россия', kz: 'Казахстан', az: 'Азербайджан', by: 'Беларусь',
+    am: 'Армения', ge: 'Грузия', kg: 'Кыргызстан', tj: 'Таджикистан',
+    uz: 'Узбекистан', md: 'Молдова', lt: 'Литва', lv: 'Латвия',
+    ee: 'Эстония', bg: 'Болгария', baltics: 'Страны Балтии',
+    intl: 'Международные', stdlib: 'Библиотеки'
+  };
+  return labels[r] || r;
 }
 function type_label(t) {
   return { standard: 'Типовая', partner: 'Партнёрская', industry: 'Отраслевая' }[t] || t;
@@ -1176,6 +1187,7 @@ function render_config(id) {
         <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
         <div class="config-detail-badges">${type_badge(cfg.type)} ${status_badge(cfg.status)}
           ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
+          ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
         ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
         <div class="config-meta-grid">

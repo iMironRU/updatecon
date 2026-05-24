@@ -40,6 +40,10 @@ export const configurations = pgTable(
     releasesHref: text("releases_href"),          // "/project/Accounting30"
     // Category from releases.1c.ru /total page group name
     groupName: text("group_name"),               // "Типовые конфигурации фирмы \"1С\" для России"
+    // Short region code derived from group_name: "ru" | "kz" | "az" | "by" | "am" | "ge"
+    // | "kg" | "tj" | "uz" | "md" | "lt" | "lv" | "ee" | "bg" | "baltics" | "intl" | "stdlib"
+    // null = not yet synced from releases.1c.ru
+    region: text("region"),
     // Next planned release (from releases.1c.ru /total)
     nextReleaseVersion: text("next_release_version"), // "3.0.209"
     nextReleasePlannedDate: text("next_release_planned_date"), // "Ноябрь 2026"

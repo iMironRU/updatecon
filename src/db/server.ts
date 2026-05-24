@@ -392,7 +392,7 @@ export async function buildServer() {
     const rows = await db.execute(sql`
       SELECT
         c.id, c.name, c.display_name, c.vendor, c.releases_href,
-        c.group_name, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
+        c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
         vm.version       AS latest_version,
         vm.release_date  AS latest_date,
         vm.min_platform  AS latest_platform,

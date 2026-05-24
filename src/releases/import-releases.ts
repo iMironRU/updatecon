@@ -29,9 +29,64 @@ const MIN_FORWARD_RATIO = 0.8;
 const MIN_REVERSE_RATIO = 0.3;
 const MIN_RELEASES_VERSIONS = 10;
 
+/** Map a releases.1c.ru group_name to a short region code. */
+function groupToRegion(groupName: string | null | undefined): string | null {
+  if (!groupName) return null;
+  if (/Стандартные библиотеки/i.test(groupName))   return "stdlib";
+  if (/Международные/i.test(groupName))             return "intl";
+  if (/для России|для Российской/i.test(groupName)) return "ru";
+  if (/для Азербайджана/i.test(groupName))          return "az";
+  if (/для Армении/i.test(groupName))               return "am";
+  if (/для стран Балтии/i.test(groupName))          return "baltics";
+  if (/для Беларуси/i.test(groupName))              return "by";
+  if (/для Болгарии/i.test(groupName))              return "bg";
+  if (/для Грузии/i.test(groupName))                return "ge";
+  if (/для Казахстана/i.test(groupName))            return "kz";
+  if (/для Кыргызстана/i.test(groupName))           return "kg";
+  if (/для Латвии/i.test(groupName))                return "lv";
+  if (/для Литвы/i.test(groupName))                 return "lt";
+  if (/для Молдовы/i.test(groupName))               return "md";
+  if (/для Таджикистана/i.test(groupName))          return "tj";
+  if (/для Узбекистана/i.test(groupName))           return "uz";
+  if (/для Эстонии/i.test(groupName))               return "ee";
+  if (/Отраслевые решения/i.test(groupName))        return "ru"; // industry — Russian ecosystem
+  if (/Конфигурации проекта/i.test(groupName))      return "ru"; // partner — Russian ecosystem
+  return "ru"; // default
+}
+
+/** Region stems to search in config names/display names (handles Russian declension). */
+const REGION_STEMS: Record<string, string[]> = {
+  az: ["азербайджан", "azerbaij"],
+  am: ["армени", "armeni"],
+  baltics: ["балти", "baltic"],
+  by: ["беларус", "белорус", "belarus"],
+  bg: ["болгари", "bulgari"],
+  ge: ["грузи", "georgi"],
+  kz: ["казахстан", "kazakhst"],
+  kg: ["кыргыз", "kyrgyz"],
+  lv: ["латви", "latvia"],
+  lt: ["литв", "lithu"],
+  md: ["молдов", "moldova"],
+  tj: ["таджик", "tajik"],
+  uz: ["узбек", "uzbek"],
+  ee: ["эстони", "estoni"],
+  stdlib: ["библиотек", "library"],
+  intl: ["международн", "internation"],
+};
+
+/** Returns true if the DB config's name/displayName indicates it belongs to the given region. */
+function configMatchesRegion(configName: string, configDisplayName: string | null | undefined, region: string): boolean {
+  if (region === "ru") return true; // no restriction for Russian
+  const stems = REGION_STEMS[region];
+  if (!stems) return true; // unknown region — allow
+  const haystack = ((configName || "") + " " + (configDisplayName || "")).toLowerCase();
+  return stems.some((s) => haystack.includes(s));
+}
+
 interface MatchResult {
   configId: number;
   configName: string;
+  configDisplayName: string | null;
   forwardRatio: number;
   reverseRatio: number;
 }
@@ -68,10 +123,10 @@ async function findMatchingConfig(
   if (displayName && qualifying.length > 0) {
     const candidateIds = qualifying.map((h) => h.config_id);
     const cfgsRows = await db.execute(sql`
-      SELECT id, name FROM configurations
+      SELECT id, name, display_name FROM configurations
       WHERE id IN (${sql.join(candidateIds.map((id) => sql`${id}`), sql`, `)})
     `);
-    const cfgs: { id: number; name: string }[] =
+    const cfgs: { id: number; name: string; display_name: string | null }[] =
       (cfgsRows as any).rows ?? (cfgsRows as any);
     const matchesByConfigId = new Map(
       qualifying.map((h) => [Number(h.config_id), h.matches]),
@@ -104,13 +159,19 @@ async function findMatchingConfig(
   if (reverseRatio < MIN_REVERSE_RATIO) return null;
 
   const cfgRows = await db
-    .select({ id: configurations.id, name: configurations.name })
+    .select({ id: configurations.id, name: configurations.name, displayName: configurations.displayName })
     .from(configurations)
     .where(eq(configurations.id, winnerId))
     .limit(1);
   if (!cfgRows.length) return null;
 
-  return { configId: cfgRows[0].id, configName: cfgRows[0].name, forwardRatio, reverseRatio };
+  return {
+    configId: cfgRows[0].id,
+    configName: cfgRows[0].name,
+    configDisplayName: cfgRows[0].displayName ?? null,
+    forwardRatio,
+    reverseRatio,
+  };
 }
 
 function longestCommonSubstring(a: string, b: string): number {
@@ -296,17 +357,22 @@ export async function runReleasesImport(
 
     if (versionRows.length === 0) { skipped++; continue; }
 
-    // Skip projects from non-Russian regional groups — they share version ranges
-    // with Russian configs (localised ports) but are distinct products.
-    // Matching them to Russian DB configs creates false links and wrong group labels.
-    if (cfg.groupName && /для\s+/i.test(cfg.groupName) && !/России|Российской/i.test(cfg.groupName)) {
-      skipped++;
-      continue;
-    }
-
     const versions = versionRows.map((r) => r.version);
     const match = await findMatchingConfig(versions, cfg.displayName);
     if (!match) { skipped++; continue; }
+
+    const releasesRegion = groupToRegion(cfg.groupName);
+
+    // For non-Russian regional projects: the matched DB config must have a name/display_name
+    // that hints at the same region. This prevents Russian configs from being matched to
+    // Azerbaijani/Kazakh/etc. projects that share version ranges (localised ports).
+    if (releasesRegion && releasesRegion !== "ru" && releasesRegion !== "stdlib" && releasesRegion !== "intl") {
+      if (!configMatchesRegion(match.configName, match.configDisplayName, releasesRegion)) {
+        log(`  ✗ ${nick}: регион ${releasesRegion} не совпадает с конфигом ${match.configName}`);
+        skipped++;
+        continue;
+      }
+    }
 
     const prev = bestMatchForConfig.get(match.configId);
     const currentMatches = Math.round(match.forwardRatio * versions.length);
@@ -323,12 +389,13 @@ export async function runReleasesImport(
       WHERE releases_href = ${cfg.href} AND id <> ${match.configId}
     `);
 
-    // Write config enrichment (display_name, releases_href, group, planned dates)
+    // Write config enrichment (display_name, releases_href, group, region, planned dates)
     await db.execute(sql`
       UPDATE configurations SET
         display_name                = ${cfg.displayName},
         releases_href               = ${cfg.href},
         group_name                  = ${cfg.groupName || null},
+        region                      = ${releasesRegion},
         next_release_version        = ${cfg.nextReleaseVersion ?? null},
         next_release_planned_date   = ${cfg.nextReleasePlannedDate ?? null},
         next_release_plan_updated   = ${cfg.nextReleasePlanUpdated ?? null}::date

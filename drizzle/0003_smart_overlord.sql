@@ -1,0 +1,1 @@
+ALTER TABLE "configurations" ADD COLUMN "region" text;
