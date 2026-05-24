@@ -307,6 +307,14 @@ export async function runReleasesImport(
 
     log(`  ✓ ${nick} → ${match.configName}`);
 
+    // If releases_href was previously assigned to a different config (matching
+    // heuristic can change between runs), clear it there first — the unique
+    // constraint does not allow two rows to share the same href.
+    await db.execute(sql`
+      UPDATE configurations SET releases_href = NULL
+      WHERE releases_href = ${cfg.href} AND id <> ${match.configId}
+    `);
+
     // Write config enrichment (display_name, releases_href, group, planned dates)
     await db.execute(sql`
       UPDATE configurations SET
