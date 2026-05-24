@@ -467,6 +467,10 @@ function adapt_config(row) {
   const latestV = row.latest_version || '';
   const seg = latestV.split('.');
   const edition = seg.length >= 2 ? seg[0] + '.' + seg[1] : seg[0] || '';
+  const gn = row.group_name || '';
+  const cfgType = /Конфигурации проекта/i.test(gn) ? 'partner'
+                : /Отраслевые решения/i.test(gn)   ? 'industry'
+                : 'standard';
   return {
     id,
     configName: row.name,       // DB internal name used for API calls
@@ -474,7 +478,7 @@ function adapt_config(row) {
     name: displayName,
     short: (row.display_name || row.name || '').split(',')[0].trim(),
     edition,
-    type: 'standard',           // placeholder
+    type: cfgType,              // derived from group_name via releases import
     vendor: row.vendor || '1С',
     status: 'active',           // placeholder
     description: '',            // placeholder
