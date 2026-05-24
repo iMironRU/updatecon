@@ -1171,7 +1171,7 @@ function render_config(id) {
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
         <div class="config-detail-badges">${type_badge(cfg.type)} ${status_badge(cfg.status)}
-          ${cfg.groupName ? `<span class="badge badge-gray" title="${cfg.groupName}">${cfg.groupName.replace(/Типовые конфигурации фирмы[^д]*для /i,'').replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая').slice(0,32)}</span>` : ''}
+          ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
         </div>
         ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
         <div class="config-meta-grid">

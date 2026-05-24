@@ -296,6 +296,14 @@ export async function runReleasesImport(
 
     if (versionRows.length === 0) { skipped++; continue; }
 
+    // Skip projects from non-Russian regional groups — they share version ranges
+    // with Russian configs (localised ports) but are distinct products.
+    // Matching them to Russian DB configs creates false links and wrong group labels.
+    if (cfg.groupName && /для\s+/i.test(cfg.groupName) && !/России|Российской/i.test(cfg.groupName)) {
+      skipped++;
+      continue;
+    }
+
     const versions = versionRows.map((r) => r.version);
     const match = await findMatchingConfig(versions, cfg.displayName);
     if (!match) { skipped++; continue; }
