@@ -645,7 +645,10 @@ export async function buildServer() {
       db.execute(sql`SELECT count(*)::int c FROM configurations`),
       db.execute(sql`SELECT count(*)::int c FROM update_edges`),
       db.execute(sql`SELECT count(DISTINCT to_version)::int c FROM update_edges`),
-      db.select().from(importRuns).orderBy(desc(importRuns.id)).limit(1),
+      db.select().from(importRuns)
+        .where(eq(importRuns.status, "ok"))
+        .orderBy(desc(importRuns.id))
+        .limit(1),
     ]);
     const cfgC = ((cfgCount as any).rows ?? cfgCount)[0]?.c ?? 0;
     const edgeC = ((edgeCount as any).rows ?? edgeCount)[0]?.c ?? 0;

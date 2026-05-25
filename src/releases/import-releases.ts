@@ -16,7 +16,7 @@
 
 import { sql, eq } from "drizzle-orm";
 import { db, pool } from "../db/client.js";
-import { configurations, versionMeta, patches } from "../db/schema.js";
+import { configurations, versionMeta, patches, importRuns } from "../db/schema.js";
 import { ReleasesSession } from "./fetch-releases.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles,
@@ -315,6 +315,8 @@ export async function runReleasesImport(
     return;
   }
 
+  const startedAt = new Date();
+
   const session = new ReleasesSession();
   log("Авторизация на releases.1c.ru...");
   await session.login(login, password);
@@ -441,6 +443,19 @@ export async function runReleasesImport(
 
   if (!onLog) process.stdout.write("\n");
   log(`Готово: совпало=${matched}, пропущено=${skipped}, метаданных=${metaRows}, размеров=${totalSized}`);
+
+  await db.insert(importRuns).values({
+    source: "releases",
+    fileSha256: "",
+    fileBytes: 0,
+    configsFound: matched,
+    edgesUpserted: metaRows,
+    edgesUnchanged: skipped,
+    status: "ok",
+    message: `matched=${matched} skipped=${skipped} meta=${metaRows} sizes=${totalSized}`,
+    startedAt,
+    finishedAt: new Date(),
+  });
 }
 
 // CLI entry point
