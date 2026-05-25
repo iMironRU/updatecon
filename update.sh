@@ -71,15 +71,34 @@ echo
 
 cd "$PROJECT_DIR"
 
-# Обновляем docker-compose.yml из репозитория чтобы гарантировать
-# наличие image: ghcr.io/... (старые инсталляции могли не иметь этой строки)
-RAW="https://raw.githubusercontent.com/iMironRU/updatecon/main/docker-compose.yml"
-if curl -fsSL --max-time 10 "$RAW" -o docker-compose.yml.new >> "$LOG_FILE" 2>&1; then
-  mv docker-compose.yml.new docker-compose.yml
+# Обновляем конфиг-файлы из репозитория.
+# Важно: скачиваем все файлы, которые монтируются в контейнеры — иначе Docker
+# создаст директорию вместо отсутствующего файла и запуск упадёт.
+RAW_BASE="https://raw.githubusercontent.com/iMironRU/updatecon/main"
+
+_fetch_file() {
+  local name="$1"
+  if curl -fsSL --max-time 10 "${RAW_BASE}/${name}" -o "${name}.new" >> "$LOG_FILE" 2>&1; then
+    # Если на диске директория с тем же именем — удалить её
+    [ -d "$name" ] && rm -rf "$name"
+    mv "${name}.new" "$name"
+    return 0
+  else
+    rm -f "${name}.new"
+    return 1
+  fi
+}
+
+if _fetch_file "docker-compose.yml"; then
   log "docker-compose.yml обновлён"
 else
   warn "Не удалось обновить docker-compose.yml — продолжаем с текущим"
-  rm -f docker-compose.yml.new
+fi
+
+if _fetch_file "Caddyfile"; then
+  log "Caddyfile обновлён"
+else
+  warn "Не удалось обновить Caddyfile — продолжаем с текущим"
 fi
 
 run_spin "Скачиваем образ из ghcr.io" $DC pull
@@ -87,11 +106,16 @@ run_spin "Скачиваем образ из ghcr.io" $DC pull
 run_spin "Перезапускаем сервисы" $DC up -d
 
 # ── Проверка ──────────────────────────────────────────────────────────────────
-PORT="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d= -f2 || echo 3000)"
+# WEB_PORT пустой когда используется Caddy (трафик идёт через :80).
+# Проверяем: сначала через Caddy (:80), затем прямой порт.
+WEB_PORT_RAW="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d= -f2 || true)"
 printf "  ${CYAN}⠋${NC}  Ждём веб-сервер..."
 OK=0
 for i in $(seq 1 20); do
-  curl -fsS "http://localhost:${PORT}/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }
+  curl -fsS "http://localhost:80/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }
+  if [ -n "$WEB_PORT_RAW" ]; then
+    curl -fsS "http://localhost:${WEB_PORT_RAW}/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }
+  fi
   sleep 3
 done
 [ "$OK" = "1" ] \
