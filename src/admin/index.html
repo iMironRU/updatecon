@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Апдейкон — Администратор</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -143,8 +144,14 @@ tr:hover td { background: var(--surface2); }
     <button class="nav-btn" onclick="show('settings')">Настройки</button>
   </nav>
   <div class="header-user">
-    <span class="dot"></span>
+    <a href="/" title="Открыть сайт" style="display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid var(--border);border-radius:5px;transition:color .15s,border-color .15s" onmouseover="this.style.color='var(--blue)';this.style.borderColor='var(--blue)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      На сайт
+    </a>
+    <span class="dot" style="margin-left:4px"></span>
     <span id="hdr-user">admin</span>
+    &nbsp;·&nbsp;
+    <span id="hdr-ver" style="font-family:var(--mono);font-size:11px;color:var(--light)">…</span>
     &nbsp;·&nbsp;
     <a href="#" onclick="logout()">Выйти</a>
   </div>
@@ -600,6 +607,18 @@ async function checkRunningImport() {
 // Init
 loadDash();
 checkRunningImport();
+
+// Show build version in header
+(async function() {
+  try {
+    var r = await fetch('/version.json');
+    if (r.ok) {
+      var v = await r.json();
+      var el = document.getElementById('hdr-ver');
+      if (el) el.textContent = v.date === 'dev' ? 'dev' : (v.commit + ' · ' + v.date.slice(0, 10));
+    }
+  } catch(_) {}
+})();
 </script>
 </body>
 </html>
