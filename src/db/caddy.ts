@@ -15,10 +15,12 @@ const CADDY_API = process.env.CADDY_API ?? "http://caddy:2019";
 const CADDY_TIMEOUT_MS = 5000;
 
 function buildCaddyfile(domain: string | null | undefined): string {
+  // origins must be explicit: when admin listens on 0.0.0.0, Caddy does NOT
+  // automatically whitelist localhost. We always include it so that subsequent
+  // /load calls (after the first domain change) still work.
   const header = `{
-  admin 0.0.0.0:2019
-  servers {
-    trusted_proxies static private_ranges
+  admin 0.0.0.0:2019 {
+    origins localhost:2019
   }
 }
 
