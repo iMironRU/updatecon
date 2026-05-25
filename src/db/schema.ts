@@ -198,8 +198,22 @@ export const patches = pgTable(
   }),
 );
 
+/**
+ * Generic key-value store for application settings.
+ * Used for: domain name, Telegram bot token, etc.
+ * Populated at runtime — never contains secrets (use .env for those).
+ */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
 export type VersionMeta = typeof versionMeta.$inferSelect;
 export type Patch = typeof patches.$inferSelect;
+export type Setting = typeof settings.$inferSelect;

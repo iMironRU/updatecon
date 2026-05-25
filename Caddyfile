@@ -1,0 +1,13 @@
+# Начальный конфиг Caddy — HTTP passthrough, Admin API доступен изнутри.
+# Домен и HTTPS задаются через /admin → "Домен и HTTPS" → применяются через Caddy API.
+{
+  admin 0.0.0.0:2019
+  # Убираем Caddy-заголовок из ответов
+  servers {
+    trusted_proxies static private_ranges
+  }
+}
+
+:80 {
+  reverse_proxy web:3000
+}

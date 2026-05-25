@@ -31,8 +31,9 @@ import { request as httpsRequest } from "node:https";
 import { randomBytes } from "node:crypto";
 import { sql, eq, desc } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { configurations, updateEdges, importRuns, patches } from "./schema.js";
+import { configurations, updateEdges, importRuns, patches, settings } from "./schema.js";
 import { findChain } from "./chain.js";
+import { setCaddyDomain, getCaddyStatus } from "./caddy.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
@@ -291,6 +292,45 @@ export async function buildServer() {
     if (!ac) return reply.status(409).send({ error: "Нет активного импорта" });
     ac.abort();
     return { cancelled: true };
+  });
+
+  // ── Admin API: SSL / Caddy domain management ─────────────────────────────
+  app.get("/admin/api/ssl", async () => {
+    const [row] = await db
+      .select()
+      .from(settings)
+      .where(eq(settings.key, "domain"));
+    const domain = row?.value ?? null;
+    const caddy = await getCaddyStatus();
+    return { domain, caddy };
+  });
+
+  app.post("/admin/api/ssl", async (req, reply) => {
+    const { domain } = (req.body as any) ?? {};
+    const cleaned = typeof domain === "string" ? domain.trim().toLowerCase() : "";
+
+    // Validate: empty (disable HTTPS) or hostname
+    if (cleaned && !/^[a-z0-9][a-z0-9.\-]{0,252}$/.test(cleaned)) {
+      return reply.status(400).send({ error: "Некорректный домен" });
+    }
+
+    // Push new config to Caddy
+    try {
+      await setCaddyDomain(cleaned || null);
+    } catch (e) {
+      return reply.status(502).send({ error: `Caddy не ответил: ${(e as Error).message.slice(0, 200)}` });
+    }
+
+    // Persist in DB
+    await db
+      .insert(settings)
+      .values({ key: "domain", value: cleaned || null })
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: { value: cleaned || null, updatedAt: new Date() },
+      });
+
+    return { ok: true, domain: cleaned || null };
   });
 
   // ── Public static + API ───────────────────────────────────────────────────
@@ -630,14 +670,30 @@ export async function buildServer() {
   return app;
 }
 
+/** On startup: if a domain is stored in DB, re-apply it to Caddy. */
+async function syncCaddyOnStart() {
+  try {
+    const [row] = await db.select().from(settings).where(eq(settings.key, "domain"));
+    const domain = row?.value ?? null;
+    if (domain) {
+      await setCaddyDomain(domain);
+      console.log(`[caddy] domain restored: ${domain}`);
+    }
+  } catch (e) {
+    // Non-fatal: Caddy might not be up yet on very first start
+    console.warn("[caddy] sync on start skipped:", (e as Error).message);
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT ?? 3000);
   buildServer()
-    .then((app) =>
-      app
-        .listen({ port, host: "0.0.0.0" })
-        .then(() => app.log.info(`listening on :${port}`)),
-    )
+    .then(async (app) => {
+      await app.listen({ port, host: "0.0.0.0" });
+      app.log.info(`listening on :${port}`);
+      // Give Caddy a moment to start before pushing config
+      setTimeout(() => { void syncCaddyOnStart(); }, 3000);
+    })
     .catch(async (e) => {
       console.error(e);
       await pool.end();

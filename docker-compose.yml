@@ -14,6 +14,22 @@ services:
       timeout: 5s
       retries: 10
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    # Admin API on :2019 is intentionally NOT exposed to the host —
+    # only the web container calls it over the internal Docker network.
+
   web:
     image: ghcr.io/imironru/updatecon:latest
     build: .
@@ -28,8 +44,12 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
       ITS_LOGIN: ${ITS_LOGIN:-}
       ITS_PASSWORD: ${ITS_PASSWORD:-}
+      # Internal Caddy Admin API (resolved over Docker compose network)
+      CADDY_API: ${CADDY_API:-http://caddy:2019}
+    # WEB_PORT is intentionally empty when Caddy is used — traffic goes through
+    # Caddy on :80/:443. Set WEB_PORT=3000 only for direct access without Caddy.
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${WEB_PORT:-}:3000"
     command: ["node", "dist/db/server.js"]
 
   worker:
@@ -55,3 +75,5 @@ services:
 
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:

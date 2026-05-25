@@ -284,6 +284,36 @@ tr:hover td { background: var(--surface2); }
 
   <!-- SETTINGS -->
   <div id="page-settings" class="page">
+
+    <!-- ── HTTPS / Domain ─────────────────────────────────────────────────── -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <span class="card-title">Домен и HTTPS</span>
+        <span id="ssl-status-badge" style="margin-left:auto;font-size:12px"></span>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:18px">
+          Введите домен — Caddy автоматически получит сертификат Let's Encrypt и настроит редирект HTTP → HTTPS.
+          Домен должен уже указывать на этот сервер (DNS A-запись).
+          Чтобы вернуться к HTTP, очистите поле и нажмите «Применить».
+        </div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div class="field" style="flex:1;margin-bottom:0">
+            <label>Домен <span style="font-weight:400;text-transform:none;color:var(--muted)">(например: updatecon.example.com)</span></label>
+            <input id="ssl-domain" placeholder="example.com" autocomplete="off" spellcheck="false">
+          </div>
+          <button class="btn btn-primary" id="ssl-apply-btn" onclick="applyDomain()" style="white-space:nowrap">
+            Применить
+          </button>
+        </div>
+        <div id="ssl-msg" style="margin-top:10px;font-size:13px"></div>
+        <div style="margin-top:14px;display:flex;gap:16px;font-size:12px;color:var(--muted)">
+          <span>Caddy: <span id="ssl-caddy-status">…</span></span>
+          <span>Активный домен: <span id="ssl-active-domain" style="font-family:var(--mono)">…</span></span>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header"><span class="card-title">Конфигурация сервера</span></div>
       <div class="card-body">
@@ -340,7 +370,7 @@ function show(page) {
   currentPage = page;
   if (page === 'dash') loadDash();
   if (page === 'logs') loadLogs();
-  if (page === 'settings') loadSettings();
+  if (page === 'settings') { loadSettings(); loadSslStatus(); }
 }
 
 function logout() {
@@ -601,6 +631,60 @@ async function checkRunningImport() {
         break;
       }
     } catch(chkErr) { void chkErr; }
+  }
+}
+
+// ── SSL / Domain ─────────────────────────────────────────────────────────────
+async function loadSslStatus() {
+  try {
+    var data = await apiFetch('/admin/api/ssl');
+    var inp = document.getElementById('ssl-domain');
+    if (inp && data.domain) inp.value = data.domain;
+
+    var caddyEl = document.getElementById('ssl-caddy-status');
+    var domainEl = document.getElementById('ssl-active-domain');
+    if (caddyEl) caddyEl.innerHTML = data.caddy.reachable
+      ? '<span style="color:var(--green)">● онлайн</span>'
+      : '<span style="color:var(--red)">● недоступен</span>';
+    if (domainEl) domainEl.textContent = data.caddy.domain || data.domain || '(не задан)';
+  } catch(e) {
+    var caddyEl2 = document.getElementById('ssl-caddy-status');
+    if (caddyEl2) caddyEl2.textContent = 'ошибка запроса';
+  }
+}
+
+async function applyDomain() {
+  var inp = document.getElementById('ssl-domain');
+  var btn = document.getElementById('ssl-apply-btn');
+  var msg = document.getElementById('ssl-msg');
+  var domain = inp ? inp.value.trim().toLowerCase() : '';
+
+  btn.disabled = true;
+  btn.textContent = 'Применяем…';
+  msg.innerHTML = '';
+
+  try {
+    var r = await fetch(location.origin + '/admin/api/ssl', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: domain }),
+    });
+    var data = await r.json();
+    if (!r.ok) {
+      msg.innerHTML = '<span style="color:var(--red)">✗ ' + (data.error || r.status) + '</span>';
+    } else {
+      var label = data.domain
+        ? '✓ Домен <b>' + data.domain + '</b> применён. Caddy получает сертификат — это займёт до 1 минуты.'
+        : '✓ HTTPS отключён, сервер работает по HTTP.';
+      msg.innerHTML = '<span style="color:var(--green)">' + label + '</span>';
+      await loadSslStatus();
+    }
+  } catch(e) {
+    msg.innerHTML = '<span style="color:var(--red)">✗ Сетевая ошибка: ' + e.message + '</span>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Применить';
   }
 }
 
