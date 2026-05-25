@@ -35,6 +35,20 @@ function buildCaddyfile(domain: string | null | undefined): string {
   );
 }
 
+/**
+ * Caddy Admin API requires an Origin header matching its listen address.
+ * Node.js fetch doesn't send Origin automatically, so we add it explicitly.
+ * Default allowed origin is localhost:<port> derived from the listen address.
+ */
+function adminOrigin(): string {
+  try {
+    const u = new URL(CADDY_API);
+    return `http://localhost:${u.port || "2019"}`;
+  } catch {
+    return "http://localhost:2019";
+  }
+}
+
 /** Apply a new domain to Caddy. Passing null/empty reverts to plain HTTP. */
 export async function setCaddyDomain(domain: string | null | undefined): Promise<void> {
   const body = buildCaddyfile(domain);
@@ -43,7 +57,11 @@ export async function setCaddyDomain(domain: string | null | undefined): Promise
   try {
     const res = await fetch(`${CADDY_API}/load`, {
       method: "POST",
-      headers: { "Content-Type": "text/caddyfile", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "text/caddyfile",
+        "Cache-Control": "no-store",
+        "Origin": adminOrigin(),
+      },
       body,
       signal: ctrl.signal,
     });
@@ -67,6 +85,7 @@ export async function getCaddyStatus(): Promise<CaddyStatus> {
   const timer = setTimeout(() => ctrl.abort(), CADDY_TIMEOUT_MS);
   try {
     const res = await fetch(`${CADDY_API}/config/`, {
+      headers: { "Origin": adminOrigin() },
       signal: ctrl.signal,
     });
     if (!res.ok) return { reachable: false, domain: null };
