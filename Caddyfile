@@ -1,11 +1,7 @@
-# Начальный конфиг Caddy — HTTP passthrough, Admin API доступен изнутри.
-# Домен и HTTPS задаются через /admin → "Домен и HTTPS" → применяются через Caddy API.
+# Начальный конфиг Caddy — HTTP passthrough, Admin API включён.
+# Домен и HTTPS задаются через /admin → "Домен и HTTPS".
 {
   admin 0.0.0.0:2019
-  # Убираем Caddy-заголовок из ответов
-  servers {
-    trusted_proxies static private_ranges
-  }
 }
 
 :80 {

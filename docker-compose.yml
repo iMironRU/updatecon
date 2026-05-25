@@ -46,10 +46,9 @@ services:
       ITS_PASSWORD: ${ITS_PASSWORD:-}
       # Internal Caddy Admin API (resolved over Docker compose network)
       CADDY_API: ${CADDY_API:-http://caddy:2019}
-    # WEB_PORT is intentionally empty when Caddy is used — traffic goes through
-    # Caddy on :80/:443. Set WEB_PORT=3000 only for direct access without Caddy.
-    ports:
-      - "${WEB_PORT:-}:3000"
+    # No host port exposed — all traffic goes through Caddy on :80/:443.
+    # For direct access without Caddy (dev/debug), add to docker-compose.override.yml:
+    #   ports: ["3000:3000"]
     command: ["node", "dist/db/server.js"]
 
   worker:
