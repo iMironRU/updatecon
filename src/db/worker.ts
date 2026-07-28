@@ -1,55 +1,137 @@
 /**
  * worker.ts — migration + scheduled import process.
  *
- * On start:
- *   1. Apply drizzle migrations (idempotent).
- *   2. If IMPORT_ON_START=1, run one import immediately.
- *   3. Schedule recurring imports via IMPORT_CRON.
+ * Database migrations are applied by the one-shot `migrate` compose service.
+ * On start the worker optionally imports immediately and schedules repeats.
  *
  * The import itself is the verified pipeline (fetch -> parse -> upsert with
  * two-level hash delta), so a scheduled run over an unchanged file is a
  * cheap no-op.
  */
 
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { migrate as drizzleMigrate } from "drizzle-orm/node-postgres/migrator";
 import cron from "node-cron";
-import { db } from "./client.js";
-import { runImport } from "./import-lst.js";
-import { runReleasesImport } from "../releases/import-releases.js";
+import { ensureLegacyAccount } from "../accounts/service.js";
+import {
+  claimNextUpdateJob,
+  createUpdateJob,
+  executeUpdateJob,
+  pruneUpdateHistory,
+  recoverInterruptedUpdateJobs,
+  UpdateJobAlreadyActiveError,
+  type UpdateMode,
+} from "./update-data.js";
+import { countDueReleaseRetries } from "../releases/import-releases.js";
+import { db, rows } from "./client.js";
+import { settings, updateJobEvents, updateJobs } from "./schema.js";
+import { eq, sql } from "drizzle-orm";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+let workerBusy = false;
 
-async function migrate() {
-  console.log("[worker] applying migrations…");
-  // Uses drizzle-orm's built-in migrator — no drizzle-kit CLI needed at runtime.
-  await drizzleMigrate(db, {
-    migrationsFolder: join(__dirname, "../../drizzle"),
-  });
-  console.log("[worker] migrations done.");
+async function maintenanceActive(): Promise<boolean> {
+  const [maintenance] = await db.select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, "database_maintenance"))
+    .limit(1);
+  return maintenance?.value === "restore";
 }
 
-async function safeImport(reason: string) {
-  console.log(`[worker] import start (${reason}) ${new Date().toISOString()}`);
+async function processUpdateQueue() {
+  if (workerBusy || await maintenanceActive()) return;
+  workerBusy = true;
   try {
-    await runImport();
-  } catch (e) {
-    console.error("[worker] import error:", (e as Error).message);
+    while (!await maintenanceActive()) {
+      const job = await claimNextUpdateJob();
+      if (!job) break;
+      console.log(`[worker] job #${job.id} start (${job.request.mode}) ${new Date().toISOString()}`);
+      try {
+        const result = await executeUpdateJob(job.id, {
+          onEvent: ({ stage, message }) => console.log(`[worker/${stage}] ${message}`),
+        }, job.request.targets, job.request.mode, job.request.forceAllResources === true);
+        if (result.status === "error") console.error(`[worker] job #${job.id} error:`, result.message);
+        else console.log(`[worker] job #${job.id} ${result.status}: ${result.message}`);
+      } catch (error) {
+        const message = ((error as Error).message || String(error)).slice(0, 2000);
+        console.error(`[worker] job #${job.id} crashed:`, error);
+        await db.transaction(async (tx) => {
+          await tx.update(updateJobs).set({
+            status: "error",
+            stage: "done",
+            message,
+            activeWorkers: 0,
+            finishedAt: new Date(),
+          }).where(eq(updateJobs.id, job.id));
+          await tx.insert(updateJobEvents).values({
+            jobId: job.id,
+            stage: "system",
+            level: "error",
+            message: `Worker аварийно завершил задачу: ${message}`,
+          });
+        });
+      }
+    }
+  } finally {
+    workerBusy = false;
   }
-  // Enrich data from releases.1c.ru (categories, planned dates, file sizes)
+}
+
+async function enqueueImport(reason: string, mode: UpdateMode = "full") {
+  const [activeJob] = await db.select({ id: updateJobs.id })
+    .from(updateJobs)
+    .where(sql`${updateJobs.status} IN ('queued', 'running')`)
+    .limit(1);
+  if (activeJob) {
+    console.log(`[worker] skip ${reason}: job #${activeJob.id} is already active`);
+    return;
+  }
+  let job: { id: number };
   try {
-    await runReleasesImport(undefined, undefined, { syncTotalPage: true, syncSizes: true, syncPatchesData: false });
-  } catch (e) {
-    console.error("[worker] releases import error:", (e as Error).message);
+    job = await createUpdateJob(mode === "retry" ? "retry" : "scheduled", { mode }, "queued");
+  } catch (error) {
+    if (error instanceof UpdateJobAlreadyActiveError) {
+      console.log(`[worker] skip ${reason}: job #${error.jobId} became active`);
+      return;
+    }
+    throw error;
+  }
+  console.log(`[worker] queued job #${job.id} (${reason})`);
+  await processUpdateQueue();
+}
+
+async function processDueRetries() {
+  if (workerBusy) return;
+  const due = await countDueReleaseRetries();
+  if (due > 0) {
+    console.log(`[worker] due release page retries: ${due}`);
+    await enqueueImport("retry-queue", "retry");
+  }
+}
+
+async function processArchiveBackfill() {
+  if (workerBusy) return;
+  const result = await db.execute(sql`
+    SELECT count(*)::int AS pending
+    FROM release_project_versions rpv
+    JOIN release_projects rp ON rp.id = rpv.project_id
+    WHERE rpv.resources_synced_at IS NULL
+      AND rp.exclude_from_updates = false
+      AND rp.href IS NOT NULL
+  `);
+  const pending = Number((rows(result)[0]?.pending) ?? 0);
+  if (pending > 0) {
+    console.log(`[worker] historical release pages pending: ${pending}`);
+    await enqueueImport("archive-backfill", "archive");
   }
 }
 
 async function main() {
-  await migrate();
+  await recoverInterruptedUpdateJobs("scheduled");
+  await recoverInterruptedUpdateJobs("retry");
+  await recoverInterruptedUpdateJobs("manual");
+  await ensureLegacyAccount();
+  await pruneUpdateHistory();
 
   if (process.env.IMPORT_ON_START === "1") {
-    await safeImport("on-start");
+    await enqueueImport("on-start");
   }
 
   const expr = process.env.IMPORT_CRON ?? "0 4 * * *";
@@ -57,8 +139,21 @@ async function main() {
     console.error(`[worker] invalid IMPORT_CRON "${expr}", using "0 4 * * *"`);
   }
   const schedule = cron.validate(expr) ? expr : "0 4 * * *";
-  cron.schedule(schedule, () => void safeImport("scheduled"));
-  console.log(`[worker] scheduled imports: "${schedule}". Idle.`);
+  cron.schedule(schedule, () => void enqueueImport("scheduled"));
+  setInterval(() => void processUpdateQueue(), 1000);
+  const retryPollMinutes = Math.max(1, Math.min(60, Number(process.env.RETRY_QUEUE_POLL_MINUTES ?? 5) || 5));
+  setInterval(() => void processDueRetries(), retryPollMinutes * 60_000);
+  const archivePollMinutes = Math.max(15, Math.min(24 * 60,
+    Number(process.env.ARCHIVE_BACKFILL_POLL_MINUTES ?? 60) || 60));
+  setInterval(() => void processArchiveBackfill(), archivePollMinutes * 60_000);
+  setInterval(() => void pruneUpdateHistory(), 24 * 60 * 60_000);
+  void processUpdateQueue();
+  void processDueRetries();
+  void processArchiveBackfill();
+  console.log(
+    `[worker] scheduled imports: "${schedule}"; retry queue: ${retryPollMinutes} min; ` +
+    `archive backfill: ${archivePollMinutes} min. Idle.`,
+  );
 }
 
 main().catch((e) => {

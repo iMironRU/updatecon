@@ -4,34 +4,45 @@ FROM node:22-bookworm-slim AS base
 WORKDIR /app
 ENV NODE_ENV=production
 
-# ---- deps ----
+# ---- all dependencies (shared by build and production pruning) ----
 FROM base AS deps
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+ENV NODE_ENV=development
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # ---- build (typescript -> js) ----
-FROM base AS build
-COPY package.json package-lock.json* ./
-# NODE_ENV=production (inherited from base) skips devDependencies — override it
-# so tsc and other build tools are available.
-RUN NODE_ENV=development npm ci
+FROM deps AS build
 COPY tsconfig.json ./
 COPY src ./src
-COPY public ./public
-COPY drizzle.config.ts ./
 RUN npm run build
+
+# ---- production dependencies ----
+FROM deps AS production-deps
+RUN npm prune --omit=dev
 
 # ---- runtime ----
 FROM base AS runtime
-COPY --from=deps  /app/node_modules ./node_modules
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client-16 \
+    && apt-get purge -y --auto-remove curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+ENV PATH="/usr/lib/postgresql/16/bin:${PATH}"
+COPY --from=production-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/public ./public
+COPY public ./public
 # src/admin is static HTML — copy directly from context, no build step needed
 COPY src/admin ./dist/admin
 COPY package.json ./
 COPY drizzle ./drizzle
-COPY drizzle.config.ts ./
 
 # Default command is the web server; the worker overrides command in compose.
+USER node
 EXPOSE 3000
 CMD ["node", "dist/db/server.js"]

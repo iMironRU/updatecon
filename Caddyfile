@@ -1,9 +1,10 @@
 {
-  admin 0.0.0.0:2019 {
-    origins localhost:2019
-  }
+	admin 0.0.0.0:2019 {
+		origins localhost:2019
+	}
 }
 
 :80 {
-  reverse_proxy web:3000
+	encode zstd gzip
+	reverse_proxy web:3000
 }

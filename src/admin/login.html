@@ -3,16 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Апдейкон — Вход</title>
+<title>Релизы 1С — Вход</title>
+<script>
+try {
+  const savedTheme = localStorage.getItem('uc_theme');
+  if (['light', 'dark', 'ocean', 'sage', 'sand', 'onec'].includes(savedTheme)) {
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }
+} catch (_) {}
+</script>
+<link rel="stylesheet" href="/admin-themes.css">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
-  --border: #30363d; --text: #e6edf3; --muted: #8b949e; --light: #484f58;
-  --blue: #58a6ff; --green: #3fb950; --red: #f85149;
-  --orange: #d29922; --purple: #bc8cff;
-  --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-}
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6;
@@ -38,7 +40,7 @@ a:hover { text-decoration: underline; }
   margin-bottom: 4px;
 }
 .login-logo-badge {
-  background: var(--orange); color: #000; font-size: 10px;
+  background: var(--orange-dim); color: var(--orange); border:1px solid var(--border); font-size: 10px;
   font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing: .5px;
 }
 .login-subtitle { font-size: 12px; color: var(--muted); margin-top: 6px; }
@@ -46,7 +48,7 @@ a:hover { text-decoration: underline; }
 .login-body { padding: 24px 28px 28px; }
 
 .error-alert {
-  background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3);
+  background: var(--red-dim); border: 1px solid var(--border);
   color: var(--red); border-radius: 6px; padding: 10px 14px;
   font-size: 13px; margin-bottom: 18px; display: none; align-items: center; gap: 8px;
 }
@@ -66,12 +68,12 @@ a:hover { text-decoration: underline; }
 .field input::placeholder { color: var(--light); }
 
 .btn-submit {
-  width: 100%; padding: 9px 16px; background: #238636; color: #fff;
-  border: 1px solid rgba(240,246,252,.1); border-radius: 6px;
+  width: 100%; padding: 9px 16px; background: var(--primary); color: var(--on-primary);
+  border: 1px solid var(--primary); border-radius: 6px;
   font-size: 14px; font-weight: 500; cursor: pointer;
   font-family: inherit; transition: background .15s; margin-top: 4px;
 }
-.btn-submit:hover { background: #2ea043; }
+.btn-submit:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 
 .login-footer {
   text-align: center; padding: 14px 28px;
@@ -94,7 +96,7 @@ a:hover { text-decoration: underline; }
   <div class="login-header">
     <div class="lock-icon">🔒</div>
     <div class="login-logo">
-      Апдейкон
+      Релизы 1С
       <span class="login-logo-badge">ADMIN</span>
     </div>
     <div class="login-subtitle">Вход в панель управления</div>

@@ -14,4 +14,8 @@ const connectionString =
 
 export const pool = new Pool({ connectionString });
 export const db = drizzle(pool, { schema });
-export { schema };
+
+/** Normalise `db.execute()` result: both `{rows: T[]}` and bare `T[]` → `T[]` */
+export function rows<T>(result: { rows?: T[] } | T[]): T[] {
+  return Array.isArray(result) ? result : (result.rows ?? []);
+}

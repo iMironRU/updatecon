@@ -1,0 +1,82 @@
+:root {
+  color-scheme: light;
+  --bg: #eaf0f6; --surface: #fbfcfd; --surface2: #edf3f7;
+  --border: #cbd6df; --border-strong: #aebdca; --text: #243343; --muted: #5f6f80; --light: #667687;
+  --blue: #3f6387; --green: #3e7057; --red: #9b4b50;
+  --orange: #925b35; --purple: #665584;
+  --blue-dim: #dbe7f1; --green-dim: #dcebe3; --red-dim: #f1dcde; --orange-dim: #f2e1d6;
+  --primary: #3f6387; --primary-hover: #345471; --on-primary: #fff;
+  --log-bg: #fbfcfd; --log-text: #345f4b; --overlay: rgba(36,51,67,.55);
+  --stripe: rgba(36,51,67,.035); --shadow: rgba(36,51,67,.20);
+  --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #11171e; --surface: #19222c; --surface2: #222d38;
+    --border: #354555; --border-strong: #4a6073; --text: #e0e6eb; --muted: #9aa8b5; --light: #718191;
+    --blue: #82a8c9; --green: #75a388; --red: #c77f84; --orange: #c18a62; --purple: #a694c2;
+    --blue-dim: #293c4d; --green-dim: #24372d; --red-dim: #3d292c; --orange-dim: #3b2b22;
+    --primary: #82a8c9; --primary-hover: #94b6d3; --on-primary: #11171e;
+    --log-bg: #0c1218; --log-text: #abc3b5; --overlay: rgba(7,10,14,.74);
+    --stripe: rgba(255,255,255,.025); --shadow: rgba(0,0,0,.46);
+  }
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #11171e; --surface: #19222c; --surface2: #222d38;
+  --border: #354555; --border-strong: #4a6073; --text: #e0e6eb; --muted: #9aa8b5; --light: #718191;
+  --blue: #82a8c9; --green: #75a388; --red: #c77f84; --orange: #c18a62; --purple: #a694c2;
+  --blue-dim: #293c4d; --green-dim: #24372d; --red-dim: #3d292c; --orange-dim: #3b2b22;
+  --primary: #82a8c9; --primary-hover: #94b6d3; --on-primary: #11171e;
+  --log-bg: #0c1218; --log-text: #abc3b5; --overlay: rgba(7,10,14,.74);
+  --stripe: rgba(255,255,255,.025); --shadow: rgba(0,0,0,.46);
+}
+[data-theme="ocean"] {
+  color-scheme: dark;
+  --bg: #0b1c21; --surface: #112a32; --surface2: #193944;
+  --border: #2f5965; --border-strong: #477784; --text: #dce9eb; --muted: #92a9ad; --light: #69868b;
+  --blue: #579ca8; --green: #79a390; --red: #c6817d; --orange: #c18b69; --purple: #a69ab5;
+  --blue-dim: #1d4650; --green-dim: #263a32; --red-dim: #3d2a2a; --orange-dim: #3d2e28;
+  --primary: #579ca8; --primary-hover: #69acb7; --on-primary: #0b1c21;
+  --log-bg: #061419; --log-text: #a8c3ba; --overlay: rgba(4,13,16,.76);
+  --stripe: rgba(220,233,235,.025); --shadow: rgba(0,0,0,.46);
+}
+[data-theme="sage"] {
+  color-scheme: light;
+  --bg: #e7efe7; --surface: #fbfcf8; --surface2: #edf4eb;
+  --border: #c7d8c7; --border-strong: #a9c1ab; --text: #293a2f; --muted: #617567; --light: #647767;
+  --blue: #477157; --green: #417052; --red: #99514e; --orange: #8d603e; --purple: #665b78;
+  --blue-dim: #d8e8dc; --green-dim: #d9e9dd; --red-dim: #f0dddc; --orange-dim: #f0e1d7;
+  --primary: #477157; --primary-hover: #3b6049; --on-primary: #fff;
+  --log-bg: #fbfcf8; --log-text: #355d43; --overlay: rgba(41,58,47,.55);
+  --stripe: rgba(41,58,47,.035); --shadow: rgba(41,58,47,.20);
+}
+[data-theme="sand"] {
+  color-scheme: light;
+  --bg: #f1e9de; --surface: #fcfaf5; --surface2: #f5eee4;
+  --border: #d9c7b2; --border-strong: #c1a98f; --text: #3b3028; --muted: #75675b; --light: #7c6d60;
+  --blue: #7b5939; --green: #5b7155; --red: #994d49; --orange: #915736; --purple: #69586f;
+  --blue-dim: #eadccd; --green-dim: #e0e8dc; --red-dim: #f0dcda; --orange-dim: #f0ded2;
+  --primary: #7b5939; --primary-hover: #684a2f; --on-primary: #fff;
+  --log-bg: #fcfaf5; --log-text: #4f654a; --overlay: rgba(59,48,40,.55);
+  --stripe: rgba(59,48,40,.035); --shadow: rgba(59,48,40,.20);
+}
+[data-theme="onec"] {
+  color-scheme: light;
+  /* Palette sampled from the classic 1C:Enterprise interface. */
+  --bg: #f2f2f2; --surface: #fff; --surface2: #fbed9e;
+  --border: #a0a0a0; --border-strong: #c8ba6b; --text: #333; --muted: #646770; --light: #646770;
+  --blue: #646770; --green: #007a39; --red: #d71920; --orange: #7a5200; --purple: #646770;
+  --blue-dim: #f2f2f2; --green-dim: #fffad9; --red-dim: #fffad9; --orange-dim: #ffe2a6;
+  --primary: #007a39; --primary-hover: #006f35; --on-primary: #fff;
+  --log-bg: #fff; --log-text: #333; --overlay: rgba(51,51,51,.55);
+  --stripe: rgba(51,51,51,.035); --shadow: rgba(51,51,51,.18);
+}
+[data-theme="onec"] .header-logo-badge,
+[data-theme="onec"] .login-logo-badge,
+[data-theme="onec"] .logo-badge {
+  background: #fbed9e;
+  color: #d71920;
+  border-color: #c8ba6b;
+}

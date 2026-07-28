@@ -1,0 +1,1 @@
+ALTER TABLE "release_project_versions" ADD COLUMN "is_test" boolean DEFAULT false NOT NULL;

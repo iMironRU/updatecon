@@ -1,13 +1,9 @@
 /**
  * lst-parser-stream.ts
  *
- * Streaming variant of the verified ПарСерLST port.
- *
- * The in-memory port (lst-parser.ts) is the correctness oracle: it is a
- * faithful twin of the working 1C module and was hand-verified against raw
- * sample data. This file MUST produce identical records — that parity is
- * checked by verify-stream.ts, so we no longer need 1C in the loop for this
- * step.
+ * Streaming parser for the v8cscdsc.lst structure. Its behaviour is covered
+ * by the smoke fixture and can additionally be checked against a current LST
+ * file with `npm run smoke -- --lst <path>`.
  *
  * Difference: we never build the whole tree. The grammar guarantees the flat
  * record array is root[4]; within it a configuration record is exactly 6
@@ -24,7 +20,7 @@ import { toCore } from "./version.js";
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 
-export type LstNode = string | LstNode[];
+type LstNode = string | LstNode[];
 
 export interface UpdateRecord {
   name: string;

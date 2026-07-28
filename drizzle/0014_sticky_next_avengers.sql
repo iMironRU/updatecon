@@ -1,0 +1,1 @@
+ALTER TABLE "update_jobs" ADD COLUMN "cancel_requested_at" timestamp with time zone;

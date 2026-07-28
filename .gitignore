@@ -7,16 +7,13 @@ dist/
 # Environment — never commit real credentials
 .env
 
-# 1C update list files (can be large, not source code)
-data/*.lst
-data/*.zip
-
 # macOS
 .DS_Store
 
 # Editor / IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 

@@ -3,42 +3,54 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Апдейкон — Администратор</title>
+<title>Релизы 1С — Администратор</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script>
+try {
+  const savedTheme = localStorage.getItem('uc_theme');
+  if (['light', 'dark', 'ocean', 'sage', 'sand', 'onec'].includes(savedTheme)) {
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }
+} catch (_) {}
+</script>
+<link rel="stylesheet" href="/admin-themes.css">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
-  --border: #30363d; --text: #e6edf3; --muted: #8b949e; --light: #484f58;
-  --blue: #58a6ff; --green: #3fb950; --red: #f85149;
-  --orange: #d29922; --purple: #bc8cff;
-  --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-}
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6;
+  transition: background .2s, color .2s; }
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* Layout */
 .header { background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: 0 24px; height: 52px; display: flex; align-items: center; gap: 16px; }
+  padding: 8px 24px; min-height: 52px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .header-logo { font-weight: 700; font-size: 16px; color: var(--text); display: flex; align-items: center; gap: 8px; }
-.header-logo-badge { background: var(--orange); color: #000; font-size: 10px;
-  font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: .5px; }
-.header-nav { display: flex; gap: 4px; margin-left: 8px; }
+.header-logo-badge { background: var(--orange-dim); color: var(--orange); border:1px solid var(--border);
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: .5px; }
+.header-nav { display: flex; gap: 4px; margin-left: 8px; flex-wrap: wrap; }
 .nav-btn { padding: 5px 12px; border-radius: 6px; font-size: 13px; cursor: pointer;
   color: var(--muted); background: none; border: none; font-family: inherit;
   transition: color .15s, background .15s; }
 .nav-btn:hover, .nav-btn.active { color: var(--text); background: var(--surface2); }
 .header-user { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.header-theme-select { width:auto; min-width:96px; padding:4px 24px 4px 8px; border:1px solid var(--border);
+  border-radius:5px; background:var(--surface2); color:var(--muted); font:12px inherit; cursor:pointer; }
+.header-theme-select:focus { outline:2px solid var(--border-strong); outline-offset:1px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
 
-.main { max-width: 900px; margin: 0 auto; padding: 28px 24px; }
+.main { max-width: 1200px; margin: 0 auto; padding: 28px 24px; }
 .page { display: none; }
 .page.active { display: block; }
 
 /* Cards */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+.card--update { position:relative; z-index:20; overflow:visible; }
+.card--overlay { position:relative; z-index:30; overflow:visible; }
+.card--update .card-header { border-radius:8px 8px 0 0; }
+.card--update .card-body { border-radius:0 0 8px 8px; }
+.card--overlay .card-header { border-radius:8px 8px 0 0; }
+.card--overlay .card-body { border-radius:0 0 8px 8px; }
 .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 8px; }
 .card-title { font-size: 14px; font-weight: 600; }
@@ -50,6 +62,9 @@ a:hover { text-decoration: underline; }
 .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 4px; }
 .stat-value { font-size: 20px; font-weight: 700; font-family: var(--mono); }
 .stat-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.version-source-list { display:grid; gap:3px; margin-top:7px; font-size:11px; color:var(--muted); }
+.version-source-row { display:flex; justify-content:space-between; gap:10px; }
+.version-source-row strong { color:var(--text); font-family:var(--mono); font-weight:600; }
 
 /* Table */
 .table-wrap { overflow-x: auto; }
@@ -57,33 +72,34 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; padding: 8px 12px; color: var(--muted); font-weight: 600;
   font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
   border-bottom: 1px solid var(--border); white-space: nowrap; }
-td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
-tr:hover td { background: var(--surface2); }
+tbody tr:nth-child(even) td { background: var(--stripe); }
+tbody tr:hover td { background: var(--surface2); }
 .mono { font-family: var(--mono); font-size: 12px; }
 
 /* Badges */
 .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-.badge-ok { background: rgba(63,185,80,.15); color: var(--green); }
-.badge-skipped { background: rgba(88,166,255,.12); color: var(--blue); }
-.badge-error { background: rgba(248,81,73,.15); color: var(--red); }
-.badge-running { background: rgba(210,153,34,.15); color: var(--orange); }
+.badge-ok { background: var(--green-dim); color: var(--green); }
+.badge-skipped { background: var(--blue-dim); color: var(--blue); }
+.badge-error { background: var(--red-dim); color: var(--red); }
+.badge-running { background: var(--orange-dim); color: var(--orange); }
 
 /* Buttons */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px;
   border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer;
   border: 1px solid; transition: all .15s; font-family: inherit; }
-.btn-primary { background: #238636; color: #fff; border-color: rgba(240,246,252,.1); }
-.btn-primary:hover:not(:disabled) { background: #2ea043; }
-.btn-danger { background: rgba(248,81,73,.1); color: var(--red); border-color: var(--red); }
-.btn-danger:hover:not(:disabled) { background: rgba(248,81,73,.2); }
+.btn-primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn-danger { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+.btn-danger:hover:not(:disabled) { background: var(--surface2); }
 .btn-ghost { background: var(--surface2); color: var(--text); border-color: var(--border); }
 .btn-ghost:hover:not(:disabled) { background: var(--surface); border-color: var(--muted); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Log output */
-.log-area { background: #000; border: 1px solid var(--border); border-radius: 6px;
-  padding: 14px; font-family: var(--mono); font-size: 12px; color: #7ee787;
+.log-area { background: var(--log-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px; font-family: var(--mono); font-size: 12px; color: var(--log-text);
   max-height: 240px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
   min-height: 80px; }
 .log-area:empty::before { content: 'Вывод появится здесь...'; color: var(--light); }
@@ -91,16 +107,47 @@ tr:hover td { background: var(--surface2); }
 /* Settings form */
 .field { margin-bottom: 16px; }
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
-.field input { width: 100%; background: var(--bg); border: 1px solid var(--border);
+.field input, .field select, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 12px; color: var(--text); font-size: 13px;
   font-family: var(--mono); outline: none; transition: border-color .15s; }
-.field input:focus { border-color: var(--blue); }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--blue); }
+.field textarea { min-height:84px; resize:vertical; }
 .field input[readonly] { color: var(--muted); cursor: default; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .hint { font-size: 11px; color: var(--light); margin-top: 4px; }
+.target-update { margin-top:18px; padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); }
+.target-update-title { font-size:13px; font-weight:700; margin-bottom:4px; }
+.target-update-sub { color:var(--muted); font-size:12px; margin-bottom:14px; }
+.target-picker { position:relative; }
+.target-results { position:absolute; z-index:30; left:0; right:0; top:calc(100% + 5px); max-height:310px;
+  overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; scrollbar-gutter:stable; padding:5px;
+  border:1px solid var(--border-strong); border-radius:8px; background:var(--surface);
+  box-shadow:0 16px 42px var(--shadow); }
+.target-results.open-up { top:auto; bottom:calc(100% + 5px); }
+.target-results[hidden] { display:none; }
+.target-result { width:100%; display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+  flex-wrap:wrap; padding:9px 10px; border:0; border-radius:6px; background:transparent; color:var(--text);
+  text-align:left; cursor:pointer; font-family:inherit; }
+.target-result:hover, .target-result:focus { background:var(--blue-dim); outline:none; }
+.target-result-name { min-width:0; flex:1 1 260px; font-size:13px; font-weight:600; line-height:1.35;
+  overflow-wrap:anywhere; }
+.target-result-meta { flex:0 1 auto; max-width:100%; overflow:hidden; text-overflow:ellipsis;
+  color:var(--muted); font:11px var(--mono); white-space:nowrap; }
+.target-result-empty { padding:12px; color:var(--muted); font-size:12px; text-align:center; }
+.target-selected { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
+.target-chip { display:inline-flex; align-items:center; gap:7px; max-width:100%; padding:5px 7px 5px 10px;
+  border:1px solid var(--border-strong); border-radius:16px; background:var(--blue-dim);
+  color:var(--text); font-size:12px; }
+.target-chip-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.target-chip-nick { color:var(--blue); font-family:var(--mono); }
+.target-chip-remove { width:20px; height:20px; flex:0 0 auto; display:inline-flex; align-items:center;
+  justify-content:center; border:0; border-radius:50%; background:transparent; color:var(--muted);
+  cursor:pointer; font-size:16px; line-height:1; }
+.target-chip-remove:hover { background:var(--red-dim); color:var(--red); }
+.target-selection-summary { min-height:18px; margin-top:7px; color:var(--muted); font-size:11px; }
 .alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; display: flex; align-items: flex-start; gap: 8px; }
-.alert-warn { background: rgba(210,153,34,.1); border: 1px solid rgba(210,153,34,.3); color: var(--orange); }
-.alert-info { background: rgba(88,166,255,.08); border: 1px solid rgba(88,166,255,.2); color: var(--blue); }
+.alert-warn { background: var(--orange-dim); border: 1px solid var(--border); color: var(--orange); }
+.alert-info { background: var(--blue-dim); border: 1px solid var(--border); color: var(--blue); }
 
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -116,34 +163,123 @@ tr:hover td { background: var(--surface2); }
 .progress-bar-fill { height: 100%; background: var(--blue); border-radius: 3px;
   transition: width .4s ease; }
 .badge-server { display: inline-flex; align-items: center; gap: 5px;
-  background: rgba(63,185,80,.12); border: 1px solid rgba(63,185,80,.25);
+  background: var(--green-dim); border: 1px solid var(--border);
   color: var(--green); border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: 500; }
-.import-log { background: #000; border: 1px solid var(--border); border-radius: 6px;
-  padding: 12px 14px; font-family: var(--mono); font-size: 12px; color: #7ee787;
+.import-log { background: var(--log-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 14px; font-family: var(--mono); font-size: 12px; color: var(--log-text);
   height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
 .import-log:empty::before { content: 'Вывод появится здесь...'; color: var(--light); }
 .log-ts { color: var(--light); user-select: none; }
-.log-match { color: #7ee787; }
+.log-match { color: var(--log-text); }
 .log-skip  { color: var(--muted); }
 .log-err   { color: var(--red); }
 .log-info  { color: var(--blue); }
 .log-done  { color: var(--orange); font-weight: 600; }
+.toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.toolbar input, .toolbar select, .mapping-choice { background:var(--bg); border:1px solid var(--border);
+  border-radius:6px; padding:7px 10px; color:var(--text); font-family:inherit; outline:none; }
+.toolbar input:focus, .toolbar select:focus, .mapping-choice:focus { border-color:var(--blue); }
+.mapping-list { display:grid; gap:14px; }
+.mapping-item { border:1px solid var(--border); border-radius:9px; padding:15px; background:var(--surface);
+  box-shadow:0 4px 14px var(--shadow); }
+.mapping-item:nth-child(even) { background:var(--surface2); }
+.mapping-item:hover { border-color:var(--border-strong); box-shadow:0 6px 18px var(--shadow); }
+.catalog-item { border-left:4px solid var(--blue); }
+.catalog-item--project { border-left-color:var(--purple); }
+.catalog-source { display:inline-flex; align-items:center; margin-bottom:7px; padding:2px 7px;
+  border-radius:10px; background:var(--blue-dim); color:var(--blue); font-size:10px;
+  font-weight:700; letter-spacing:.45px; text-transform:uppercase; }
+.catalog-item--project .catalog-source { background:var(--blue-dim); color:var(--purple); }
+.mapping-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.mapping-name { font-weight:700; font-size:14px; }
+.mapping-meta { color:var(--muted); font-size:12px; margin-top:3px; }
+.mapping-actions { display:grid; grid-template-columns:minmax(260px,1fr) auto auto; gap:8px; margin-top:12px; }
+.job-row { cursor:pointer; }
+.feed-summary { max-width:330px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.feed-project { min-width:220px; }
+.feed-actions { display:flex; gap:6px; white-space:nowrap; }
+.feed-backfill-list { max-height:320px; overflow:auto; border:1px solid var(--border);
+  border-radius:7px; background:var(--bg); padding:6px; }
+.feed-backfill-row { display:flex; align-items:flex-start; gap:9px; padding:8px 9px; border-radius:6px;
+  cursor:pointer; color:var(--text); }
+.feed-backfill-row:hover { background:var(--surface2); }
+.feed-backfill-row input { width:auto; margin-top:3px; }
+.feed-backfill-name { font-weight:600; line-height:1.35; }
+.feed-backfill-meta { color:var(--muted); font:11px var(--mono); margin-top:2px; }
+.event-list { background:var(--log-bg); border:1px solid var(--border); border-radius:6px; max-height:360px;
+  overflow:auto; padding:10px 12px; font-family:var(--mono); font-size:12px; }
+.event-line { padding:3px 0; border-bottom:1px solid var(--border); }
+.event-stage { color:var(--blue); margin-right:8px; }
+.event-error { color:var(--red); }
+.event-success { color:var(--green); }
+.dashboard-alert { margin-top:14px; }
+.active-task-list { display:grid; gap:12px; }
+.active-task { padding:15px; border:1px solid var(--border-strong); border-radius:8px;
+  background:linear-gradient(135deg,var(--orange-dim),var(--blue-dim)); }
+.active-task-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.active-task-title { font-weight:700; }
+.active-task-label { min-width:0; color:var(--muted); font-size:12px; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; margin-bottom:10px; }
+.active-task-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:12px; }
+.active-task-metric { padding:9px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); }
+.active-task-metric-label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.45px; }
+.active-task-metric-value { margin-top:3px; font:600 13px var(--mono); }
+body.modal-open { overflow:hidden; }
+.admin-modal-layer { position:fixed; inset:0; z-index:1000; display:flex; align-items:center;
+  justify-content:center; padding:24px; background:var(--overlay); backdrop-filter:blur(4px); }
+.admin-modal-window { width:min(760px,100%); max-height:calc(100vh - 48px); display:flex;
+  flex-direction:column; overflow:hidden; background:var(--surface); border:1px solid var(--border-strong);
+  border-radius:12px; box-shadow:0 24px 80px var(--shadow); }
+.admin-modal-window.modal-wide { width:min(1040px,100%); }
+.admin-modal-window.modal-xl { width:min(1240px,100%); }
+.admin-modal-header { flex:0 0 auto; display:flex; align-items:center; gap:14px; padding:14px 18px;
+  border-bottom:1px solid var(--border); background:var(--surface2); }
+.admin-modal-title { min-width:0; font-size:15px; font-weight:700; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.admin-modal-close { margin-left:auto; width:32px; height:32px; display:inline-flex; align-items:center;
+  justify-content:center; border:1px solid var(--border); border-radius:6px; background:var(--surface);
+  color:var(--muted); font-size:20px; line-height:1; cursor:pointer; }
+.admin-modal-close:hover { color:var(--text); border-color:var(--muted); }
+.admin-modal-body { min-height:0; overflow:auto; overscroll-behavior:contain; padding:18px; }
+.admin-modal-body > .mapping-item:first-child { margin-top:0 !important; }
+@media (max-width: 760px) {
+  .header-user { width:100%; margin-left:0; }
+  .main { padding:18px 12px; }
+  .field-row { grid-template-columns:1fr; }
+  .mapping-actions { grid-template-columns:1fr; }
+  .status-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .admin-modal-layer { padding:8px; align-items:stretch; }
+  .admin-modal-window, .admin-modal-window.modal-wide, .admin-modal-window.modal-xl {
+    width:100%; max-height:calc(100vh - 16px); margin:auto 0; }
+  .admin-modal-body { padding:14px; }
+}
 </style>
 </head>
 <body>
 
 <div class="header">
   <div class="header-logo">
-    <span>Апдейкон</span>
+    <span>Релизы 1С</span>
     <span class="header-logo-badge">ADMIN</span>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="show('dash')">Дашборд</button>
-    <button class="nav-btn" onclick="show('logs')">Логи</button>
-    <button class="nav-btn" onclick="show('import')">Импорт</button>
+    <button class="nav-btn" onclick="show('logs')">Задачи и события</button>
+    <button class="nav-btn" onclick="show('accounts')">ИТС-аккаунты</button>
+    <button class="nav-btn" onclick="show('catalog')">Каталог и релизы</button>
+    <button class="nav-btn" onclick="show('feed')">Лента изменений</button>
     <button class="nav-btn" onclick="show('settings')">Настройки</button>
   </nav>
   <div class="header-user">
+    <select id="admin-theme-select" class="header-theme-select" aria-label="Тема оформления" onchange="setAdminTheme(this.value)">
+      <option value="auto">Авто</option>
+      <option value="light">Светлая</option>
+      <option value="dark">Графит</option>
+      <option value="ocean">Океан</option>
+      <option value="sage">Шалфей</option>
+      <option value="sand">Песок</option>
+      <option value="onec">1С</option>
+    </select>
     <a href="/" title="Открыть сайт" style="display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid var(--border);border-radius:5px;transition:color .15s,border-color .15s" onmouseover="this.style.color='var(--blue)';this.style.borderColor='var(--blue)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       На сайт
@@ -166,51 +302,71 @@ tr:hover td { background: var(--surface2); }
       <div class="card-body">
         <div class="status-grid">
           <div class="stat">
-            <div class="stat-label">Конфигурации</div>
-            <div class="stat-value" id="s-configs">—</div>
+            <div class="stat-label">Карточек в каталоге</div>
+            <div class="stat-value" id="s-catalog">—</div>
           </div>
           <div class="stat">
-            <div class="stat-label">Рёбра обновлений</div>
-            <div class="stat-value" id="s-edges">—</div>
+            <div class="stat-label">Переходов в графе</div>
+            <div class="stat-value" id="s-transitions">—</div>
           </div>
           <div class="stat">
-            <div class="stat-label">Версий</div>
+            <div class="stat-label">Проектов releases</div>
+            <div class="stat-value" id="s-projects">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Уникальных версий в каталоге</div>
             <div class="stat-value" id="s-versions">—</div>
+            <div class="version-source-list" aria-label="Версии по источникам">
+              <div class="version-source-row"><span>Только LST</span><strong id="s-versions-lst-only">—</strong></div>
+              <div class="version-source-row"><span>LST + releases.1c.ru</span><strong id="s-versions-shared">—</strong></div>
+              <div class="version-source-row"><span>Только releases.1c.ru</span><strong id="s-versions-releases-only">—</strong></div>
+            </div>
           </div>
           <div class="stat">
-            <div class="stat-label">Последний импорт</div>
-            <div class="stat-value" id="s-date" style="font-size:15px">—</div>
-            <div class="stat-sub" id="s-status"></div>
+            <div class="stat-label">Не сопоставлены с LST</div>
+            <div class="stat-value" id="s-unmatched">—</div>
+            <div class="stat-sub" id="s-unmatched-sub"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Ссылок и материалов</div>
+            <div class="stat-value" id="s-resources">—</div>
+            <div class="stat-sub" id="s-resource-coverage"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Ожидают загрузки ссылок</div>
+            <div class="stat-value" id="s-resource-backlog">—</div>
+            <div class="stat-sub" id="s-resource-backlog-sub"></div>
+            <button class="btn btn-ghost" id="btn-archive-backfill"
+              style="margin-top:9px;padding:5px 9px;font-size:11px"
+              onclick="triggerArchiveUpdate()">▶ Запустить обработку</button>
+          </div>
+          <div class="stat">
+            <div class="stat-label">ИТС-аккаунты</div>
+            <div class="stat-value" id="s-accounts">—</div>
+            <div class="stat-sub" id="s-account-errors"></div>
           </div>
         </div>
+        <div id="dash-alerts" class="dashboard-alert"></div>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header"><span class="card-title">Расписание и конфигурация</span></div>
-      <div class="card-body">
-        <div class="field-row">
-          <div class="field">
-            <label>IMPORT_CRON</label>
-            <input id="s-cron" readonly>
-            <div class="hint">Задаётся в .env — применяется без перезапуска воркера.</div>
-          </div>
-          <div class="field">
-            <label>ITS_LOGIN</label>
-            <input id="s-its" readonly>
-          </div>
-        </div>
+    <div class="card" id="dash-active-card" hidden>
+      <div class="card-header">
+        <span class="spinner"></span>
+        <span class="card-title">Текущие задачи</span>
+        <span class="badge badge-running" id="dash-active-count"></span>
       </div>
+      <div class="card-body"><div class="active-task-list" id="dash-active-jobs"></div></div>
     </div>
 
     <div class="card">
-      <div class="card-header"><span class="card-title">Последние 5 запусков</span></div>
+      <div class="card-header"><span class="card-title">Последние задачи обновления</span></div>
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>#</th><th>Источник</th><th>Статус</th><th>Добавлено</th><th>Без изменений</th><th>Время</th>
+            <th>#</th><th>Запуск</th><th>Статус</th><th>Этап</th><th>Начало</th><th>Длительность</th><th></th>
           </tr></thead>
-          <tbody id="dash-runs"></tbody>
+          <tbody id="dash-jobs"></tbody>
         </table>
       </div>
     </div>
@@ -220,70 +376,310 @@ tr:hover td { background: var(--surface2); }
   <div id="page-logs" class="page">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">История запусков</span>
-        <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="loadLogs()">↻ Обновить</button>
+        <span class="card-title">Задачи обновления</span>
+        <button class="btn btn-danger" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="clearLogs()">Удалить завершённые</button>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="loadLogs()">↻ Обновить</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>#</th><th>Источник</th><th>Статус</th><th>SHA256</th>
-            <th>Размер</th><th>Конфигов</th><th>Добавлено</th><th>Без изм.</th><th>Начало</th><th>Длительность</th>
+            <th>#</th><th>Запуск</th><th>Статус</th><th>Этап</th><th>Сообщение</th><th>Начало</th><th>Длительность</th><th></th>
           </tr></thead>
           <tbody id="logs-tbody"></tbody>
         </table>
       </div>
+      <div id="logs-message" style="padding:0 18px 12px;font-size:12px;color:var(--muted)"></div>
     </div>
   </div>
 
-  <!-- IMPORT -->
-  <div id="page-import" class="page">
+  <!-- ITS ACCOUNTS -->
+  <div id="page-accounts" class="page">
     <div class="card">
-      <div class="card-header"><span class="card-title">Ручной запуск импорта</span></div>
-      <div class="card-body">
-
+      <div class="card-header">
+        <span class="card-title">Учётные записи ИТС</span>
+        <button class="btn btn-primary" style="margin-left:auto" onclick="showAccountForm()">Добавить аккаунт</button>
+        <button class="btn btn-ghost" onclick="loadAccounts()">↻ Обновить</button>
+      </div>
+    </div>
+    <template id="account-form-template">
+      <div id="account-editor">
+        <div style="display:none" id="acc-form-title">Новый ИТС-аккаунт</div>
         <div class="alert alert-info" style="margin-bottom:18px">
-          Импорт использует двухуровневую дельту по хэшу — повторный запуск на неизменённом файле безопасен.
+          Пароли шифруются ключом <span class="mono">ITS_CREDENTIALS_KEY</span> и никогда не возвращаются в браузер.
+          Импорт последовательно объединяет доступ каждого включённого аккаунта.
         </div>
-
-        <!-- Кнопки запуска -->
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px">
-          <button class="btn btn-primary" id="btn-import-lst" onclick="triggerImport('lst')">
-            ▶ Запустить импорт LST
-          </button>
-          <button class="btn btn-ghost" id="btn-import-rel" onclick="triggerImport('releases')">
-            ▶ Импорт releases.1c.ru
-          </button>
-          <button class="btn btn-danger" id="btn-cancel" onclick="cancelImport()" style="display:none;margin-left:auto">
-            ✕ Прервать
-          </button>
+        <input type="hidden" id="acc-id">
+        <div class="field-row">
+          <div class="field"><label>Название <span style="font-weight:400">(необязательно)</span></label><input id="acc-label" placeholder="Если пусто — будет использован логин"></div>
+          <div class="field"><label>Логин</label><input id="acc-login" autocomplete="off"></div>
         </div>
+        <div class="field-row">
+          <div class="field"><label>Пароль</label><input id="acc-password" type="password" autocomplete="new-password" placeholder="При редактировании можно оставить пустым"></div>
+          <div class="field"><label>Приоритет</label><input id="acc-priority" type="number" value="100" min="0"></div>
+        </div>
+        <div class="field">
+          <label>Лимит параллельных запросов</label>
+          <select id="acc-concurrency">
+            <option value="1">1 — последовательный</option>
+            <option value="2">2 — бережный</option>
+            <option value="4" selected>4 — сбалансированный</option>
+            <option value="6">6 — быстрый</option>
+            <option value="8">8 — максимальный</option>
+          </select>
+          <div class="hint">Действует отдельно для этого аккаунта и не превышает общий предел из настроек.</div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-bottom:16px;font-size:13px">
+          <input id="acc-enabled" type="checkbox" checked style="width:auto"> Использовать при импорте
+        </label>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="saveAccount()">Сохранить</button>
+          <button class="btn btn-ghost" onclick="resetAccountForm(true)">Отмена</button>
+        </div>
+        <div id="acc-message" style="margin-top:10px;font-size:13px"></div>
+      </div>
+    </template>
+    <div class="card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Название</th><th>Логин</th><th>Статус</th><th>Приоритет</th><th>Запросы</th><th>Доступно</th><th>Недоступно</th><th>Последний успех</th><th></th></tr></thead>
+        <tbody id="accounts-tbody"></tbody>
+      </table></div>
+    </div>
+  </div>
 
-        <!-- Прогресс (виден только во время импорта releases) -->
-        <div id="progress-wrap" class="progress-wrap" style="display:none">
+  <!-- CATALOG DATA MANAGEMENT -->
+  <div id="page-catalog" class="page">
+    <datalist id="mapping-config-options"></datalist>
+    <div class="card card--update" id="catalog-update-card">
+      <div class="card-header"><span class="card-title">Обновление каталога и графа</span></div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:16px">
+          Обновление LST загружает только конфигурации, версии и переходы из онлайн-файла
+          <span class="mono">v8cscdsc.lst</span>. Полное обновление дополнительно обходит каталог,
+          версии и ссылки releases.1c.ru для всех включённых ИТС-аккаунтов.
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-ghost" id="btn-update-lst" onclick="triggerLstUpdate()">↻ Обновить только LST</button>
+          <button class="btn btn-primary" id="btn-update" onclick="triggerUpdate()">↻ Обновить все данные</button>
+          <button class="btn btn-danger" id="btn-cancel" onclick="cancelUpdate()" style="display:none">✕ Прервать</button>
+          <span id="update-state" style="color:var(--muted);font-size:12px"></span>
+        </div>
+        <div id="progress-wrap" class="progress-wrap" style="display:none;margin-top:16px">
           <div class="progress-header">
             <span class="progress-counter" id="progress-counter">0 / 0</span>
             <span class="progress-pct" id="progress-pct">0%</span>
-            <span class="badge-server" style="margin-left:auto">
-              ● Импорт выполняется на сервере — можно уйти со страницы
-            </span>
+            <span class="badge-server" style="margin-left:auto">● Выполняется на сервере</span>
           </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+          <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-bar" style="width:0%"></div></div>
+        </div>
+        <details id="update-details" style="margin-top:14px">
+          <summary style="cursor:pointer;color:var(--muted)">Ход выполнения и журнал</summary>
+          <div class="import-log" id="import-log" style="margin-top:10px"></div>
+        </details>
+        <div id="import-summary" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
+      </div>
+    </div>
+    <div class="card card--overlay">
+      <div class="card-header"><span class="card-title">Выборочное обновление</span></div>
+      <div class="card-body">
+        <div class="target-update" id="target-update-panel" style="margin-top:0">
+          <div class="target-update-title">Обновить выбранные проекты releases.1c.ru</div>
+          <div class="target-update-sub">
+            Обычное обновление использует умную очередь выбранных конфигураций. «Проверить все релизы» повторно загружает страницы всех версий, а без выбора обрабатывает весь доступный каталог.
+          </div>
+          <div class="field-row">
+            <div class="field" style="margin-bottom:12px">
+              <label>Конфигурации</label>
+              <div class="target-picker" id="update-target-picker">
+                <input id="update-target-project" placeholder="Начните вводить название или nick" autocomplete="off" oninput="scheduleUpdateTargets()" onfocus="showUpdateTargetResults()" onkeydown="handleUpdateTargetKey(event)">
+                <div class="target-results" id="update-target-results" hidden></div>
+              </div>
+              <div class="target-selected" id="update-target-selected"></div>
+              <div class="target-selection-summary" id="update-target-summary">Конфигурации не выбраны</div>
+            </div>
+            <div class="field" style="margin-bottom:12px">
+              <label>ИТС-аккаунт</label>
+              <select id="update-target-account">
+                <option value="">Автоматически — первый аккаунт с доступом</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-primary" id="btn-update-target" onclick="triggerTargetUpdate(false)">↻ Обновить выбранные</button>
+            <button class="btn btn-ghost" id="btn-update-force" title="Без выбора проверит весь доступный каталог" onclick="triggerTargetUpdate(true)">⟳ Проверить все релизы</button>
+            <button class="btn btn-ghost" id="btn-priority-target" onclick="setSelectedUpdatePriority(true)">★ Обрабатывать раньше</button>
+            <button class="btn btn-ghost" id="btn-unpriority-target" onclick="setSelectedUpdatePriority(false)">Снять приоритет</button>
+            <span id="target-update-msg" style="color:var(--muted);font-size:12px"></span>
           </div>
         </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Управление каталогом и релизами</span></div>
+      <div class="card-body">
+        <div class="alert alert-info">
+          Откройте проект releases.1c.ru, чтобы изменить данные, выбрать соответствующую конфигурацию LST,
+          обновить его с сайта, скрыть или удалить. Отдельная страница соответствий больше не требуется.
+        </div>
+        <div class="toolbar" style="margin-top:14px">
+          <select id="catalog-admin-type" onchange="changeCatalogTypeFilter()">
+            <option value="all">Все источники</option>
+            <option value="configuration">Конфигурации LST</option>
+            <option value="project">Проекты releases.1c.ru</option>
+          </select>
+          <select id="catalog-admin-mapping" onchange="changeCatalogMappingFilter()">
+            <option value="all">Все соответствия</option>
+            <option value="unmatched">Не сопоставлены</option>
+            <option value="mapped">Сопоставлены</option>
+            <option value="auto">Автоматические</option>
+            <option value="manual">Ручные</option>
+          </select>
+          <input id="catalog-admin-search" style="flex:1;min-width:260px" placeholder="Название, внутреннее имя или nick" oninput="scheduleCatalogAdmin()">
+          <button class="btn btn-ghost" onclick="loadCatalogAdmin()">↻ Обновить</button>
+        </div>
+        <div id="catalog-admin-list" class="mapping-list" style="margin-top:16px"></div>
+      </div>
+    </div>
+  </div>
 
-        <!-- Лог -->
-        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">Вывод:</div>
-        <div class="import-log" id="import-log"></div>
-
-        <!-- Итог -->
-        <div id="import-summary" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
+  <!-- RELEASE CHANGES FEED -->
+  <div id="page-feed" class="page">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Управление лентой изменений</span>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost" onclick="openFeedBackfill()">↻ Заполнить из каталога</button>
+          <button class="btn btn-primary" onclick="openFeedEditor()">＋ Добавить событие</button>
+          <button class="btn btn-danger" onclick="openFeedClear()">Очистить ленту</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info">
+          Здесь можно добавлять исторические события, исправлять их дату и содержание или удалять записи.
+          Дата события определяет положение записи в публичной ленте.
+        </div>
+        <div class="toolbar">
+          <select id="feed-admin-type" onchange="reloadFeedAdmin()">
+            <option value="">Все типы</option>
+            <option value="new_version">Новая версия</option>
+            <option value="platform_changed">Требования платформы</option>
+            <option value="resource_added">Новый файл или материал</option>
+            <option value="patch_added">Исправление</option>
+          </select>
+          <input id="feed-admin-search" style="flex:1;min-width:260px" placeholder="Конфигурация, nick или версия" oninput="scheduleFeedAdmin()">
+          <button class="btn btn-ghost" onclick="loadFeedAdmin()">↻ Обновить</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Дата события</th><th>Тип</th><th>Конфигурация</th><th>Версия</th><th>Содержание</th><th>Добавлено</th><th></th></tr></thead>
+        <tbody id="feed-admin-tbody"><tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr></tbody>
+      </table></div>
+      <div class="card-body" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border)">
+        <span id="feed-admin-count" style="color:var(--muted);margin-right:auto">—</span>
+        <button id="feed-admin-prev" class="btn btn-ghost" onclick="pageFeedAdmin(-1)">← Новее</button>
+        <button id="feed-admin-next" class="btn btn-ghost" onclick="pageFeedAdmin(1)">Раньше →</button>
       </div>
     </div>
   </div>
 
   <!-- SETTINGS -->
   <div id="page-settings" class="page">
+
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><span class="card-title">Параметры обновления</span></div>
+      <div class="card-body">
+        <div class="target-update" style="margin-top:0;margin-bottom:16px">
+          <div class="target-update-title">Журналирование и производительность</div>
+          <div class="target-update-sub">
+            Определяет подробность событий для новых ручных и фоновых задач. Ошибки записываются при любом уровне.
+          </div>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="field" style="margin:0;min-width:310px;flex:1">
+              <label>Подробность журнала</label>
+              <select id="update-log-level" onchange="describeUpdateLogLevel()">
+                <option value="brief">Краткий — этапы, итог и ошибки</option>
+                <option value="normal">Обычный — конфигурации и прогресс</option>
+                <option value="detailed">Подробный — каждая версия и материалы</option>
+              </select>
+            </div>
+            <div class="field" style="margin:0;min-width:310px;flex:1">
+              <label>Параллельные запросы к releases.1c.ru</label>
+              <select id="update-concurrency" onchange="describeUpdateLogLevel()">
+                <option value="1">1 — последовательный режим</option>
+                <option value="2">2 — бережный режим</option>
+                <option value="4">4 — сбалансированный (рекомендуется)</option>
+                <option value="6">6 — быстрый режим</option>
+                <option value="8">8 — максимальный режим</option>
+              </select>
+            </div>
+            <button class="btn btn-ghost" id="btn-save-log-level" onclick="saveUpdateLogLevel()">Сохранить настройки</button>
+          </div>
+          <div class="hint" id="update-log-level-description" style="margin-top:9px"></div>
+          <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+            <div class="target-update-title">Умное фоновое обновление</div>
+            <div class="target-update-sub">Новые версии проверяются чаще, архив — реже. Ошибки сохраняются в очереди и повторяются автоматически с увеличивающейся задержкой.</div>
+            <div class="field-row" style="align-items:flex-end">
+              <div class="field"><label>Актуальный релиз, часов</label><input id="smart-latest-hours" type="number" min="1" max="168" value="24"></div>
+              <div class="field"><label>Недавние релизы, дней</label><input id="smart-recent-days" type="number" min="1" max="90" value="7"></div>
+              <div class="field"><label>Архивные релизы, дней</label><input id="smart-archive-days" type="number" min="7" max="730" value="90"></div>
+            </div>
+            <div class="field-row" style="align-items:flex-end">
+              <div class="field"><label>Возраст границы архива, дней</label><input id="smart-recent-age-days" type="number" min="30" max="3650" value="365"></div>
+              <div class="field"><label>Первая повторная попытка, минут</label><input id="smart-retry-minutes" type="number" min="1" max="1440" value="15"></div>
+              <div class="field"><label>Страниц архива за один запуск</label><input id="smart-archive-limit" type="number" min="100" max="10000" step="100" value="1000"></div>
+              <div class="field"><label>Кэш метаданных файлов, дней</label><input id="smart-metadata-cache-days" type="number" min="1" max="365" value="30"></div>
+            </div>
+          </div>
+          <div id="update-log-level-message" style="margin-top:7px;font-size:12px;color:var(--muted)"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <span class="card-title">Резервная копия каталога</span>
+        <span id="database-backup-size" style="margin-left:auto;color:var(--muted);font-size:12px">Загрузка…</span>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:16px">
+          В копию входят конфигурации, релизы, версии, переходы, ссылки, ручные соответствия и изменения карточек.
+          ИТС-аккаунты, пароли, настройки сервера и журналы задач не копируются.
+        </div>
+        <div class="target-update" style="margin-top:0;margin-bottom:16px">
+          <div class="target-update-title">Создать резервную копию</div>
+          <div class="target-update-sub">Файл PostgreSQL custom dump будет сформирован на сервере и скачан на этот компьютер. Во время выполняющейся задачи обновления копирование не запускается.</div>
+          <button class="btn btn-primary" id="btn-database-backup" onclick="downloadDatabaseBackup()">↓ Скачать резервную копию</button>
+        </div>
+        <div class="target-update" style="margin-top:0;border-color:var(--orange)">
+          <div class="target-update-title">Восстановить каталог</div>
+          <div class="target-update-sub">Текущий каталог и граф будут заменены данными из файла. Существующие ИТС-аккаунты сохранятся, но сведения об их доступе к проектам будут проверены заново при следующем обновлении.</div>
+          <div class="field-row" style="align-items:flex-end">
+            <div class="field" style="margin-bottom:0;flex:2">
+              <label>Файл резервной копии</label>
+              <input id="database-restore-file" type="file" accept=".dump,application/octet-stream">
+            </div>
+            <div class="field" style="margin-bottom:0;flex:1">
+              <label>Подтверждение</label>
+              <input id="database-restore-confirmation" placeholder="ВОССТАНОВИТЬ" autocomplete="off">
+            </div>
+            <button class="btn btn-danger" id="btn-database-restore" onclick="restoreDatabaseBackup()">Восстановить</button>
+          </div>
+        </div>
+        <div id="database-backup-message" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
+        <iframe id="database-backup-frame" name="database-backup-frame" hidden></iframe>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;border-color:var(--red)">
+      <div class="card-header"><span class="card-title" style="color:var(--red)">Очистка данных releases.1c.ru</span></div>
+      <div class="card-body">
+        <div class="alert alert-warning" style="margin-bottom:16px">
+          Удаляются каталог releases.1c.ru, история релизов, переходы, ссылки, патчи и ручные соответствия.
+          ИТС-аккаунты, конфигурации и граф из онлайн-LST сохраняются. Данные можно восстановить в разделе обновления «Каталога и релизов».
+        </div>
+        <button class="btn btn-danger" id="btn-clear-releases" onclick="clearReleasesData()">Удалить данные releases.1c.ru</button>
+        <div id="clear-releases-msg" style="margin-top:12px;font-size:13px"></div>
+      </div>
+    </div>
 
     <!-- ── HTTPS / Domain ─────────────────────────────────────────────────── -->
     <div class="card" style="margin-bottom:20px">
@@ -299,7 +695,7 @@ tr:hover td { background: var(--surface2); }
         </div>
         <div style="display:flex;gap:10px;align-items:flex-end">
           <div class="field" style="flex:1;margin-bottom:0">
-            <label>Домен <span style="font-weight:400;text-transform:none;color:var(--muted)">(например: updatecon.example.com)</span></label>
+            <label>Домен <span style="font-weight:400;text-transform:none;color:var(--muted)">(например: releases.example.com)</span></label>
             <input id="ssl-domain" placeholder="example.com" autocomplete="off" spellcheck="false">
           </div>
           <button class="btn btn-primary" id="ssl-apply-btn" onclick="applyDomain()" style="white-space:nowrap">
@@ -314,63 +710,103 @@ tr:hover td { background: var(--surface2); }
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header"><span class="card-title">Конфигурация сервера</span></div>
-      <div class="card-body">
-        <div class="alert alert-warn" style="margin-bottom:18px">
-          Параметры задаются через переменные окружения (.env) и применяются при перезапуске сервиса.
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>ADMIN_LOGIN</label>
-            <input id="cfg-admin-login" readonly>
-          </div>
-          <div class="field">
-            <label>ADMIN_PASSWORD</label>
-            <input value="••••••••" readonly>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>ITS_LOGIN</label>
-            <input id="cfg-its-login" readonly>
-          </div>
-          <div class="field">
-            <label>ITS_PASSWORD</label>
-            <input value="••••••••" readonly>
-          </div>
-        </div>
-        <div class="field">
-          <label>IMPORT_CRON <span style="font-weight:400;text-transform:none">(cron-выражение)</span></label>
-          <input id="cfg-cron" readonly>
-          <div class="hint">0 4 * * * — каждый день в 4:00. Изменяется в .env на сервере.</div>
-        </div>
-        <div class="field">
-          <label>DATABASE_URL</label>
-          <input id="cfg-db" readonly>
-        </div>
-        <div class="field">
-          <label>PORT</label>
-          <input id="cfg-port" readonly>
-        </div>
-      </div>
-    </div>
   </div>
 
 </div>
 
 <script>
+const ADMIN_THEMES = ['auto', 'light', 'dark', 'ocean', 'sage', 'sand', 'onec'];
+function setAdminTheme(value, persist = true) {
+  const theme = ADMIN_THEMES.includes(value) ? value : 'auto';
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  const select = document.getElementById('admin-theme-select');
+  if (select) select.value = theme;
+  if (persist) {
+    try { localStorage.setItem('uc_theme', theme); } catch (_) {}
+  }
+}
+
+let initialAdminTheme = 'auto';
+try { initialAdminTheme = localStorage.getItem('uc_theme') || 'auto'; } catch (_) {}
+setAdminTheme(initialAdminTheme, false);
+window.addEventListener('storage', function(event) {
+  if (event.key === 'uc_theme') setAdminTheme(event.newValue || 'auto', false);
+});
+
 let currentPage = 'dash';
+const ADMIN_MODAL_STACK = [];
+
+function modalDomId(key) {
+  return 'admin-modal-' + String(key).replace(/[^a-z0-9_-]/gi, '-');
+}
+
+function syncModalState() {
+  document.body.classList.toggle('modal-open', ADMIN_MODAL_STACK.length > 0);
+  ADMIN_MODAL_STACK.forEach(function(key, index) {
+    var layer = document.getElementById(modalDomId(key));
+    if (layer) layer.style.zIndex = String(1000 + index * 20);
+  });
+}
+
+function openAdminModal(key, title, content, size) {
+  closeAdminModal(key);
+  var layer = document.createElement('div');
+  layer.id = modalDomId(key);
+  layer.className = 'admin-modal-layer';
+  layer.setAttribute('role', 'presentation');
+  var sizeClass = size === 'xl' ? ' modal-xl' : size === 'wide' ? ' modal-wide' : '';
+  layer.innerHTML = '<section class="admin-modal-window' + sizeClass + '" role="dialog" aria-modal="true" aria-labelledby="' + modalDomId(key) + '-title">' +
+    '<div class="admin-modal-header"><div class="admin-modal-title" id="' + modalDomId(key) + '-title">' + escapeHtml(title || '') + '</div>' +
+    '<button class="admin-modal-close" type="button" aria-label="Закрыть" onclick="closeAdminModal(\'' + String(key).replace(/'/g, "\\'") + '\')">×</button></div>' +
+    '<div class="admin-modal-body">' + (content || '') + '</div></section>';
+  layer.addEventListener('mousedown', function(event) {
+    if (event.target === layer && ADMIN_MODAL_STACK[ADMIN_MODAL_STACK.length - 1] === key) closeAdminModal(key);
+  });
+  document.body.appendChild(layer);
+  ADMIN_MODAL_STACK.push(key);
+  syncModalState();
+  setTimeout(function() { layer.querySelector('.admin-modal-close')?.focus(); }, 0);
+  return layer.querySelector('.admin-modal-body');
+}
+
+function setAdminModalTitle(key, title) {
+  var node = document.getElementById(modalDomId(key) + '-title');
+  if (node) node.textContent = title;
+}
+
+function closeAdminModal(key) {
+  if (key === 'job') stopJobModalPolling();
+  var index = ADMIN_MODAL_STACK.indexOf(key);
+  if (index >= 0) ADMIN_MODAL_STACK.splice(index, 1);
+  document.getElementById(modalDomId(key))?.remove();
+  syncModalState();
+}
+
+function closeTopAdminModal() {
+  var key = ADMIN_MODAL_STACK[ADMIN_MODAL_STACK.length - 1];
+  if (key) closeAdminModal(key);
+}
+
+document.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape' && ADMIN_MODAL_STACK.length) {
+    event.preventDefault();
+    closeTopAdminModal();
+  }
+});
 
 function show(page) {
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
-  document.querySelectorAll('.nav-btn')[['dash','logs','import','settings'].indexOf(page)].classList.add('active');
+  document.querySelectorAll('.nav-btn')[['dash','logs','accounts','catalog','feed','settings'].indexOf(page)].classList.add('active');
   currentPage = page;
   if (page === 'dash') loadDash();
   if (page === 'logs') loadLogs();
-  if (page === 'settings') { loadSettings(); loadSslStatus(); }
+  if (page === 'accounts') loadAccounts();
+  if (page === 'catalog') { loadCatalogAdmin(); loadUpdateTargets(''); checkRunningUpdate(); }
+  if (page === 'feed') loadFeedAdmin();
+  if (page === 'settings') { loadSslStatus(); loadUpdateLogLevel(); loadDatabaseBackupStatus(); }
 }
 
 function logout() {
@@ -389,65 +825,146 @@ function fmtDate(iso) {
     hour:'2-digit', minute:'2-digit' });
 }
 function fmtDur(start, end) {
-  if (!start || !end) return '—';
-  const ms = new Date(end) - new Date(start);
+  if (!start) return '—';
+  const ms = new Date(end || Date.now()) - new Date(start);
   if (ms < 2000) return ms + ' мс';
   if (ms < 60000) return Math.round(ms/1000) + ' с';
   return Math.round(ms/60000) + ' мин';
 }
-function fmtBytes(b) {
-  if (!b) return '—';
-  if (b < 1024) return b + ' Б';
-  if (b < 1024*1024) return Math.round(b/1024) + ' КБ';
-  return (b/1024/1024).toFixed(1) + ' МБ';
-}
 function badge(status) {
-  const map = { ok: 'badge-ok', skipped: 'badge-skipped', error: 'badge-error', running: 'badge-running' };
-  const labels = { ok: 'ok', skipped: 'пропущен', error: 'ошибка', running: '...' };
+  const map = { ok: 'badge-ok', skipped: 'badge-skipped', error: 'badge-error', queued: 'badge-running', running: 'badge-running', cancelled: 'badge-skipped' };
+  const labels = { ok: 'готово', skipped: 'без изменений', error: 'ошибка', queued: 'в очереди', running: 'выполняется', cancelled: 'прервано' };
   return `<span class="badge ${map[status] || 'badge-skipped'}">${labels[status] || status}</span>`;
 }
-function runRow(r, short) {
-  if (short) return `<tr>
-    <td class="mono">${r.id}</td>
-    <td>${r.source}</td>
-    <td>${badge(r.status)}</td>
-    <td class="mono">${(r.edgesUpserted||0).toLocaleString('ru')}</td>
-    <td class="mono" style="color:var(--muted)">${(r.edgesUnchanged||0).toLocaleString('ru')}</td>
-    <td style="color:var(--muted)">${fmtDate(r.startedAt)}</td>
-  </tr>`;
+function fmtEta(iso) {
+  if (!iso) return 'рассчитывается';
+  var ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return 'менее минуты';
+  var minutes = Math.max(1, Math.round(ms / 60000));
+  if (minutes < 60) return 'примерно ' + minutes + ' мин';
+  var hours = Math.floor(minutes / 60);
+  var rest = minutes % 60;
+  return 'примерно ' + hours + ' ч' + (rest ? ' ' + rest + ' мин' : '');
+}
+function jobRow(job, short) {
+  const origin = job.origin === 'scheduled' ? 'Автоматически' : job.origin === 'retry' ? 'Очередь ошибок' : 'Вручную';
+  const stages = { starting:'Подготовка', lst:'Онлайн LST', releases:'Релизы 1С', done:'Завершено' };
   return `<tr>
-    <td class="mono">${r.id}</td>
-    <td>${r.source}</td>
-    <td>${badge(r.status)}</td>
-    <td class="mono" style="color:var(--muted);font-size:11px">${(r.fileSha256||'').slice(0,12)}…</td>
-    <td>${fmtBytes(r.fileBytes)}</td>
-    <td class="mono">${(r.configsFound||0).toLocaleString('ru')}</td>
-    <td class="mono">${(r.edgesUpserted||0).toLocaleString('ru')}</td>
-    <td class="mono" style="color:var(--muted)">${(r.edgesUnchanged||0).toLocaleString('ru')}</td>
-    <td style="color:var(--muted)">${fmtDate(r.startedAt)}</td>
-    <td style="color:var(--muted)">${fmtDur(r.startedAt, r.finishedAt)}</td>
+    <td class="mono">${job.id}</td><td>${origin}</td><td>${badge(job.status)}</td>
+    <td>${stages[job.stage] || escapeHtml(job.stage)}</td>
+    ${short ? '' : '<td style="max-width:300px">' + escapeHtml(job.message || '—') + '</td>'}
+    <td style="color:var(--muted)">${fmtDate(job.startedAt)}</td>
+    <td style="color:var(--muted)">${fmtDur(job.startedAt, job.finishedAt)}</td>
+    <td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:4px 10px" onclick="openJob(${job.id})">Открыть</button>${short || job.status === 'running' || job.status === 'queued' ? '' : ' <button class="btn btn-danger" style="padding:4px 10px" onclick="deleteJob(' + job.id + ')">Удалить</button>'}</td>
   </tr>`;
+}
+
+function activeTaskPercent(current, total) {
+  return total > 0 ? Math.max(0, Math.min(100, Math.round(current / total * 100))) : 0;
+}
+
+function renderActiveJobs(jobs) {
+  var card = document.getElementById('dash-active-card');
+  var list = document.getElementById('dash-active-jobs');
+  var count = document.getElementById('dash-active-count');
+  if (!card || !list || !count) return;
+  jobs = jobs || [];
+  card.hidden = jobs.length === 0;
+  count.textContent = jobs.length === 1 ? '1 задача' : jobs.length + ' задачи';
+  if (!jobs.length) {
+    list.innerHTML = '';
+    return;
+  }
+  var stages = { starting:'Подготовка', lst:'Онлайн LST', releases:'Релизы 1С', done:'Завершено' };
+  list.innerHTML = jobs.map(function(job) {
+    var current = Number(job.progressCurrent || 0);
+    var total = Number(job.progressTotal || 0);
+    var pagesCurrent = Number(job.pagesCurrent || 0);
+    var pagesTotal = Number(job.pagesTotal || 0);
+    var requests = Number(job.requestsCompleted || 0);
+    var retries = Number(job.requestRetries || 0);
+    var workers = Number(job.activeWorkers || 0);
+    var maxWorkers = Number(job.maxWorkers || 1);
+    var queuePending = Number(job.queuePending || 0);
+    var queueRetry = Number(job.queueRetry || 0);
+    var elapsedSeconds = Math.max(1, (Date.now() - new Date(job.startedAt).getTime()) / 1000);
+    var speed = requests ? (requests / elapsedSeconds).toFixed(requests / elapsedSeconds < 10 ? 1 : 0) : '0';
+    var pagePhase = pagesTotal > 0 && pagesCurrent < pagesTotal;
+    var primaryCurrent = pagePhase ? pagesCurrent : current;
+    var primaryTotal = pagePhase ? pagesTotal : total;
+    var percent = activeTaskPercent(primaryCurrent, primaryTotal);
+    var progressText = primaryTotal ? primaryCurrent.toLocaleString('ru') + ' / ' + primaryTotal.toLocaleString('ru') + ' (' + percent + '%)' : 'подготовка списка';
+    return '<div class="active-task">' +
+      '<div class="active-task-head"><span class="active-task-title">Задача #' + job.id + '</span>' +
+      badge(job.status) + '<span class="badge badge-skipped">' + escapeHtml(stages[job.stage] || job.stage) + '</span>' +
+      '<span style="color:var(--muted);font-size:12px">' + fmtDur(job.startedAt, null) + '</span>' +
+      '<button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px" onclick="openJob(' + job.id + ')">Открыть журнал</button></div>' +
+      '<div class="active-task-label">' + escapeHtml(job.progressLabel || 'Определяется текущая операция…') + '</div>' +
+      '<div class="progress-header"><span class="progress-counter">' + (pagePhase ? 'Очередь страниц: ' : 'Конфигурации: ') + progressText + '</span></div>' +
+      '<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:' + percent + '%"></div></div>' +
+      '<div class="active-task-metrics">' +
+        '<div class="active-task-metric"><div class="active-task-metric-label">Страницы релизов</div><div class="active-task-metric-value">' + pagesCurrent.toLocaleString('ru') + ' / ' + pagesTotal.toLocaleString('ru') + '</div></div>' +
+        '<div class="active-task-metric"><div class="active-task-metric-label">Обработчики</div><div class="active-task-metric-value">' + workers + ' / ' + maxWorkers + '</div></div>' +
+        '<div class="active-task-metric"><div class="active-task-metric-label">HTTP-запросы</div><div class="active-task-metric-value">' + requests.toLocaleString('ru') + ' · ' + speed + '/с</div></div>' +
+        '<div class="active-task-metric"><div class="active-task-metric-label">Повторные запросы</div><div class="active-task-metric-value">' + retries.toLocaleString('ru') + '</div></div>' +
+        '<div class="active-task-metric"><div class="active-task-metric-label">Осталось в очереди</div><div class="active-task-metric-value">' + queuePending.toLocaleString('ru') + (queueRetry ? ' · ошибок ' + queueRetry.toLocaleString('ru') : '') + '</div></div>' +
+        '<div class="active-task-metric"><div class="active-task-metric-label">Ожидаемое завершение</div><div class="active-task-metric-value">' + escapeHtml(fmtEta(job.estimatedFinishAt)) + '</div></div>' +
+      '</div></div>';
+  }).join('');
+}
+
+async function loadActiveJobs() {
+  try {
+    var data = await apiFetch('/admin/api/jobs/active');
+    renderActiveJobs(data.jobs || []);
+  } catch (error) {
+    void error;
+  }
 }
 
 async function loadDash() {
   try {
-    const [status, stats] = await Promise.all([
-      apiFetch('/admin/api/status'),
-      apiFetch('/api/stats'),
-    ]);
-    document.getElementById('s-configs').textContent = (stats.configurations||0).toLocaleString('ru');
-    document.getElementById('s-edges').textContent = (stats.edges||0).toLocaleString('ru');
-    document.getElementById('s-versions').textContent = (stats.versions||0).toLocaleString('ru');
-    const lr = stats.lastRun;
-    document.getElementById('s-date').textContent = lr ? fmtDate(lr.finishedAt) : '—';
-    document.getElementById('s-status').innerHTML = lr ? badge(lr.status) + ' ' + (lr.message||'').slice(0,60) : '';
-    document.getElementById('s-cron').value = status.cron;
-    document.getElementById('s-its').value = status.itsLogin;
+    const status = await apiFetch('/admin/api/status');
+    const m = status.metrics || {};
+    document.getElementById('s-catalog').textContent = (m.catalog||0).toLocaleString('ru');
+    document.getElementById('s-transitions').textContent = (m.transitions||0).toLocaleString('ru');
+    document.getElementById('s-projects').textContent = (m.projects||0).toLocaleString('ru');
+    document.getElementById('s-versions').textContent = (m.catalog_versions||0).toLocaleString('ru');
+    document.getElementById('s-versions-lst-only').textContent = (m.catalog_versions_lst_only||0).toLocaleString('ru');
+    document.getElementById('s-versions-shared').textContent = (m.catalog_versions_shared||0).toLocaleString('ru');
+    document.getElementById('s-versions-releases-only').textContent = (m.catalog_versions_releases_only||0).toLocaleString('ru');
+    document.getElementById('s-unmatched').textContent = (m.unmatched||0).toLocaleString('ru');
+    document.getElementById('s-unmatched-sub').textContent = 'Ожидают загрузки: ' + (m.pending_projects||0).toLocaleString('ru');
+    document.getElementById('s-resources').textContent = (m.resources||0).toLocaleString('ru');
+    document.getElementById('s-resource-coverage').textContent = 'Версий с материалами: ' + (m.versions_with_resources||0).toLocaleString('ru');
+    DASH_RESOURCE_BACKLOG = Number(m.resource_backlog || 0);
+    document.getElementById('s-resource-backlog').textContent = DASH_RESOURCE_BACKLOG.toLocaleString('ru');
+    document.getElementById('s-resource-backlog-sub').textContent = DASH_RESOURCE_BACKLOG
+      ? 'Обрабатываются ограниченными фоновыми пачками'
+      : 'Все известные страницы обработаны';
+    var archiveButton = document.getElementById('btn-archive-backfill');
+    if (archiveButton) archiveButton.disabled = UPDATE_UI_RUNNING || DASH_RESOURCE_BACKLOG === 0 || Boolean(status.update && status.update.running);
+    document.getElementById('s-accounts').textContent = (status.accounts.enabled||0) + ' / ' + (status.accounts.total||0);
+    document.getElementById('s-account-errors').textContent = status.accounts.errors ? 'Ошибок: ' + status.accounts.errors : 'Ошибок нет';
     document.getElementById('hdr-user').textContent = status.adminLogin;
-
-    const runs = status.recentRuns || [];
-    document.getElementById('dash-runs').innerHTML = runs.map(r => runRow(r, true)).join('') ||
-      '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Нет запусков</td></tr>';
+    renderActiveJobs(status.activeJobs || []);
+    const alerts = [];
+    if (status.update && status.update.running) {
+      var progress = status.update.progress || {};
+      var progressCurrent = Number(progress.progressCurrent ?? progress.current ?? 0);
+      var progressTotal = Number(progress.progressTotal ?? progress.total ?? 0);
+      var progressText = progressTotal ? ' (' + progressCurrent + ' из ' + progressTotal + ')' : '';
+      alerts.push('<div class="alert alert-info">Сейчас выполняется обновление данных' + progressText + '. Текущий прогресс показан ниже; полный журнал открывается из карточки задачи.</div>');
+    }
+    if (!status.accounts.enabled) alerts.push('<div class="alert alert-warn">Нет включённых ИТС-аккаунтов — обновление данных невозможно.</div>');
+    if (status.accounts.errors) alerts.push('<div class="alert alert-warn">Учётных записей с ошибкой последней проверки: ' + status.accounts.errors + '.</div>');
+    if (m.unmatched) alerts.push('<div class="alert alert-info">Проектов без связи с графом LST: ' + m.unmatched + '. Для самостоятельных продуктов это нормально; ручная связь нужна только при наличии соответствующей конфигурации LST.</div>');
+    if (m.resource_errors) alerts.push('<div class="alert alert-warn">Страниц релизов в очереди ошибок: ' + m.resource_errors + '. Готовы к повтору сейчас: ' + (m.retries_due || 0) + '. Worker обработает их автоматически.</div>');
+    if (m.priority_projects) alerts.push('<div class="alert alert-info">Приоритет фонового обновления задан для конфигураций: ' + m.priority_projects + '.</div>');
+    document.getElementById('dash-alerts').innerHTML = alerts.join('');
+    const jobs = status.recentJobs || [];
+    document.getElementById('dash-jobs').innerHTML = jobs.map(job => jobRow(job, true)).join('') ||
+      '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:20px">Задач ещё не было</td></tr>';
   } catch(e) {
     console.error('loadDash error:', e);
   }
@@ -456,28 +973,1411 @@ async function loadDash() {
 async function loadLogs() {
   try {
     const data = await apiFetch('/admin/api/logs');
-    document.getElementById('logs-tbody').innerHTML = (data.runs || []).map(r => runRow(r, false)).join('') ||
-      '<tr><td colspan="10" style="color:var(--muted);text-align:center;padding:20px">Нет записей</td></tr>';
+    document.getElementById('logs-tbody').innerHTML = (data.jobs || []).map(job => jobRow(job, false)).join('') ||
+      '<tr><td colspan="8" style="color:var(--muted);text-align:center;padding:20px">Задач ещё не было</td></tr>';
   } catch(e) {
     console.error('loadLogs error:', e);
   }
 }
 
-async function loadSettings() {
+async function deleteJob(id) {
+  if (!confirm('Удалить задачу #' + id + ' и все её события?')) return;
   try {
-    const s = await apiFetch('/admin/api/status');
-    document.getElementById('cfg-admin-login').value = s.adminLogin;
-    document.getElementById('cfg-its-login').value = s.itsLogin;
-    document.getElementById('cfg-cron').value = s.cron;
-    document.getElementById('cfg-db').value = s.dbUrl;
-    document.getElementById('cfg-port').value = s.port;
-  } catch(e) {}
+    await apiJson('/admin/api/jobs/' + id, 'DELETE');
+    closeAdminModal('job');
+    await loadLogs();
+    await loadDash();
+  } catch(e) {
+    document.getElementById('logs-message').textContent = e.message;
+  }
 }
 
-// ── Import with live log ──────────────────────────────────────────────────
-let importPolling = null;
-let importLogOffset = 0;
-let importActiveSource = null;
+async function clearLogs() {
+  if (!confirm('Удалить все завершённые задачи и их события? Выполняющаяся задача будет сохранена.')) return;
+  var message = document.getElementById('logs-message');
+  try {
+    var result = await apiJson('/admin/api/logs', 'DELETE');
+    message.textContent = 'Удалено задач: ' + (result.deleted || 0);
+    closeAdminModal('job');
+    await loadLogs();
+    await loadDash();
+  } catch(e) {
+    message.textContent = e.message;
+  }
+}
+
+var JOB_MODAL_POLLING = null;
+var JOB_MODAL_ID = null;
+var JOB_MODAL_LOADING = false;
+
+function stopJobModalPolling() {
+  if (JOB_MODAL_POLLING) clearInterval(JOB_MODAL_POLLING);
+  JOB_MODAL_POLLING = null;
+  JOB_MODAL_ID = null;
+  JOB_MODAL_LOADING = false;
+}
+
+function renderJobModal(data) {
+  var job = data.job || {};
+  var stagesMap = { starting:'Подготовка', lst:'Онлайн LST', releases:'Релизы 1С', done:'Завершено' };
+  var events = (data.events || []).map(function(event) {
+    var cls = event.level === 'error' ? 'event-error' : event.level === 'success' ? 'event-success' : '';
+    return '<div class="event-line ' + cls + '"><span style="color:var(--light)">' + fmtDate(event.createdAt) + '</span> <span class="event-stage">[' + escapeHtml(event.stage) + ']</span>' + escapeHtml(event.message) + '</div>';
+  }).join('') || '<div style="color:var(--muted)">Событий пока нет</div>';
+  var runs = (data.runs || []).map(function(run) {
+    return '<tr><td>' + escapeHtml(run.source) + '</td><td>' + badge(run.status) + '</td><td>' + (run.configs_found||0) + '</td><td>' + (run.edges_upserted||0) + '</td><td>' + escapeHtml(run.message||'') + '</td></tr>';
+  }).join('');
+  var active = job.status === 'queued' || job.status === 'running';
+  var live = active
+    ? '<span class="badge badge-running"><span class="spinner"></span> ' +
+      (job.status === 'queued' ? 'Ожидает worker' : 'Обновляется автоматически') + '</span> ' +
+      '<span style="color:var(--muted);font-size:12px">Осталось: ' + escapeHtml(fmtEta(job.estimatedFinishAt)) +
+      ' · очередь: ' + Number(job.queuePending || 0).toLocaleString('ru') + '</span>'
+    : '<span style="color:var(--muted);font-size:12px">Завершена ' + fmtDate(job.finishedAt) + '</span>';
+  var cancelAction = active
+    ? (job.cancelRequestedAt
+      ? '<button class="btn btn-danger" type="button" disabled><span class="spinner"></span> Завершается…</button>'
+      : '<button class="btn btn-danger" type="button" onclick="requestJobCancellation(' + Number(job.id) + ')">Завершить задачу</button>')
+    : '';
+  return '<div class="toolbar" style="margin-bottom:12px">' + badge(job.status) +
+    '<span style="color:var(--muted);font-size:12px">Этап: ' + escapeHtml(stagesMap[job.stage] || job.stage || '—') + '</span>' +
+    '<span style="color:var(--muted);font-size:12px">Событий: ' + (data.events || []).length + '</span>' +
+    '<span style="margin-left:auto">' + live + '</span>' + cancelAction + '</div>' +
+    '<div class="event-list" id="job-modal-events">' + events + '</div>' +
+    (runs ? '<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Источник</th><th>Статус</th><th>Конфигураций</th><th>Изменено</th><th>Итог</th></tr></thead><tbody>' + runs + '</tbody></table></div>' : '');
+}
+
+async function refreshJobModal(id, showLoading) {
+  if (JOB_MODAL_LOADING || Number(JOB_MODAL_ID) !== Number(id)) return;
+  var detail = document.querySelector('#' + modalDomId('job') + ' .admin-modal-body');
+  if (!detail) return;
+  JOB_MODAL_LOADING = true;
+  var oldEvents = document.getElementById('job-modal-events');
+  var oldScrollTop = oldEvents ? oldEvents.scrollTop : 0;
+  var wasAtBottom = !oldEvents || oldEvents.scrollHeight - oldEvents.scrollTop - oldEvents.clientHeight < 40;
+  if (showLoading) detail.innerHTML = '<span class="spinner"></span> Загрузка событий…';
+  try {
+    var data = await apiFetch('/admin/api/jobs/' + id);
+    if (Number(JOB_MODAL_ID) !== Number(id) || !document.getElementById(modalDomId('job'))) return;
+    detail.innerHTML = renderJobModal(data);
+    var newEvents = document.getElementById('job-modal-events');
+    if (newEvents) newEvents.scrollTop = wasAtBottom ? newEvents.scrollHeight : oldScrollTop;
+    if (data.job && (data.job.status === 'running' || data.job.status === 'queued')) {
+      if (!JOB_MODAL_POLLING) {
+        JOB_MODAL_POLLING = setInterval(function() { refreshJobModal(id, false); }, 1500);
+      }
+    } else if (JOB_MODAL_POLLING) {
+      clearInterval(JOB_MODAL_POLLING);
+      JOB_MODAL_POLLING = null;
+      if (currentPage === 'dash') loadDash();
+      if (currentPage === 'logs') loadLogs();
+    }
+  } catch(e) {
+    detail.innerHTML = '<span style="color:var(--red)">' + escapeHtml(e.message) + '</span>';
+  } finally {
+    JOB_MODAL_LOADING = false;
+  }
+}
+
+async function openJob(id) {
+  stopJobModalPolling();
+  JOB_MODAL_ID = Number(id);
+  openAdminModal('job', 'Задача #' + id, '<span class="spinner"></span> Загрузка событий…', 'xl');
+  JOB_MODAL_ID = Number(id);
+  await refreshJobModal(id, false);
+}
+
+async function requestJobCancellation(id) {
+  if (!confirm('Завершить выполняющуюся задачу #' + id + '? Текущая операция будет корректно остановлена.')) return;
+  try {
+    await apiJson('/admin/api/jobs/' + id + '/cancel', 'POST');
+    await refreshJobModal(id, false);
+    if (currentPage === 'dash') await loadDash();
+    if (currentPage === 'logs') await loadLogs();
+  } catch (error) {
+    alert(error.message || 'Не удалось завершить задачу');
+  }
+}
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
+}
+
+async function apiJson(path, method, body) {
+  var response = await fetch(location.origin + path, {
+    method: method || 'GET',
+    credentials: 'include',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  var data = await response.json().catch(function() { return {}; });
+  if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+  return data;
+}
+
+// ── Release changes feed ──────────────────────────────────────────────────
+var FEED_ADMIN_ITEMS = [];
+var FEED_ADMIN_PROJECTS = [];
+var FEED_ADMIN_OFFSET = 0;
+var FEED_ADMIN_LIMIT = 50;
+var FEED_ADMIN_COUNT = 0;
+var FEED_ADMIN_TIMER = null;
+var FEED_BACKFILL_SELECTED = new Set();
+var FEED_LABELS = {
+  new_version: 'Новая версия',
+  platform_changed: 'Требования платформы',
+  resource_added: 'Новый файл',
+  patch_added: 'Исправление',
+};
+
+function reloadFeedAdmin() {
+  FEED_ADMIN_OFFSET = 0;
+  loadFeedAdmin();
+}
+
+function scheduleFeedAdmin() {
+  clearTimeout(FEED_ADMIN_TIMER);
+  FEED_ADMIN_TIMER = setTimeout(reloadFeedAdmin, 250);
+}
+
+function feedDetailsSummary(item) {
+  var details = item.details || {};
+  if (item.event_type === 'new_version') {
+    return [details.releaseDate ? 'релиз ' + details.releaseDate : '', details.minPlatform ? 'платформа ' + details.minPlatform : '']
+      .filter(Boolean).join(' · ') || 'Новая версия';
+  }
+  if (item.event_type === 'platform_changed') {
+    return (details.fields || []).map(function(field) {
+      return String(field.field || '') + ': ' + String(field.previous || '—') + ' → ' + String(field.current || '—');
+    }).join(' · ') || 'Изменены требования';
+  }
+  if (item.event_type === 'resource_added') {
+    return String(details.title || details.fileName || details.href || 'Новый материал');
+  }
+  if (item.event_type === 'patch_added') {
+    return String(details.title || details.uuid || 'Исправление');
+  }
+  return '';
+}
+
+function renderFeedAdmin() {
+  var tbody = document.getElementById('feed-admin-tbody');
+  var count = document.getElementById('feed-admin-count');
+  var prev = document.getElementById('feed-admin-prev');
+  var next = document.getElementById('feed-admin-next');
+  if (!tbody) return;
+  tbody.innerHTML = FEED_ADMIN_ITEMS.map(function(item) {
+    var badgeClass = item.event_type === 'patch_added' ? 'badge-error'
+      : item.event_type === 'new_version' ? 'badge-ok'
+        : item.event_type === 'platform_changed' ? 'badge-running' : 'badge-skipped';
+    return '<tr><td style="white-space:nowrap"><b>' + escapeHtml(fmtDate(item.occurred_at)) + '</b></td>' +
+      '<td><span class="badge ' + badgeClass + '">' + escapeHtml(FEED_LABELS[item.event_type] || item.event_type) + '</span></td>' +
+      '<td class="feed-project"><b>' + escapeHtml(item.project_name) + '</b>' +
+        (item.project_nick ? '<div class="mono" style="color:var(--muted)">' + escapeHtml(item.project_nick) + '</div>' : '') + '</td>' +
+      '<td class="mono">' + escapeHtml(item.version || '—') + (item.is_test ? '<div><span class="badge badge-running">тест</span></div>' : '') + '</td>' +
+      '<td><div class="feed-summary">' + escapeHtml(feedDetailsSummary(item)) + '</div></td>' +
+      '<td style="white-space:nowrap;color:var(--muted)">' + escapeHtml(fmtDate(item.detected_at)) + '</td>' +
+      '<td><div class="feed-actions"><button class="btn btn-ghost" style="padding:4px 9px" onclick="openFeedEditor(' + Number(item.id) + ')">Изменить</button>' +
+      '<button class="btn btn-danger" style="padding:4px 9px" onclick="deleteFeedEvent(' + Number(item.id) + ')">Удалить</button></div></td></tr>';
+  }).join('') || '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:24px">События не найдены</td></tr>';
+  if (count) count.textContent = FEED_ADMIN_COUNT
+    ? 'Показано ' + (FEED_ADMIN_OFFSET + 1) + '–' + Math.min(FEED_ADMIN_OFFSET + FEED_ADMIN_ITEMS.length, FEED_ADMIN_COUNT) + ' из ' + FEED_ADMIN_COUNT
+    : 'Событий нет';
+  if (prev) prev.disabled = FEED_ADMIN_OFFSET === 0;
+  if (next) next.disabled = FEED_ADMIN_OFFSET + FEED_ADMIN_LIMIT >= FEED_ADMIN_COUNT;
+}
+
+async function loadFeedAdmin() {
+  var tbody = document.getElementById('feed-admin-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="7"><span class="spinner"></span> Загрузка событий…</td></tr>';
+  var type = document.getElementById('feed-admin-type');
+  var search = document.getElementById('feed-admin-search');
+  var query = new URLSearchParams({ offset:String(FEED_ADMIN_OFFSET), limit:String(FEED_ADMIN_LIMIT) });
+  if (type && type.value) query.set('type', type.value);
+  if (search && search.value.trim()) query.set('q', search.value.trim());
+  try {
+    var data = await apiFetch('/admin/api/release-changes?' + query.toString());
+    FEED_ADMIN_ITEMS = data.items || [];
+    FEED_ADMIN_COUNT = Number(data.count || 0);
+    renderFeedAdmin();
+  } catch(error) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--red)">' + escapeHtml(error.message) + '</td></tr>';
+  }
+}
+
+function pageFeedAdmin(direction) {
+  FEED_ADMIN_OFFSET = Math.max(0, FEED_ADMIN_OFFSET + direction * FEED_ADMIN_LIMIT);
+  loadFeedAdmin();
+}
+
+async function loadFeedProjects() {
+  if (FEED_ADMIN_PROJECTS.length) return;
+  var data = await apiFetch('/admin/api/release-changes/projects');
+  FEED_ADMIN_PROJECTS = data.projects || [];
+}
+
+function feedBackfillModeChanged() {
+  var selectedMode = document.querySelector('input[name="feed-backfill-mode"]:checked')?.value === 'selected';
+  var panel = document.getElementById('feed-backfill-selected-panel');
+  if (panel) panel.hidden = !selectedMode;
+}
+
+function feedBackfillProjectLabel(project) {
+  return String(project.display_name || project.config_name || project.nick || ('#' + project.id));
+}
+
+function renderFeedBackfillProjects() {
+  var target = document.getElementById('feed-backfill-project-list');
+  var count = document.getElementById('feed-backfill-selected-count');
+  var search = document.getElementById('feed-backfill-search');
+  if (!target) return;
+  var query = String(search?.value || '').trim().toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
+  var matches = FEED_ADMIN_PROJECTS.filter(function(project) {
+    return !query || [project.display_name, project.nick, project.config_name].filter(Boolean).some(function(value) {
+      return String(value).toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').includes(query);
+    });
+  });
+  target.innerHTML = matches.slice(0, 200).map(function(project) {
+    var meta = [project.nick, project.config_name].filter(Boolean).join(' · ');
+    return '<label class="feed-backfill-row"><input type="checkbox" ' +
+      (FEED_BACKFILL_SELECTED.has(Number(project.id)) ? 'checked ' : '') +
+      'onchange="toggleFeedBackfillProject(' + Number(project.id) + ', this.checked)">' +
+      '<span><span class="feed-backfill-name">' + escapeHtml(feedBackfillProjectLabel(project)) + '</span>' +
+      (meta ? '<span class="feed-backfill-meta">' + escapeHtml(meta) + '</span>' : '') + '</span></label>';
+  }).join('') || '<div style="padding:12px;color:var(--muted);text-align:center">Конфигурации не найдены</div>';
+  if (matches.length > 200) {
+    target.insertAdjacentHTML('beforeend', '<div style="padding:8px;color:var(--muted);font-size:11px">Показаны первые 200. Уточните поиск.</div>');
+  }
+  if (count) count.textContent = FEED_BACKFILL_SELECTED.size
+    ? 'Выбрано: ' + FEED_BACKFILL_SELECTED.size
+    : 'Конфигурации не выбраны';
+}
+
+function toggleFeedBackfillProject(id, checked) {
+  if (checked) FEED_BACKFILL_SELECTED.add(Number(id));
+  else FEED_BACKFILL_SELECTED.delete(Number(id));
+  var count = document.getElementById('feed-backfill-selected-count');
+  if (count) count.textContent = FEED_BACKFILL_SELECTED.size
+    ? 'Выбрано: ' + FEED_BACKFILL_SELECTED.size
+    : 'Конфигурации не выбраны';
+}
+
+async function openFeedBackfill() {
+  FEED_BACKFILL_SELECTED = new Set();
+  var target = openAdminModal('feed-backfill', 'Заполнить ленту из каталога', '<span class="spinner"></span> Загрузка конфигураций…', 'wide');
+  try {
+    await loadFeedProjects();
+    target.innerHTML = '<div class="alert alert-info">Будут восстановлены события новых версий, материалов и исправлений с исходными датами. Повторный запуск не создаёт дубликаты.</div>' +
+      '<div class="field"><label>Область заполнения</label>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-bottom:7px"><input type="radio" name="feed-backfill-mode" value="all" checked onchange="feedBackfillModeChanged()" style="width:auto"> Все конфигурации</label>' +
+      '<label style="display:flex;align-items:center;gap:8px"><input type="radio" name="feed-backfill-mode" value="selected" onchange="feedBackfillModeChanged()" style="width:auto"> Только выбранные конфигурации</label></div>' +
+      '<div id="feed-backfill-selected-panel" hidden><div class="field" style="margin-bottom:9px"><label>Поиск конфигурации</label><input id="feed-backfill-search" placeholder="Название или nick" oninput="renderFeedBackfillProjects()"></div>' +
+      '<div id="feed-backfill-project-list" class="feed-backfill-list"></div><div id="feed-backfill-selected-count" class="hint" style="margin-top:7px">Конфигурации не выбраны</div></div>' +
+      '<div id="feed-backfill-result" style="min-height:24px;margin-top:14px;color:var(--muted)"></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button id="feed-backfill-preview" class="btn btn-ghost" onclick="runFeedBackfill(true)">Рассчитать без записи</button>' +
+      '<button id="feed-backfill-run" class="btn btn-primary" onclick="runFeedBackfill(false)">Заполнить ленту</button>' +
+      '<button class="btn btn-ghost" onclick="closeAdminModal(\'feed-backfill\')">Закрыть</button></div>';
+    renderFeedBackfillProjects();
+  } catch(error) {
+    target.innerHTML = '<div style="color:var(--red)">' + escapeHtml(error.message) + '</div>';
+  }
+}
+
+async function runFeedBackfill(dryRun) {
+  var resultNode = document.getElementById('feed-backfill-result');
+  var previewButton = document.getElementById('feed-backfill-preview');
+  var runButton = document.getElementById('feed-backfill-run');
+  var selectedMode = document.querySelector('input[name="feed-backfill-mode"]:checked')?.value === 'selected';
+  if (selectedMode && !FEED_BACKFILL_SELECTED.size) {
+    resultNode.innerHTML = '<span style="color:var(--red)">Выберите хотя бы одну конфигурацию.</span>';
+    return;
+  }
+  previewButton.disabled = true;
+  runButton.disabled = true;
+  resultNode.innerHTML = '<span class="spinner"></span> ' + (dryRun ? 'Расчёт объёма…' : 'Заполнение ленты…');
+  try {
+    var result = await apiJson('/admin/api/release-changes/backfill', 'POST', {
+      all:!selectedMode,
+      projectIds:selectedMode ? Array.from(FEED_BACKFILL_SELECTED) : [],
+      dryRun:dryRun,
+    });
+    var summary = 'проектов ' + Number(result.projects || 0) + ', версий ' + Number(result.versions || 0) +
+      ', материалов ' + Number(result.resources || 0) + ', исправлений ' + Number(result.patches || 0);
+    resultNode.innerHTML = '<span style="color:var(--green)">' + (dryRun ? 'Будет обработано: ' : 'Лента заполнена: ') + escapeHtml(summary) + '.</span>';
+    if (!dryRun) {
+      FEED_ADMIN_OFFSET = 0;
+      await loadFeedAdmin();
+    }
+  } catch(error) {
+    resultNode.innerHTML = '<span style="color:var(--red)">' + escapeHtml(error.message) + '</span>';
+  } finally {
+    previewButton.disabled = false;
+    runButton.disabled = false;
+  }
+}
+
+function feedLocalDateTime(iso) {
+  var date = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(date.getTime())) date = new Date();
+  var local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function feedDateValue(value) {
+  return value == null ? '' : String(value).slice(0, 10);
+}
+
+function feedPlatformField(details, name, side) {
+  var field = (details.fields || []).find(function(item) { return item.field === name; });
+  return field && field[side] != null ? String(field[side]) : '';
+}
+
+function renderFeedDetailFields(details) {
+  details = details || {};
+  var type = document.getElementById('feed-edit-type').value;
+  var target = document.getElementById('feed-edit-details');
+  if (!target) return;
+  if (type === 'new_version') {
+    target.innerHTML = '<div class="field-row"><div class="field"><label>Дата публикации релиза</label><input id="feed-detail-release-date" type="date" value="' + escapeHtml(feedDateValue(details.releaseDate)) + '"></div>' +
+      '<div class="field"><label>Минимальная платформа</label><input id="feed-detail-min-platform" value="' + escapeHtml(details.minPlatform || '') + '" placeholder="8.3.25.1445"></div></div>';
+  } else if (type === 'platform_changed') {
+    target.innerHTML = '<div class="field-row"><div class="field"><label>Минимальная платформа — было</label><input id="feed-detail-min-before" value="' + escapeHtml(feedPlatformField(details, 'minPlatform', 'previous')) + '"></div>' +
+      '<div class="field"><label>Минимальная платформа — стало</label><input id="feed-detail-min-current" value="' + escapeHtml(feedPlatformField(details, 'minPlatform', 'current')) + '"></div></div>' +
+      '<div class="field-row"><div class="field"><label>Рекомендуемая — было</label><input id="feed-detail-rec-before" value="' + escapeHtml(feedPlatformField(details, 'recommendedPlatform', 'previous')) + '"></div>' +
+      '<div class="field"><label>Рекомендуемая — стало</label><input id="feed-detail-rec-current" value="' + escapeHtml(feedPlatformField(details, 'recommendedPlatform', 'current')) + '"></div></div>';
+  } else if (type === 'resource_added') {
+    target.innerHTML = '<div class="field"><label>Название материала</label><input id="feed-detail-title" value="' + escapeHtml(details.title || '') + '"></div>' +
+      '<div class="field"><label>Ссылка</label><input id="feed-detail-href" value="' + escapeHtml(details.href || '') + '" placeholder="/version_files/... или https://..."></div>' +
+      '<div class="field-row"><div class="field"><label>Имя файла</label><input id="feed-detail-file-name" value="' + escapeHtml(details.fileName || '') + '"></div>' +
+      '<div class="field"><label>Размер, байт</label><input id="feed-detail-file-size" type="number" min="0" value="' + escapeHtml(details.fileSizeBytes == null ? '' : details.fileSizeBytes) + '"></div></div>' +
+      '<div class="field-row"><div class="field"><label>Дата публикации</label><input id="feed-detail-published" type="date" value="' + escapeHtml(feedDateValue(details.publishedAt)) + '"></div>' +
+      '<div class="field"><label>Категория</label><input id="feed-detail-category" value="' + escapeHtml(details.category || 'additional') + '"></div></div>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><input id="feed-detail-is-file" type="checkbox" style="width:auto" ' + (details.isFile === false ? '' : 'checked') + '> Это файл</label>';
+  } else {
+    target.innerHTML = '<div class="field"><label>Название исправления</label><input id="feed-detail-title" value="' + escapeHtml(details.title || '') + '"></div>' +
+      '<div class="field-row"><div class="field"><label>UUID исправления</label><input id="feed-detail-uuid" value="' + escapeHtml(details.uuid || '') + '"></div>' +
+      '<div class="field"><label>Дата исправления</label><input id="feed-detail-patch-date" type="date" value="' + escapeHtml(feedDateValue(details.patchDate)) + '"></div></div>';
+  }
+}
+
+function optionalFeedValue(id) {
+  var input = document.getElementById(id);
+  return input && input.value.trim() ? input.value.trim() : null;
+}
+
+function collectFeedDetails(type) {
+  if (type === 'new_version') return {
+    releaseDate: optionalFeedValue('feed-detail-release-date'),
+    minPlatform: optionalFeedValue('feed-detail-min-platform'),
+  };
+  if (type === 'platform_changed') {
+    var fields = [
+      { field:'minPlatform', previous:optionalFeedValue('feed-detail-min-before'), current:optionalFeedValue('feed-detail-min-current') },
+      { field:'recommendedPlatform', previous:optionalFeedValue('feed-detail-rec-before'), current:optionalFeedValue('feed-detail-rec-current') },
+    ].filter(function(field) { return field.previous !== null || field.current !== null; });
+    if (!fields.length) throw new Error('Укажите хотя бы одно изменение платформы');
+    return { fields:fields };
+  }
+  if (type === 'resource_added') {
+    var size = optionalFeedValue('feed-detail-file-size');
+    return {
+      title: optionalFeedValue('feed-detail-title'), href: optionalFeedValue('feed-detail-href'),
+      fileName: optionalFeedValue('feed-detail-file-name'), fileSizeBytes:size === null ? null : Number(size),
+      publishedAt: optionalFeedValue('feed-detail-published'), category:optionalFeedValue('feed-detail-category'),
+      kind:'other', isFile:document.getElementById('feed-detail-is-file').checked,
+    };
+  }
+  return {
+    title: optionalFeedValue('feed-detail-title'), uuid: optionalFeedValue('feed-detail-uuid'),
+    patchDate: optionalFeedValue('feed-detail-patch-date'),
+  };
+}
+
+async function openFeedEditor(id) {
+  var item = id == null ? null : FEED_ADMIN_ITEMS.find(function(row) { return Number(row.id) === Number(id); });
+  var target = openAdminModal('feed-editor', item ? 'Изменить событие' : 'Добавить событие', '<span class="spinner"></span> Загрузка конфигураций…', 'wide');
+  try {
+    await loadFeedProjects();
+    var details = item ? (item.details || {}) : {};
+    var options = FEED_ADMIN_PROJECTS.map(function(project) {
+      var label = project.display_name + (project.nick ? ' — ' + project.nick : '') + (project.config_name ? ' (' + project.config_name + ')' : '');
+      return '<option value="' + Number(project.id) + '" ' + (item && Number(item.project_id) === Number(project.id) ? 'selected' : '') + '>' + escapeHtml(label) + '</option>';
+    }).join('');
+    target.innerHTML = '<div class="field-row"><div class="field"><label>Тип события</label><select id="feed-edit-type" onchange="renderFeedDetailFields({})">' +
+      Object.keys(FEED_LABELS).map(function(type) { return '<option value="' + type + '" ' + ((item ? item.event_type : 'new_version') === type ? 'selected' : '') + '>' + escapeHtml(FEED_LABELS[type]) + '</option>'; }).join('') + '</select></div>' +
+      '<div class="field"><label>Конфигурация</label><select id="feed-edit-project"><option value="">Выберите конфигурацию</option>' + options + '</select></div></div>' +
+      '<div class="field-row"><div class="field"><label>Версия</label><input id="feed-edit-version" value="' + escapeHtml(item ? item.version || '' : '') + '" placeholder="11.5.27.56"></div>' +
+      '<div class="field"><label>Дата и время события</label><input id="feed-edit-occurred" type="datetime-local" value="' + escapeHtml(feedLocalDateTime(item && item.occurred_at)) + '"></div></div>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><input id="feed-edit-test" type="checkbox" style="width:auto" ' + (item && item.is_test ? 'checked' : '') + '> Версия для тестирования</label>' +
+      '<div id="feed-edit-details"></div>' +
+      '<div id="feed-edit-error" style="min-height:20px;color:var(--red);margin-bottom:8px"></div>' +
+      '<div style="display:flex;gap:8px"><button id="feed-edit-save" class="btn btn-primary" onclick="saveFeedEvent(' + (item ? Number(item.id) : 'null') + ')">Сохранить</button>' +
+      '<button class="btn btn-ghost" onclick="closeAdminModal(\'feed-editor\')">Отмена</button></div>';
+    renderFeedDetailFields(details);
+  } catch(error) {
+    target.innerHTML = '<div style="color:var(--red)">' + escapeHtml(error.message) + '</div>';
+  }
+}
+
+async function saveFeedEvent(id) {
+  var errorNode = document.getElementById('feed-edit-error');
+  var button = document.getElementById('feed-edit-save');
+  try {
+    var type = document.getElementById('feed-edit-type').value;
+    var occurred = document.getElementById('feed-edit-occurred').value;
+    if (!occurred) throw new Error('Укажите дату события');
+    var body = {
+      eventType:type,
+      projectId:Number(document.getElementById('feed-edit-project').value),
+      version:document.getElementById('feed-edit-version').value.trim(),
+      occurredAt:new Date(occurred).toISOString(),
+      isTest:document.getElementById('feed-edit-test').checked,
+      details:collectFeedDetails(type),
+    };
+    button.disabled = true;
+    await apiJson('/admin/api/release-changes' + (id == null ? '' : '/' + id), id == null ? 'POST' : 'PATCH', body);
+    closeAdminModal('feed-editor');
+    await loadFeedAdmin();
+  } catch(error) {
+    if (errorNode) errorNode.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function deleteFeedEvent(id) {
+  if (!confirm('Удалить это событие из ленты?')) return;
+  try {
+    await apiJson('/admin/api/release-changes/' + id, 'DELETE');
+    if (FEED_ADMIN_ITEMS.length === 1 && FEED_ADMIN_OFFSET > 0) FEED_ADMIN_OFFSET -= FEED_ADMIN_LIMIT;
+    await loadFeedAdmin();
+  } catch(error) { alert(error.message); }
+}
+
+function openFeedClear() {
+  openAdminModal('feed-clear', 'Очистить ленту',
+    '<div class="alert alert-warn">Будут удалены все события ленты. Версии, файлы и исправления в каталоге останутся без изменений.</div>' +
+    '<div class="field"><label>Для подтверждения введите ОЧИСТИТЬ ЛЕНТУ</label><input id="feed-clear-confirm" autocomplete="off" oninput="document.getElementById(\'feed-clear-button\').disabled=this.value!==\'ОЧИСТИТЬ ЛЕНТУ\'"></div>' +
+    '<div id="feed-clear-error" style="min-height:20px;color:var(--red);margin-bottom:8px"></div>' +
+    '<div style="display:flex;gap:8px"><button id="feed-clear-button" class="btn btn-danger" disabled onclick="clearFeedAdmin()">Удалить все события</button>' +
+    '<button class="btn btn-ghost" onclick="closeAdminModal(\'feed-clear\')">Отмена</button></div>');
+}
+
+async function clearFeedAdmin() {
+  var confirmation = document.getElementById('feed-clear-confirm').value;
+  var errorNode = document.getElementById('feed-clear-error');
+  try {
+    await apiJson('/admin/api/release-changes', 'DELETE', { confirmation:confirmation });
+    FEED_ADMIN_OFFSET = 0;
+    closeAdminModal('feed-clear');
+    await loadFeedAdmin();
+  } catch(error) {
+    if (errorNode) errorNode.textContent = error.message;
+  }
+}
+
+// ── ITS accounts ───────────────────────────────────────────────────────────
+var ACCOUNT_CACHE = [];
+var TESTING_ACCOUNT_IDS = new Set();
+
+async function loadAccounts() {
+  var tbody = document.getElementById('accounts-tbody');
+  if (!tbody) return;
+  try {
+    var data = await apiFetch('/admin/api/accounts');
+    ACCOUNT_CACHE = data.accounts || [];
+    tbody.innerHTML = ACCOUNT_CACHE.map(function(a) {
+      var testing = TESTING_ACCOUNT_IDS.has(Number(a.id));
+      var state = testing
+        ? '<span class="badge badge-running"><span class="spinner"></span> Получение данных…</span>'
+        : (a.enabled ? badge(a.last_status === 'never' ? 'skipped' : a.last_status) : '<span class="badge badge-skipped">выключен</span>');
+      return '<tr>' +
+        '<td><b>' + escapeHtml(a.label) + '</b></td>' +
+        '<td class="mono">' + escapeHtml(a.login) + '</td>' +
+        '<td>' + state + (a.last_error ? '<div style="color:var(--red);font-size:11px;max-width:260px">' + escapeHtml(a.last_error) + '</div>' : '') + '</td>' +
+        '<td class="mono">' + a.priority + '</td>' +
+        '<td class="mono">до ' + (a.request_concurrency || 4) + '</td>' +
+        '<td class="mono">' + (a.projects_available || 0) + '</td>' +
+        '<td class="mono">' + (a.projects_unavailable || 0) + '</td>' +
+        '<td>' + fmtDate(a.last_success_at) + '</td>' +
+        '<td style="white-space:nowrap">' +
+          '<button class="btn btn-ghost" ' + (testing ? 'disabled' : '') + ' onclick="testAccount(' + a.id + ')">' + (testing ? 'Выполняется…' : 'Проверить') + '</button> ' +
+          '<button class="btn btn-ghost" onclick="editAccount(' + a.id + ')">Изменить</button> ' +
+          '<button class="btn btn-danger" onclick="removeAccount(' + a.id + ')">Удалить</button>' +
+        '</td></tr>';
+    }).join('') || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Добавьте хотя бы одну учётную запись</td></tr>';
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="9" style="color:var(--red)">' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+function resetAccountForm(hide) {
+  var editor = document.getElementById('account-editor');
+  if (!editor) {
+    if (hide) closeAdminModal('account');
+    return;
+  }
+  document.getElementById('acc-id').value = '';
+  document.getElementById('acc-label').value = '';
+  document.getElementById('acc-login').value = '';
+  document.getElementById('acc-password').value = '';
+  document.getElementById('acc-priority').value = '100';
+  document.getElementById('acc-concurrency').value = '4';
+  document.getElementById('acc-enabled').checked = true;
+  document.getElementById('acc-message').textContent = '';
+  if (hide) closeAdminModal('account');
+}
+
+function showAccountForm() {
+  var template = document.getElementById('account-form-template');
+  openAdminModal('account', 'Новый ИТС-аккаунт', template.innerHTML, 'wide');
+  resetAccountForm(false);
+  document.getElementById('acc-form-title').textContent = 'Новый ИТС-аккаунт';
+}
+
+function editAccount(id) {
+  var a = ACCOUNT_CACHE.find(function(item) { return Number(item.id) === Number(id); });
+  if (!a) return;
+  var template = document.getElementById('account-form-template');
+  openAdminModal('account', 'Изменение ИТС-аккаунта', template.innerHTML, 'wide');
+  document.getElementById('acc-form-title').textContent = 'Изменение ИТС-аккаунта';
+  document.getElementById('acc-id').value = a.id;
+  document.getElementById('acc-label').value = a.label;
+  document.getElementById('acc-login').value = a.login;
+  document.getElementById('acc-password').value = '';
+  document.getElementById('acc-priority').value = a.priority;
+  document.getElementById('acc-concurrency').value = String(a.request_concurrency || 4);
+  document.getElementById('acc-enabled').checked = !!a.enabled;
+}
+
+async function saveAccount() {
+  var id = document.getElementById('acc-id').value;
+  var payload = {
+    label: document.getElementById('acc-label').value.trim(),
+    login: document.getElementById('acc-login').value.trim(),
+    password: document.getElementById('acc-password').value,
+    priority: Number(document.getElementById('acc-priority').value || 100),
+    requestConcurrency: Number(document.getElementById('acc-concurrency').value || 4),
+    enabled: document.getElementById('acc-enabled').checked,
+  };
+  var msg = document.getElementById('acc-message');
+  try {
+    await apiJson('/admin/api/accounts' + (id ? '/' + id : ''), id ? 'PUT' : 'POST', payload);
+    resetAccountForm(true);
+    await loadAccounts();
+  } catch(e) {
+    msg.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(e.message) + '</span>';
+  }
+}
+
+async function testAccount(id) {
+  TESTING_ACCOUNT_IDS.add(Number(id));
+  await loadAccounts();
+  try {
+    await apiJson('/admin/api/accounts/' + id + '/test', 'POST');
+  } catch(e) {
+    console.error('testAccount error:', e);
+  } finally {
+    TESTING_ACCOUNT_IDS.delete(Number(id));
+    await loadAccounts();
+  }
+}
+
+async function removeAccount(id) {
+  if (!confirm('Удалить учётную запись? Импортированные общие данные останутся.')) return;
+  try {
+    await apiJson('/admin/api/accounts/' + id, 'DELETE');
+    await loadAccounts();
+  } catch(e) { alert(e.message); }
+}
+
+// ── Catalog and release data management ──────────────────────────────────
+var CATALOG_ADMIN_TIMER = null;
+var CATALOG_VERSION_CACHE = [];
+var CATALOG_ACTIVE_PROJECT = null;
+var CATALOG_ACTIVE_VERSION = null;
+var CATALOG_UPDATE_CONTEXT = null;
+var UPDATE_UI_RUNNING = false;
+var DASH_RESOURCE_BACKLOG = 0;
+
+function catalogSiteUpdateButton(projectIds, contextType, contextId, versionId) {
+  var ids = (projectIds || []).map(Number).filter(function(id) { return Number.isInteger(id) && id > 0; });
+  var disabled = UPDATE_UI_RUNNING || !ids.length;
+  var title = !ids.length
+    ? 'Нет связанного проекта releases.1c.ru, доступного для обновления'
+    : ids.length > 1 ? 'Будут последовательно обновлены связанные проекты: ' + ids.length : 'Обновить данные с releases.1c.ru';
+  var args = JSON.stringify(ids) + ',\'' + contextType + '\',' + Number(contextId) + ',' +
+    (versionId ? Number(versionId) : 'null');
+  var regular = '<button class="btn btn-ghost" data-catalog-refresh type="button" title="' + escapeHtml(title) + '" ' +
+    (disabled ? 'disabled ' : '') + 'onclick="updateCatalogFromSite(' + JSON.stringify(ids) + ',\'' + contextType + '\',' +
+    Number(contextId) + ',' + (versionId ? Number(versionId) : 'null') + ',false)">↻ Обновить данные с сайта' +
+    (ids.length > 1 ? ' (' + ids.length + ')' : '') + '</button>';
+  var forced = '<button class="btn btn-ghost" data-catalog-refresh type="button" ' +
+    'title="Повторно загрузить страницы всех релизов выбранных проектов" ' +
+    (disabled ? 'disabled ' : '') + 'onclick="updateCatalogFromSite(' + args + ',true)">⟳ Проверить все релизы' +
+    (ids.length > 1 ? ' (' + ids.length + ')' : '') + '</button>';
+  return regular + forced;
+}
+
+function scheduleCatalogAdmin() {
+  clearTimeout(CATALOG_ADMIN_TIMER);
+  CATALOG_ADMIN_TIMER = setTimeout(loadCatalogAdmin, 250);
+}
+
+function changeCatalogTypeFilter() {
+  if (document.getElementById('catalog-admin-type').value === 'configuration') {
+    document.getElementById('catalog-admin-mapping').value = 'all';
+  }
+  loadCatalogAdmin();
+}
+
+function changeCatalogMappingFilter() {
+  if (document.getElementById('catalog-admin-mapping').value !== 'all') {
+    document.getElementById('catalog-admin-type').value = 'project';
+  }
+  loadCatalogAdmin();
+}
+
+async function loadCatalogAdmin() {
+  var list = document.getElementById('catalog-admin-list');
+  if (!list) return;
+  var type = document.getElementById('catalog-admin-type').value;
+  var mapping = document.getElementById('catalog-admin-mapping').value;
+  var q = document.getElementById('catalog-admin-search').value.trim();
+  list.innerHTML = '<span class="spinner"></span> Загрузка…';
+  try {
+    var data = await apiFetch('/admin/api/catalog?type=' + encodeURIComponent(type) +
+      '&mapping=' + encodeURIComponent(mapping) + '&q=' + encodeURIComponent(q));
+    list.innerHTML = (data.entities || []).map(function(entity) {
+      var typeLabel = entity.entity_type === 'configuration' ? 'LST' : 'releases.1c.ru';
+      var typeClass = entity.entity_type === 'configuration' ? 'catalog-item--configuration' : 'catalog-item--project';
+      var flags = (entity.is_hidden ? '<span class="badge badge-skipped">Скрыта</span> ' : '') +
+        (entity.exclude_from_updates ? '<span class="badge badge-error">Не обновлять</span> ' : '') +
+        (entity.entity_type === 'project' && entity.catalog_state !== 'ready'
+          ? '<span class="badge badge-running">Ожидает загрузки</span>' : '');
+      if (entity.entity_type === 'project') {
+        var mappingLabels = { auto:'Автоматическое соответствие', manual:'Ручное соответствие', unmatched:'Не сопоставлена' };
+        flags += '<span class="badge ' + (entity.config_id ? 'badge-ok' : 'badge-error') + '">' +
+          escapeHtml(mappingLabels[entity.mapping_mode] || 'Не сопоставлена') + '</span>';
+      }
+      var mappingMeta = entity.entity_type === 'project'
+        ? '<div class="mapping-meta">LST: ' + escapeHtml(entity.config_display_name || entity.config_name || 'не выбрана') +
+          (entity.mapping_confidence ? ' · уверенность ' + Number(entity.mapping_confidence) + '%' : '') + '</div>'
+        : '';
+      return '<div class="mapping-item catalog-item ' + typeClass + '"><div class="mapping-top"><div>' +
+        '<div class="catalog-source">' + escapeHtml(typeLabel) + '</div>' +
+        '<div class="mapping-name">' + escapeHtml(entity.display_name) + '</div>' +
+        '<div class="mapping-meta">' + escapeHtml(entity.base_name) +
+        (entity.href ? ' · ' + escapeHtml(entity.href) : '') + '</div></div>' +
+        '<div style="text-align:right">' + flags + '<div class="mapping-meta">Версий: ' + (entity.version_count || 0) + '</div>' + mappingMeta + '</div></div>' +
+        '<div style="margin-top:12px"><button class="btn btn-primary" onclick="openCatalogEntity(\'' + entity.entity_type + '\',' + entity.id + ')">Управлять</button></div></div>';
+    }).join('') || '<div style="text-align:center;color:var(--muted);padding:24px">Ничего не найдено</div>';
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--red)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function catalogMappingEditor(entity) {
+  var mappingLabels = { auto:'Найдена автоматически', manual:'Задана вручную', unmatched:'Не сопоставлена' };
+  var currentValue = entity.config_id ? configOptionLabel(entity.config_name, entity.config_display_name) : '';
+  return '<div class="target-update" style="margin-top:0;margin-bottom:18px">' +
+    '<div class="target-update-title">Соответствие графу обновлений LST</div>' +
+    '<div class="target-update-sub">Состояние: <b>' + escapeHtml(mappingLabels[entity.mapping_mode] || 'Не сопоставлена') + '</b>' +
+    (entity.mapping_confidence ? ' · уверенность ' + Number(entity.mapping_confidence) + '%' : '') +
+    '. Изменяйте связь вручную только если автоматическое сопоставление ошибочно или невозможно.</div>' +
+    '<div class="mapping-actions"><input class="mapping-choice" id="mapping-choice-' + entity.id + '" list="mapping-config-options" data-config-id="' +
+    (entity.config_id ? Number(entity.config_id) : '') + '" value="' +
+    escapeHtml(currentValue) + '" placeholder="Начните вводить название конфигурации LST" oninput="scheduleConfigOptions(this)">' +
+    '<button class="btn btn-primary" onclick="saveMapping(' + entity.id + ')">Сохранить соответствие</button>' +
+    (entity.config_id ? '<button class="btn btn-ghost" onclick="clearMapping(' + entity.id + ')">Убрать соответствие</button>' : '<span></span>') +
+    '</div><div id="mapping-action-message" style="margin-top:9px;color:var(--muted);font-size:12px"></div></div>';
+}
+
+function catalogLinkedProjects(projects) {
+  if (!projects.length) {
+    return '<div class="target-update" style="margin-top:0;margin-bottom:18px"><div class="target-update-title">Проекты releases.1c.ru</div>' +
+      '<div class="target-update-sub" style="margin-bottom:0">С этой конфигурацией пока не сопоставлен ни один проект.</div></div>';
+  }
+  return '<div class="target-update" style="margin-top:0;margin-bottom:18px"><div class="target-update-title">Связанные проекты releases.1c.ru</div>' +
+    '<div class="target-update-sub">Соответствие изменяется в карточке проекта.</div>' +
+    projects.map(function(project) {
+      return '<button class="btn btn-ghost" style="margin:0 8px 8px 0" onclick="openCatalogEntity(\'project\',' + Number(project.id) + ')">' +
+        escapeHtml(project.display_name) + '</button>';
+    }).join('') + '</div>';
+}
+
+async function openCatalogEntity(type, id) {
+  closeAdminModal('catalog-version');
+  var initialTitle = type === 'configuration' ? 'Конфигурация LST' : 'Проект releases.1c.ru';
+  var detail = openAdminModal('catalog-entity', initialTitle, '<span class="spinner"></span> Загрузка данных…', 'xl');
+  try {
+    var path = type === 'configuration'
+      ? '/admin/api/catalog/configurations/' + id
+      : '/admin/api/catalog/projects/' + id;
+    var data = await apiFetch(path);
+    var entity = data.entity;
+    if (type === 'configuration') {
+      var linkedProjects = Array.isArray(entity.linked_projects) ? entity.linked_projects : [];
+      var linkedProjectIds = linkedProjects.filter(function(project) { return !project.exclude_from_updates; })
+        .map(function(project) { return Number(project.id); });
+      setAdminModalTitle('catalog-entity', 'Конфигурация LST: ' + (entity.effective_display_name || entity.display_name || entity.name));
+      detail.innerHTML = '<div class="alert alert-info">Внутреннее имя: <span class="mono">' + escapeHtml(entity.name) + '</span></div>' +
+        catalogLinkedProjects(linkedProjects) +
+        '<div class="field-row"><div class="field"><label>Название на сайте</label><input id="cat-display" value="' + escapeHtml(entity.display_name_override || '') + '" placeholder="' + escapeHtml(entity.display_name || entity.name) + '"></div>' +
+        '<div class="field"><label>Поставщик</label><input id="cat-vendor" value="' + escapeHtml(entity.vendor_override || '') + '" placeholder="' + escapeHtml(entity.vendor || '') + '"></div></div>' +
+        '<div class="field-row"><div class="field"><label>Группа</label><input id="cat-group" value="' + escapeHtml(entity.group_name_override || '') + '" placeholder="' + escapeHtml(entity.group_name || '') + '"></div>' +
+        '<div class="field"><label>Регион</label><input id="cat-region" value="' + escapeHtml(entity.region_override || '') + '" placeholder="' + escapeHtml(entity.region || '') + '"></div></div>' +
+        catalogFlags(entity) +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="saveCatalogConfiguration(' + id + ')">Сохранить</button>' +
+        catalogSiteUpdateButton(linkedProjectIds, 'configuration', id, null) +
+        '<button class="btn btn-danger" onclick="deleteCatalogData(\'configuration\',' + id + ')">Удалить данные конфигурации</button></div>' +
+        '<div id="catalog-action-message" style="margin-top:10px;color:var(--muted);font-size:12px"></div>' +
+        '<div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px"><div class="toolbar"><b>Версии LST</b>' +
+        '<span class="badge badge-gray">' + Number(entity.version_count || 0).toLocaleString('ru') + '</span>' +
+        '<input id="catalog-lst-version-search" style="margin-left:auto" placeholder="Поиск версии" oninput="scheduleCatalogConfigurationVersions(' + id + ')"></div>' +
+        '<div style="color:var(--muted);font-size:12px;margin-top:8px">Версии и переходы из файла LST доступны только для просмотра.</div>' +
+        '<div id="catalog-lst-versions-list" class="mapping-list" style="margin-top:12px"></div></div>';
+      await loadCatalogConfigurationVersions(id);
+    } else {
+      CATALOG_ACTIVE_PROJECT = id;
+      setAdminModalTitle('catalog-entity', entity.effective_display_name || entity.display_name || 'Проект releases.1c.ru');
+      detail.innerHTML =
+        (entity.catalog_state === 'ready' ? '' : '<div class="alert alert-info">Проект обнаружен в общем списке releases.1c.ru, но его история версий ещё не загружена. До точечного или полного обновления отдельная карточка на публичном сайте не показывается.</div>') +
+        catalogMappingEditor(entity) +
+        '<div class="field-row"><div class="field"><label>Название на сайте</label><input id="cat-display" value="' + escapeHtml(entity.display_name_override || '') + '" placeholder="' + escapeHtml(entity.display_name || '') + '"></div>' +
+        '<div class="field"><label>Группа</label><input id="cat-group" value="' + escapeHtml(entity.group_name_override || '') + '" placeholder="' + escapeHtml(entity.group_name || '') + '"></div></div>' +
+        '<div class="field"><label>Адрес проекта</label><input value="' + escapeHtml(entity.href || '') + '" readonly></div>' +
+        catalogFlags(entity) +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="saveCatalogProject(' + id + ')">Сохранить</button>' +
+        catalogSiteUpdateButton(entity.exclude_from_updates ? [] : [id], 'project', id, null) +
+        '<button class="btn btn-danger" onclick="deleteCatalogData(\'project\',' + id + ')">Удалить данные релиза</button></div>' +
+        '<div id="catalog-action-message" style="margin-top:10px;color:var(--muted);font-size:12px"></div>' +
+        '<div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px"><div class="toolbar"><b>Версии и ссылки</b>' +
+        '<input id="catalog-version-search" style="margin-left:auto" placeholder="Поиск версии" oninput="scheduleCatalogVersions(' + id + ')"></div>' +
+        '<div id="catalog-versions-list" class="mapping-list" style="margin-top:12px"></div></div>';
+      await loadConfigOptions('');
+      await loadCatalogVersions(id);
+    }
+  } catch(e) {
+    detail.innerHTML = '<div style="color:var(--red)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function catalogFlags(entity) {
+  return '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px">' +
+    '<label style="display:flex;gap:8px;align-items:center"><input id="cat-hidden" type="checkbox" style="width:auto" ' + (entity.is_hidden ? 'checked' : '') + '> Скрыть с публичного сайта</label>' +
+    '<label style="display:flex;gap:8px;align-items:center"><input id="cat-excluded" type="checkbox" style="width:auto" ' + (entity.exclude_from_updates ? 'checked' : '') + '> Исключить из обновлений</label>' +
+    (entity.update_priority === undefined ? '' : '<label style="display:flex;gap:8px;align-items:center"><input id="cat-priority" type="checkbox" style="width:auto" ' + (Number(entity.update_priority || 0) > 0 ? 'checked' : '') + '> Обрабатывать раньше остальных</label>') +
+    '</div>';
+}
+
+async function saveCatalogConfiguration(id) {
+  await saveCatalogEntity('/admin/api/catalog/configurations/' + id, {
+    displayNameOverride: document.getElementById('cat-display').value,
+    vendorOverride: document.getElementById('cat-vendor').value,
+    groupNameOverride: document.getElementById('cat-group').value,
+    regionOverride: document.getElementById('cat-region').value,
+    isHidden: document.getElementById('cat-hidden').checked,
+    excludeFromUpdates: document.getElementById('cat-excluded').checked,
+  }, 'configuration', id);
+}
+
+async function saveCatalogProject(id) {
+  await saveCatalogEntity('/admin/api/catalog/projects/' + id, {
+    displayNameOverride: document.getElementById('cat-display').value,
+    groupNameOverride: document.getElementById('cat-group').value,
+    isHidden: document.getElementById('cat-hidden').checked,
+    excludeFromUpdates: document.getElementById('cat-excluded').checked,
+    updatePriority: document.getElementById('cat-priority').checked,
+  }, 'project', id);
+}
+
+async function saveCatalogEntity(path, payload, type, id) {
+  var message = document.getElementById('catalog-action-message');
+  try {
+    await apiJson(path, 'PATCH', payload);
+    message.textContent = 'Сохранено. Публичный каталог обновится автоматически.';
+    await loadCatalogAdmin();
+  } catch(e) { message.textContent = e.message; }
+}
+
+function catalogUpdateMessageElement(contextType) {
+  return document.getElementById(contextType === 'version' ? 'version-action-message' : 'catalog-action-message');
+}
+
+async function updateCatalogFromSite(projectIds, contextType, contextId, versionId, forceAllResources) {
+  var ids = [...new Set((projectIds || []).map(Number).filter(function(id) {
+    return Number.isInteger(id) && id > 0;
+  }))];
+  var message = catalogUpdateMessageElement(contextType);
+  if (!ids.length) {
+    if (message) message.innerHTML = '<span style="color:var(--red)">Нет связанного проекта releases.1c.ru.</span>';
+    return;
+  }
+  if (UPDATE_UI_RUNNING) {
+    if (message) message.innerHTML = '<span style="color:var(--orange)">Дождитесь завершения текущего обновления.</span>';
+    return;
+  }
+  if (forceAllResources && !confirm(
+    'Повторно загрузить страницы всех релизов выбранных проектов?\n\n' +
+    'Будут проигнорированы интервалы умного обновления и лимит архивной пачки. Это может занять продолжительное время.'
+  )) return;
+  document.querySelectorAll('[data-catalog-refresh]').forEach(function(button) { button.disabled = true; });
+  if (message) message.innerHTML = '<span class="spinner"></span> ' +
+    (forceAllResources ? 'Запускаем проверку всех релизов…' : 'Запускаем обновление с releases.1c.ru…');
+  try {
+    var response = await fetch(location.origin + '/admin/api/update', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectIds: ids, forceAllResources: forceAllResources === true }),
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (response.status === 409) throw new Error('Уже выполняется другая задача обновления. Дождитесь её завершения.');
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+
+    CATALOG_UPDATE_CONTEXT = {
+      jobId: Number(data.jobId),
+      contextType: contextType,
+      contextId: Number(contextId),
+      versionId: versionId ? Number(versionId) : null,
+      projectIds: ids,
+      forceAllResources: forceAllResources === true,
+    };
+    updateJobId = Number(data.jobId);
+    updateLogOffset = 0;
+    document.getElementById('import-log').innerHTML = '';
+    document.getElementById('import-summary').innerHTML = '';
+    setUpdateRunning(true);
+    if (message) message.innerHTML = '<span style="color:var(--blue)">Обновление запущено. Состояние карточки обновится после завершения.</span>';
+    if (updatePolling) clearInterval(updatePolling);
+    updatePolling = setInterval(pollUpdate, 1500);
+    await pollUpdate();
+  } catch(error) {
+    CATALOG_UPDATE_CONTEXT = null;
+    document.querySelectorAll('[data-catalog-refresh]').forEach(function(button) { button.disabled = UPDATE_UI_RUNNING; });
+    if (message) message.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  }
+}
+
+async function finishCatalogSiteUpdate(job) {
+  var context = CATALOG_UPDATE_CONTEXT;
+  if (!context || Number(context.jobId) !== Number(updateJobId)) return;
+  CATALOG_UPDATE_CONTEXT = null;
+  if (currentPage === 'catalog') await loadCatalogAdmin();
+  if (context.contextType === 'project') {
+    await loadCatalogVersions(context.contextId);
+  } else if (context.contextType === 'version') {
+    await loadCatalogVersions(context.contextId);
+    if (document.getElementById(modalDomId('catalog-version')) && context.versionId) {
+      await openCatalogVersion(context.versionId);
+    }
+  }
+  var message = catalogUpdateMessageElement(context.contextType);
+  if (message) {
+    message.innerHTML = badge(job.status) + ' &nbsp;' + escapeHtml(job.message || 'Обновление завершено');
+  }
+}
+
+async function deleteCatalogData(type, id) {
+  var text = type === 'configuration'
+    ? 'Удалить граф, метаданные и патчи этой конфигурации? Она будет скрыта и исключена из обновлений.'
+    : 'Удалить все версии и ссылки этого релиза? Он будет скрыт и исключён из обновлений.';
+  if (!confirm(text)) return;
+  try {
+    var path = type === 'configuration'
+      ? '/admin/api/catalog/configurations/' + id + '/data'
+      : '/admin/api/catalog/projects/' + id + '/data';
+    await apiJson(path, 'DELETE');
+    closeAdminModal('catalog-version');
+    closeAdminModal('catalog-entity');
+    await loadCatalogAdmin();
+  } catch(e) { alert(e.message); }
+}
+
+function scheduleCatalogVersions(projectId) {
+  clearTimeout(CATALOG_ADMIN_TIMER);
+  CATALOG_ADMIN_TIMER = setTimeout(function() { loadCatalogVersions(projectId); }, 250);
+}
+
+function scheduleCatalogConfigurationVersions(configId) {
+  clearTimeout(CATALOG_ADMIN_TIMER);
+  CATALOG_ADMIN_TIMER = setTimeout(function() { loadCatalogConfigurationVersions(configId); }, 250);
+}
+
+async function loadCatalogConfigurationVersions(configId) {
+  var list = document.getElementById('catalog-lst-versions-list');
+  if (!list) return;
+  var search = document.getElementById('catalog-lst-version-search');
+  list.innerHTML = '<span class="spinner"></span> Загрузка версий…';
+  try {
+    var data = await apiFetch('/admin/api/catalog/configurations/' + configId + '/versions?q=' +
+      encodeURIComponent(search ? search.value.trim() : ''));
+    list.innerHTML = (data.versions || []).map(function(version) {
+      var details = [];
+      if (version.release_date) details.push(escapeHtml(version.release_date));
+      if (version.min_platform) details.push('мин. платформа ' + escapeHtml(version.min_platform));
+      details.push('входящих: ' + Number(version.incoming_count || 0));
+      details.push('исходящих: ' + Number(version.outgoing_count || 0));
+      return '<div class="mapping-item" style="padding:11px 13px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+        '<b class="mono">' + escapeHtml(version.version) + '</b>' +
+        (Number(version.cfu_count || 0) ? '<span class="badge badge-ok">CFU: ' + Number(version.cfu_count) + '</span>' : '') +
+        '<span style="color:var(--muted);font-size:12px">' + details.join(' · ') + '</span></div></div>';
+    }).join('') || '<div style="color:var(--muted)">Версий не найдено</div>';
+  } catch(e) { list.innerHTML = '<div style="color:var(--red)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function loadCatalogVersions(projectId) {
+  var list = document.getElementById('catalog-versions-list');
+  if (!list) return;
+  var search = document.getElementById('catalog-version-search');
+  list.innerHTML = '<span class="spinner"></span> Загрузка версий…';
+  try {
+    var data = await apiFetch('/admin/api/catalog/projects/' + projectId + '/versions?q=' + encodeURIComponent(search ? search.value.trim() : ''));
+    CATALOG_VERSION_CACHE = data.versions || [];
+    list.innerHTML = CATALOG_VERSION_CACHE.map(function(version) {
+      var syncState = version.resources_sync_status === 'error'
+        ? '<span class="badge badge-error" title="' + escapeHtml(version.resources_last_error || '') + '">Ошибка · попыток ' + Number(version.resources_sync_attempts || 0) + '</span>'
+        : version.resources_sync_status === 'pending'
+          ? '<span class="badge badge-running">Ожидает обработки</span>'
+          : '<span class="badge badge-ok">Ссылки проверены</span>';
+      return '<div class="mapping-item" style="padding:11px 13px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+        '<b class="mono">' + escapeHtml(version.version) + '</b>' +
+        (version.is_test ? '<span class="badge badge-running">Для тестирования</span>' : '') +
+        (version.is_hidden ? '<span class="badge badge-skipped">Скрыта</span>' : '') +
+        syncState +
+        '<span style="color:var(--muted);font-size:12px">' + escapeHtml(version.effective_release_date || 'Без даты') + ' · ссылок: ' + (version.resource_count || 0) + '</span>' +
+        '<button class="btn btn-ghost" style="margin-left:auto" onclick="openCatalogVersion(' + version.id + ')">Изменить</button>' +
+        '<button class="btn btn-danger" onclick="deleteCatalogVersion(' + version.id + ')">Удалить</button></div></div>';
+    }).join('') || '<div style="color:var(--muted)">Версий не найдено</div>';
+  } catch(e) { list.innerHTML = '<div style="color:var(--red)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function openCatalogVersion(id) {
+  var version = CATALOG_VERSION_CACHE.find(function(item) { return Number(item.id) === Number(id); });
+  if (!version) return;
+  CATALOG_ACTIVE_VERSION = id;
+  var target = openAdminModal('catalog-version', 'Версия ' + version.version, '<span class="spinner"></span> Загрузка версии…', 'xl');
+  target.innerHTML = (version.is_test ? '<div class="mapping-item" style="margin-bottom:14px;border-color:var(--orange);color:var(--orange)"><b>Версия для тестирования</b><div style="margin-top:4px;color:var(--muted)">Статус получен с releases.1c.ru и обновляется вместе с данными релиза.</div></div>' : '') +
+    '<div class="field-row"><div class="field"><label>Дата публикации</label><input id="ver-date" type="date" value="' + escapeHtml(version.release_date_override || '') + '"></div>' +
+    '<div class="field"><label>Размер основного файла, байт</label><input id="ver-size" type="number" min="0" value="' + escapeHtml(version.file_size_bytes_override == null ? '' : version.file_size_bytes_override) + '" placeholder="' + escapeHtml(version.file_size_bytes || '') + '"></div></div>' +
+    '<div class="field-row"><div class="field"><label>Минимальная платформа</label><input id="ver-min" value="' + escapeHtml(version.min_platform_override || '') + '" placeholder="' + escapeHtml(version.min_platform || '') + '"></div>' +
+    '<div class="field"><label>Рекомендуемая платформа</label><input id="ver-rec" value="' + escapeHtml(version.recommended_platform_override || '') + '" placeholder="' + escapeHtml(version.recommended_platform || '') + '"></div></div>' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px"><input id="ver-hidden" type="checkbox" style="width:auto" ' + (version.is_hidden ? 'checked' : '') + '> Скрыть версию с сайта</label>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="saveCatalogVersion(' + id + ')">Сохранить версию</button>' +
+    catalogSiteUpdateButton(CATALOG_ACTIVE_PROJECT ? [CATALOG_ACTIVE_PROJECT] : [], 'version', CATALOG_ACTIVE_PROJECT || 0, id) + '</div>' +
+    '<div id="version-action-message" style="margin-top:8px;color:var(--muted);font-size:12px"></div>' +
+    '<div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px"><b>Файлы и ссылки</b><div id="catalog-resources-list" class="mapping-list" style="margin-top:10px"><span class="spinner"></span></div></div>';
+  try {
+    var data = await apiFetch('/admin/api/catalog/versions/' + id + '/resources');
+    renderCatalogResources(data.resources || []);
+  } catch(e) {
+    document.getElementById('catalog-resources-list').innerHTML = '<div style="color:var(--red)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function saveCatalogVersion(id) {
+  var message = document.getElementById('version-action-message');
+  try {
+    await apiJson('/admin/api/catalog/versions/' + id, 'PATCH', {
+      releaseDateOverride: document.getElementById('ver-date').value,
+      fileSizeBytesOverride: document.getElementById('ver-size').value,
+      minPlatformOverride: document.getElementById('ver-min').value,
+      recommendedPlatformOverride: document.getElementById('ver-rec').value,
+      isHidden: document.getElementById('ver-hidden').checked,
+    });
+    message.textContent = 'Версия сохранена';
+    await loadCatalogVersions(CATALOG_ACTIVE_PROJECT);
+  } catch(e) { message.textContent = e.message; }
+}
+
+async function deleteCatalogVersion(id) {
+  if (!confirm('Удалить версию, её переходы и ссылки? При следующем обновлении она может появиться снова.')) return;
+  try {
+    await apiJson('/admin/api/catalog/versions/' + id, 'DELETE');
+    closeAdminModal('catalog-version');
+    await loadCatalogVersions(CATALOG_ACTIVE_PROJECT);
+  } catch(e) { alert(e.message); }
+}
+
+function renderCatalogResources(resources) {
+  var list = document.getElementById('catalog-resources-list');
+  if (!list) return;
+  list.innerHTML = resources.map(function(resource) {
+    return '<div class="mapping-item"><div style="display:flex;align-items:center;gap:8px"><b>' + escapeHtml(resource.effective_title) + '</b>' +
+      (resource.is_hidden ? '<span class="badge badge-skipped">Скрыта</span>' : '') + '</div>' +
+      '<div class="field-row" style="margin-top:10px"><div class="field"><label>Название</label><input id="res-title-' + resource.id + '" value="' + escapeHtml(resource.title_override || '') + '" placeholder="' + escapeHtml(resource.title) + '"></div>' +
+      '<div class="field"><label>Размер, байт</label><input id="res-size-' + resource.id + '" type="number" min="0" value="' + escapeHtml(resource.file_size_bytes_override == null ? '' : resource.file_size_bytes_override) + '" placeholder="' + escapeHtml(resource.file_size_bytes || '') + '"></div></div>' +
+      '<div class="field"><label>Ссылка</label><input id="res-href-' + resource.id + '" value="' + escapeHtml(resource.href_override || '') + '" placeholder="' + escapeHtml(resource.href) + '"></div>' +
+      '<div class="field-row"><div class="field"><label>Дата публикации</label><input id="res-date-' + resource.id + '" type="date" value="' + escapeHtml(resource.published_at_override || '') + '"></div>' +
+      '<div class="field"><label>SHA-512</label><input id="res-sha-' + resource.id + '" value="' + escapeHtml(resource.sha512_override || '') + '" placeholder="' + escapeHtml(resource.sha512 || '') + '"></div></div>' +
+      '<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input id="res-hidden-' + resource.id + '" type="checkbox" style="width:auto" ' + (resource.is_hidden ? 'checked' : '') + '> Скрыть ссылку с сайта</label>' +
+      '<div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="saveCatalogResource(' + resource.id + ')">Сохранить</button>' +
+      '<button class="btn btn-danger" onclick="deleteCatalogResource(' + resource.id + ')">Удалить</button></div></div>';
+  }).join('') || '<div style="color:var(--muted)">Ссылок нет</div>';
+}
+
+async function saveCatalogResource(id) {
+  try {
+    await apiJson('/admin/api/catalog/resources/' + id, 'PATCH', {
+      titleOverride: document.getElementById('res-title-' + id).value,
+      hrefOverride: document.getElementById('res-href-' + id).value,
+      fileSizeBytesOverride: document.getElementById('res-size-' + id).value,
+      publishedAtOverride: document.getElementById('res-date-' + id).value,
+      sha512Override: document.getElementById('res-sha-' + id).value,
+      isHidden: document.getElementById('res-hidden-' + id).checked,
+    });
+    var data = await apiFetch('/admin/api/catalog/versions/' + CATALOG_ACTIVE_VERSION + '/resources');
+    renderCatalogResources(data.resources || []);
+  } catch(e) { alert(e.message); }
+}
+
+async function deleteCatalogResource(id) {
+  if (!confirm('Удалить ссылку? При следующем обновлении релиза она может появиться снова.')) return;
+  try {
+    await apiJson('/admin/api/catalog/resources/' + id, 'DELETE');
+    var data = await apiFetch('/admin/api/catalog/versions/' + CATALOG_ACTIVE_VERSION + '/resources');
+    renderCatalogResources(data.resources || []);
+  } catch(e) { alert(e.message); }
+}
+
+// ── releases ↔ LST mappings ───────────────────────────────────────────────
+var CONFIG_OPTION_TIMER = null;
+
+function configOptionLabel(name, displayName) {
+  var code = String(name || '').trim();
+  var title = String(displayName || '').trim();
+  if (!title) return code;
+  if (!code || title.toLocaleLowerCase('ru-RU') === code.toLocaleLowerCase('ru-RU')) return title;
+  return title + ' (' + code + ')';
+}
+
+function selectedConfigOption(value) {
+  return Array.from(document.getElementById('mapping-config-options').options).find(function(option) {
+    return option.value === value;
+  }) || null;
+}
+
+function scheduleConfigOptions(input) {
+  clearTimeout(CONFIG_OPTION_TIMER);
+  var selected = selectedConfigOption(input.value);
+  input.dataset.configId = selected ? (selected.dataset.configId || '') : '';
+  if (selected) return;
+  CONFIG_OPTION_TIMER = setTimeout(function() {
+    loadConfigOptions(input.value);
+  }, 250);
+}
+
+async function loadConfigOptions(q) {
+  try {
+    var data = await apiFetch('/admin/api/config-options?q=' + encodeURIComponent(q || ''));
+    document.getElementById('mapping-config-options').innerHTML = (data.configurations || []).map(function(c) {
+      return '<option value="' + escapeHtml(configOptionLabel(c.name, c.display_name)) + '" data-config-id="' +
+        Number(c.id) + '"></option>';
+    }).join('');
+  } catch(e) { void e; }
+}
+
+async function saveMapping(projectId) {
+  var input = document.getElementById('mapping-choice-' + projectId);
+  var value = input.value;
+  var message = document.getElementById('mapping-action-message');
+  try {
+    var selected = selectedConfigOption(value);
+    var configId = Number(input.dataset.configId || (selected && selected.dataset.configId) || 0) || null;
+    if (!configId) {
+      var data = await apiFetch('/admin/api/config-options?q=' + encodeURIComponent(value.trim()));
+      var normalized = value.trim().toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
+      var exact = (data.configurations || []).filter(function(c) {
+        return [c.name, c.display_name].filter(Boolean).some(function(name) {
+          return String(name).trim().toLocaleLowerCase('ru-RU').replace(/ё/g, 'е') === normalized;
+        });
+      });
+      var candidates = exact.length ? exact : (data.configurations || []);
+      if (candidates.length !== 1) {
+        throw new Error(candidates.length
+          ? 'Найдено несколько конфигураций. Выберите нужный вариант из выпадающего списка.'
+          : 'Конфигурация с таким названием не найдена.');
+      }
+      configId = Number(candidates[0].id);
+    }
+    await apiJson('/admin/api/catalog/projects/' + projectId + '/mapping', 'PATCH', { configId: configId });
+    await loadCatalogAdmin();
+    await openCatalogEntity('project', projectId);
+  } catch(e) {
+    if (message) message.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(e.message) + '</span>';
+  }
+}
+
+async function clearMapping(projectId) {
+  var message = document.getElementById('mapping-action-message');
+  try {
+    await apiJson('/admin/api/catalog/projects/' + projectId + '/mapping', 'PATCH', { configId: null });
+    await loadCatalogAdmin();
+    await openCatalogEntity('project', projectId);
+  } catch(e) {
+    if (message) message.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(e.message) + '</span>';
+  }
+}
+
+// ── One online update task with live log ──────────────────────────────────
+let updatePolling = null;
+let updateLogOffset = 0;
+let updateJobId = null;
+let updateTargetTimer = null;
+let updateTargetRequest = 0;
+let updateTargetProjects = [];
+let updateTargetAccounts = [];
+let updateTargetSelectedProjects = [];
+let updateWasTargeted = false;
+
+function targetProjectNick(project) {
+  return String(project.href || '').replace(/^.*\/project\//, '').split(/[?#]/)[0];
+}
+
+function selectedTargetProjectIds() {
+  return updateTargetSelectedProjects.map(function(project) { return Number(project.id); });
+}
+
+function renderUpdateTargetResults() {
+  var input = document.getElementById('update-target-project');
+  var results = document.getElementById('update-target-results');
+  if (!input || !results) return;
+  var selected = new Set(selectedTargetProjectIds());
+  var projects = updateTargetProjects.filter(function(project) {
+    return !selected.has(Number(project.id));
+  }).slice(0, 60);
+  if (!projects.length) {
+    results.innerHTML = '<div class="target-result-empty">' +
+      (updateTargetSelectedProjects.length ? 'Все найденные конфигурации уже выбраны' : 'Конфигурации не найдены') +
+      '</div>';
+  } else {
+    results.innerHTML = projects.map(function(project) {
+      var nick = targetProjectNick(project);
+      return '<button type="button" class="target-result" onclick="selectUpdateTarget(' + Number(project.id) + ')">' +
+        '<span class="target-result-name">' + escapeHtml(project.display_name) + '</span>' +
+        (nick ? '<span class="target-result-meta">' + escapeHtml(nick) + '</span>' : '') +
+        (Number(project.update_priority || 0) > 0 ? '<span class="badge badge-running">★ приоритет</span>' : '') +
+        '</button>';
+    }).join('');
+  }
+  results.hidden = document.activeElement !== input;
+  if (!results.hidden) positionUpdateTargetResults();
+}
+
+function positionUpdateTargetResults() {
+  var input = document.getElementById('update-target-project');
+  var results = document.getElementById('update-target-results');
+  if (!input || !results || results.hidden) return;
+  var rect = input.getBoundingClientRect();
+  var roomBelow = window.innerHeight - rect.bottom - 12;
+  var roomAbove = rect.top - 12;
+  var openUp = roomBelow < 190 && roomAbove > roomBelow;
+  results.classList.toggle('open-up', openUp);
+  results.style.maxHeight = Math.max(120, Math.min(310, (openUp ? roomAbove : roomBelow) - 8)) + 'px';
+}
+
+function showUpdateTargetResults() {
+  var results = document.getElementById('update-target-results');
+  if (!results) return;
+  renderUpdateTargetResults();
+  results.hidden = false;
+  positionUpdateTargetResults();
+}
+
+function hideUpdateTargetResults() {
+  var results = document.getElementById('update-target-results');
+  if (results) results.hidden = true;
+}
+
+function handleUpdateTargetKey(event) {
+  if (event.key === 'Escape') {
+    hideUpdateTargetResults();
+    event.currentTarget.blur();
+  } else if (event.key === 'Enter') {
+    var first = document.querySelector('#update-target-results .target-result');
+    if (first) {
+      event.preventDefault();
+      first.click();
+    }
+  }
+}
+
+function selectUpdateTarget(id) {
+  var project = updateTargetProjects.find(function(item) { return Number(item.id) === Number(id); });
+  if (!project || selectedTargetProjectIds().includes(Number(id))) return;
+  updateTargetSelectedProjects.push(project);
+  var input = document.getElementById('update-target-project');
+  if (input) input.value = '';
+  renderUpdateTargetSelection();
+  hideUpdateTargetResults();
+  updateTargetAccountOptions();
+}
+
+function removeUpdateTarget(id) {
+  updateTargetSelectedProjects = updateTargetSelectedProjects.filter(function(project) {
+    return Number(project.id) !== Number(id);
+  });
+  renderUpdateTargetSelection();
+  renderUpdateTargetResults();
+  updateTargetAccountOptions();
+}
+
+function renderUpdateTargetSelection() {
+  var selected = document.getElementById('update-target-selected');
+  var summary = document.getElementById('update-target-summary');
+  if (selected) {
+    selected.innerHTML = updateTargetSelectedProjects.map(function(project) {
+      var nick = targetProjectNick(project);
+      return '<span class="target-chip"><span class="target-chip-name" title="' + escapeHtml(project.display_name) + '">' +
+        escapeHtml(project.display_name) + '</span>' +
+        (nick ? '<span class="target-chip-nick">' + escapeHtml(nick) + '</span>' : '') +
+        (Number(project.update_priority || 0) > 0 ? '<span title="Приоритет фонового обновления">★</span>' : '') +
+        '<button type="button" class="target-chip-remove" aria-label="Убрать ' + escapeHtml(project.display_name) + '" onclick="removeUpdateTarget(' + Number(project.id) + ')">×</button></span>';
+    }).join('');
+  }
+  if (summary) {
+    summary.textContent = updateTargetSelectedProjects.length
+      ? 'Выбрано конфигураций: ' + updateTargetSelectedProjects.length
+      : 'Конфигурации не выбраны';
+  }
+}
+
+function scheduleUpdateTargets() {
+  clearTimeout(updateTargetTimer);
+  var results = document.getElementById('update-target-results');
+  if (results) {
+    results.innerHTML = '<div class="target-result-empty"><span class="spinner"></span> Поиск…</div>';
+    results.hidden = false;
+    positionUpdateTargetResults();
+  }
+  updateTargetTimer = setTimeout(function() {
+    var input = document.getElementById('update-target-project');
+    loadUpdateTargets(input ? input.value : '');
+  }, 250);
+}
+
+async function loadUpdateTargets(q) {
+  var requestId = ++updateTargetRequest;
+  try {
+    var data = await apiFetch('/admin/api/update/targets?q=' + encodeURIComponent(q || ''));
+    if (requestId !== updateTargetRequest) return;
+    updateTargetProjects = data.projects || [];
+    updateTargetAccounts = data.accounts || [];
+    renderUpdateTargetResults();
+    renderUpdateTargetSelection();
+    updateTargetAccountOptions();
+  } catch(error) {
+    var msg = document.getElementById('target-update-msg');
+    if (msg) msg.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  }
+}
+
+function updateTargetAccountOptions() {
+  var select = document.getElementById('update-target-account');
+  if (!select) return;
+  var previous = select.value;
+  var selectedCount = updateTargetSelectedProjects.length;
+  var options = '<option value="">Автоматически — первый аккаунт с доступом</option>';
+  options += updateTargetAccounts.map(function(account) {
+    var statuses = updateTargetSelectedProjects.map(function(project) {
+      var state = (project.accounts || []).find(function(item) { return Number(item.id) === Number(account.id); });
+      return state ? state.status : null;
+    });
+    var available = statuses.filter(function(status) { return status === 'available'; }).length;
+    var suffix = !selectedCount ? ' — выберите конфигурации'
+      : available === selectedCount ? ' — доступ есть для всех'
+      : available ? ' — доступ есть: ' + available + ' из ' + selectedCount
+      : statuses.some(function(status) { return status === 'error'; }) ? ' — последняя проверка с ошибкой'
+      : statuses.every(function(status) { return status === 'unavailable'; }) ? ' — нет доступа'
+      : ' — доступ не проверен';
+    return '<option value="' + account.id + '">' + escapeHtml(account.label + suffix) + '</option>';
+  }).join('');
+  select.innerHTML = options;
+  if ([...select.options].some(function(option) { return option.value === previous; })) {
+    select.value = previous;
+  }
+}
+
+var UPDATE_LOG_LEVEL_DESCRIPTIONS = {
+  brief: 'Записываются запуск, крупные этапы, завершение и все ошибки. Подходит для ежедневного контроля.',
+  normal: 'Дополнительно записываются аккаунты, конфигурации, результаты сопоставления и прогресс обработки страниц через каждые 25 версий.',
+  detailed: 'Записывается загрузка каждой страницы версии, количество файлов, метаданных и названия найденных материалов. Журнал будет значительно больше.',
+};
+
+function describeUpdateLogLevel() {
+  var select = document.getElementById('update-log-level');
+  var concurrency = document.getElementById('update-concurrency');
+  var description = document.getElementById('update-log-level-description');
+  if (select && description) {
+    var workers = concurrency ? Number(concurrency.value || 4) : 4;
+    description.textContent = (UPDATE_LOG_LEVEL_DESCRIPTIONS[select.value] || '') +
+      ' Одновременно выполняется не более ' + workers + ' HTTP-запросов; при временном отказе используются повторные попытки.';
+  }
+}
+
+async function loadUpdateLogLevel() {
+  var message = document.getElementById('update-log-level-message');
+  try {
+    var data = await apiFetch('/admin/api/settings/logging');
+    var select = document.getElementById('update-log-level');
+    var concurrency = document.getElementById('update-concurrency');
+    if (select) select.value = data.level || 'normal';
+    if (concurrency) concurrency.value = String(data.concurrency || 4);
+    var smart = data.smart || {};
+    document.getElementById('smart-latest-hours').value = String(smart.latestIntervalHours || 24);
+    document.getElementById('smart-recent-days').value = String(smart.recentIntervalDays || 7);
+    document.getElementById('smart-archive-days').value = String(smart.archiveIntervalDays || 90);
+    document.getElementById('smart-recent-age-days').value = String(smart.recentReleaseAgeDays || 365);
+    document.getElementById('smart-retry-minutes').value = String(smart.retryBaseMinutes || 15);
+    document.getElementById('smart-archive-limit').value = String(smart.archivePageLimit || 1000);
+    document.getElementById('smart-metadata-cache-days').value = String(smart.metadataCacheDays || 30);
+    if (message) message.textContent = '';
+    describeUpdateLogLevel();
+  } catch (error) {
+    if (message) message.innerHTML = '<span style="color:var(--red)">Не удалось загрузить настройку: ' + escapeHtml(error.message) + '</span>';
+  }
+}
+
+async function saveUpdateLogLevel() {
+  var select = document.getElementById('update-log-level');
+  var concurrency = document.getElementById('update-concurrency');
+  var button = document.getElementById('btn-save-log-level');
+  var message = document.getElementById('update-log-level-message');
+  if (!select || !concurrency || !button) return;
+  button.disabled = true;
+  message.textContent = 'Сохраняем…';
+  try {
+    var response = await fetch(location.origin + '/admin/api/settings/logging', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        level: select.value,
+        concurrency: Number(concurrency.value),
+        smart: {
+          latestIntervalHours: Number(document.getElementById('smart-latest-hours').value),
+          recentIntervalDays: Number(document.getElementById('smart-recent-days').value),
+          archiveIntervalDays: Number(document.getElementById('smart-archive-days').value),
+          recentReleaseAgeDays: Number(document.getElementById('smart-recent-age-days').value),
+          retryBaseMinutes: Number(document.getElementById('smart-retry-minutes').value),
+          archivePageLimit: Number(document.getElementById('smart-archive-limit').value),
+          metadataCacheDays: Number(document.getElementById('smart-metadata-cache-days').value),
+        },
+      }),
+    });
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    message.innerHTML = '<span style="color:var(--green)">✓ Настройки сохранены. Они будут применены к следующей задаче обновления.</span>';
+  } catch (error) {
+    message.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  } finally {
+    button.disabled = false;
+  }
+}
 
 function logLine(el, ts, text) {
   const div = document.createElement('div');
@@ -497,15 +2397,31 @@ function logLine(el, ts, text) {
   el.appendChild(div);
 }
 
-function setImportRunning(running, source) {
-  const btnLst = document.getElementById('btn-import-lst');
-  const btnRel = document.getElementById('btn-import-rel');
+function setUpdateRunning(running) {
+  UPDATE_UI_RUNNING = running;
+  const btnUpdate = document.getElementById('btn-update');
+  const btnUpdateLst = document.getElementById('btn-update-lst');
+  const btnArchiveBackfill = document.getElementById('btn-archive-backfill');
+  const btnUpdateTarget = document.getElementById('btn-update-target');
+  const btnUpdateForce = document.getElementById('btn-update-force');
+  const targetProject = document.getElementById('update-target-project');
+  const targetAccount = document.getElementById('update-target-account');
   const btnCancel = document.getElementById('btn-cancel');
   const progressWrap = document.getElementById('progress-wrap');
-  btnLst.disabled = running;
-  btnRel.disabled = running;
+  const state = document.getElementById('update-state');
+  btnUpdate.disabled = running;
+  if (btnUpdateLst) btnUpdateLst.disabled = running;
+  if (btnArchiveBackfill) btnArchiveBackfill.disabled = running || DASH_RESOURCE_BACKLOG === 0;
+  if (btnUpdateTarget) btnUpdateTarget.disabled = running;
+  if (btnUpdateForce) btnUpdateForce.disabled = running;
+  if (targetProject) targetProject.disabled = running;
+  if (targetAccount) targetAccount.disabled = running;
+  document.querySelectorAll('#update-target-selected button').forEach(function(button) { button.disabled = running; });
+  document.querySelectorAll('[data-catalog-refresh]').forEach(function(button) { button.disabled = running; });
+  if (running) hideUpdateTargetResults();
   btnCancel.style.display = running ? '' : 'none';
-  progressWrap.style.display = (running && source === 'releases') ? '' : 'none';
+  progressWrap.style.display = running ? '' : 'none';
+  state.textContent = running ? 'Обновление выполняется — страницу можно закрыть' : '';
 }
 
 function updateProgress(current, total) {
@@ -516,45 +2432,150 @@ function updateProgress(current, total) {
   document.getElementById('progress-bar').style.width = pct + '%';
 }
 
-async function triggerImport(source) {
+async function triggerUpdate() {
+  return startUpdate({});
+}
+
+async function triggerLstUpdate() {
+  return startUpdate({ mode: 'lst' });
+}
+
+async function triggerArchiveUpdate() {
+  if (DASH_RESOURCE_BACKLOG <= 0) return;
+  if (!confirm(
+    'Запустить обработку страниц, для которых ещё не загружены ссылки?\n\n' +
+    'Сейчас ожидают: ' + DASH_RESOURCE_BACKLOG.toLocaleString('ru') + '. ' +
+    'За один запуск будет обработана ограниченная пачка из настроек.'
+  )) return;
+  await startUpdate({ mode: 'archive' });
+  if (currentPage === 'dash') await loadDash();
+}
+
+async function triggerTargetUpdate(forceAllResources) {
+  var projectIds = selectedTargetProjectIds();
+  var accountSelect = document.getElementById('update-target-account');
+  var accountId = accountSelect && accountSelect.value ? Number(accountSelect.value) : null;
+  forceAllResources = forceAllResources === true;
+  var msg = document.getElementById('target-update-msg');
+  if (!projectIds.length && !forceAllResources) {
+    msg.innerHTML = '<span style="color:var(--red)">Добавьте хотя бы одну конфигурацию.</span>';
+    return;
+  }
+  if (forceAllResources) {
+    var scopeText = projectIds.length
+      ? 'выбранных конфигураций: ' + projectIds.length
+      : 'ВСЕХ доступных конфигураций';
+    if (!confirm(
+      'Повторно загрузить страницы всех релизов для ' + scopeText + '?\n\n' +
+      'Операция игнорирует интервалы умного обновления и лимит архивной пачки, поэтому может выполняться очень долго.'
+    )) return;
+  }
+  msg.textContent = 'Выбрано конфигураций: ' + projectIds.length + '. ' + (accountId
+    ? 'Для всех будет использован выбранный ИТС-аккаунт.'
+    : 'Для каждой сервер выберет первый аккаунт с доступом.');
+  if (!projectIds.length) {
+    msg.textContent = 'Запускается принудительная проверка всего каталога всеми включёнными ИТС-аккаунтами.';
+    return startUpdate({ forceAllResources: true });
+  }
+  return startUpdate({
+    projectIds: projectIds,
+    accountId: accountId,
+    forceAllResources: forceAllResources,
+  });
+}
+
+async function setSelectedUpdatePriority(priority) {
+  var projectIds = selectedTargetProjectIds();
+  var msg = document.getElementById('target-update-msg');
+  if (!projectIds.length) {
+    msg.innerHTML = '<span style="color:var(--red)">Добавьте хотя бы одну конфигурацию.</span>';
+    return;
+  }
+  try {
+    var result = await apiJson('/admin/api/update/priorities', 'PUT', {
+      projectIds: projectIds,
+      priority: priority,
+    });
+    updateTargetSelectedProjects.forEach(function(project) {
+      project.update_priority = priority ? 100 : 0;
+    });
+    updateTargetProjects.forEach(function(project) {
+      if (projectIds.includes(Number(project.id))) project.update_priority = priority ? 100 : 0;
+    });
+    renderUpdateTargetSelection();
+    renderUpdateTargetResults();
+    msg.innerHTML = '<span style="color:var(--green)">✓ Обновлено конфигураций: ' + (result.updated || 0) +
+      '. ' + (priority ? 'Они будут обрабатываться раньше остальных.' : 'Обычный порядок восстановлен.') + '</span>';
+  } catch(error) {
+    msg.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  }
+}
+
+async function startUpdate(payload) {
   const logEl = document.getElementById('import-log');
   const summary = document.getElementById('import-summary');
 
   logEl.innerHTML = '';
   summary.innerHTML = '';
-  importLogOffset = 0;
-  importActiveSource = source;
-  setImportRunning(true, source);
+  updateLogOffset = 0;
+  updateJobId = null;
+  updateWasTargeted = Array.isArray(payload && payload.projectIds) && payload.projectIds.length > 0;
+  document.getElementById('update-details').open = true;
+  setUpdateRunning(true);
 
   try {
-    const r = await fetch(location.origin + '/admin/api/import/' + source,
-      { method: 'POST', credentials: 'include' });
+    const r = await fetch(location.origin + '/admin/api/update',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
     const data = await r.json();
 
     if (r.status === 409) {
-      logLine(logEl, now(), '⚠ Импорт уже выполняется — переключаемся на мониторинг...');
+      updateWasTargeted = false;
+      updateJobId = data.jobId || null;
+      logLine(logEl, now(), 'Обновление уже выполняется — подключаемся к журналу.');
     } else if (!r.ok) {
       logLine(logEl, now(), '✗ Ошибка: ' + (data.error || r.status));
-      setImportRunning(false, source);
+      if (updateWasTargeted) {
+        var failedTargetMessage = document.getElementById('target-update-msg');
+        if (failedTargetMessage) failedTargetMessage.innerHTML = '<span style="color:var(--red)">✗ ' +
+          escapeHtml(data.error || String(r.status)) + '</span>';
+      }
+      updateWasTargeted = false;
+      setUpdateRunning(false);
       return;
+    } else {
+      updateJobId = data.jobId;
+      if (updateWasTargeted) {
+        var targetMessage = document.getElementById('target-update-msg');
+        if (targetMessage) targetMessage.innerHTML = '<span style="color:var(--blue)">Задача #' + Number(updateJobId) +
+          ' поставлена в очередь worker.</span> <button class="btn btn-ghost" style="padding:3px 8px" onclick="document.getElementById(\'catalog-update-card\').scrollIntoView({behavior:\'smooth\',block:\'start\'})">Открыть ход выполнения</button>';
+      }
     }
-    // success: server logs will appear via polling — no client-side "accepted" line
-
-    // Start polling live log
-    if (importPolling) clearInterval(importPolling);
-    importPolling = setInterval(() => pollImportLog(source), 1500);
+    if (updatePolling) clearInterval(updatePolling);
+    updatePolling = setInterval(pollUpdate, 1500);
+    await pollUpdate();
 
   } catch(e) {
     logLine(logEl, now(), '✗ Сетевая ошибка: ' + e.message);
-    setImportRunning(false, source);
+    if (updateWasTargeted) {
+      var networkTargetMessage = document.getElementById('target-update-msg');
+      if (networkTargetMessage) networkTargetMessage.innerHTML = '<span style="color:var(--red)">✗ ' +
+        escapeHtml(e.message) + '</span>';
+    }
+    updateWasTargeted = false;
+    setUpdateRunning(false);
   }
 }
 
-async function pollImportLog(source) {
+async function pollUpdate() {
   try {
-    const data = await apiFetch(
-      '/admin/api/import/log?source=' + source + '&offset=' + importLogOffset
-    );
+    const data = await apiFetch('/admin/api/update/status?offset=' + updateLogOffset +
+      (updateJobId ? '&jobId=' + encodeURIComponent(updateJobId) : ''));
+    if (data.jobId) updateJobId = data.jobId;
     const logEl = document.getElementById('import-log');
     const wasAtBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
 
@@ -563,34 +2584,48 @@ async function pollImportLog(source) {
     for (var li = 0; li < lines.length; li++) {
       logLine(logEl, lines[li].ts, lines[li].text);
     }
-    importLogOffset = data.total;
+    updateLogOffset = data.total;
 
     // Update progress bar
-    if (data.progress && data.progress.total > 0) {
-      updateProgress(data.progress.current, data.progress.total);
+    if (data.progress) {
+      var pagePhase = Number(data.progress.pagesTotal || 0) > 0 && Number(data.progress.pagesCurrent || 0) < Number(data.progress.pagesTotal || 0);
+      var liveCurrent = pagePhase ? Number(data.progress.pagesCurrent || 0) : Number(data.progress.current || 0);
+      var liveTotal = pagePhase ? Number(data.progress.pagesTotal || 0) : Number(data.progress.total || 0);
+      if (liveTotal > 0) updateProgress(liveCurrent, liveTotal);
+    }
+    if (data.running && data.progress) {
+      var state = document.getElementById('update-state');
+      if (state) state.textContent = data.progress.status === 'queued'
+        ? 'Задача ожидает запуска worker. Страницу можно закрыть.'
+        : 'Обновление выполняется — осталось ' + fmtEta(data.progress.estimatedFinishAt) +
+          (data.progress.queuePending ? ' · в очереди ' + Number(data.progress.queuePending).toLocaleString('ru') : '') +
+          '. Страницу можно закрыть.';
     }
 
     if (wasAtBottom) logEl.scrollTop = logEl.scrollHeight;
 
-    // Import finished
     if (!data.running) {
-      clearInterval(importPolling);
-      importPolling = null;
-      setImportRunning(false, source);
+      if (updatePolling) clearInterval(updatePolling);
+      updatePolling = null;
+      setUpdateRunning(false);
       var progTotal = (data.progress && data.progress.total) ? data.progress.total : 0;
       updateProgress(progTotal, progTotal);
 
-      // Show summary from import_runs
-      try {
-        var st = await apiFetch('/admin/api/import/status');
-        var run = st.lastRun;
-        if (run) {
-          document.getElementById('import-summary').innerHTML =
-            badge(run.status) + ' &nbsp; Завершено за ' + fmtDur(run.startedAt, run.finishedAt) +
-            (run.edgesUpserted ? ' &nbsp;·&nbsp; добавлено: ' + run.edgesUpserted.toLocaleString('ru') : '') +
-            (run.edgesUnchanged ? ' &nbsp;·&nbsp; без изменений: ' + run.edgesUnchanged.toLocaleString('ru') : '');
-        }
-      } catch(ignored) { /* summary is optional */ }
+      var completedJob = null;
+      if (updateJobId) try {
+        var jobData = await apiFetch('/admin/api/jobs/' + updateJobId);
+        var job = jobData.job;
+        completedJob = job;
+        document.getElementById('import-summary').innerHTML = badge(job.status) + ' &nbsp;' + escapeHtml(job.message || '') + ' · ' + fmtDur(job.startedAt, job.finishedAt);
+      } catch(ignored) { void ignored; }
+      if (completedJob && CATALOG_UPDATE_CONTEXT) await finishCatalogSiteUpdate(completedJob);
+      if (completedJob && updateWasTargeted) {
+        var targetMessage = document.getElementById('target-update-msg');
+        if (targetMessage) targetMessage.innerHTML = badge(completedJob.status) + ' &nbsp;' + escapeHtml(completedJob.message || 'Выборочное обновление завершено');
+        updateWasTargeted = false;
+      }
+      if (completedJob && currentPage === 'catalog') await loadCatalogAdmin();
+      if (currentPage === 'dash') loadDash();
     }
   } catch(pollErr) {
     // network blip — keep polling
@@ -598,40 +2633,149 @@ async function pollImportLog(source) {
   }
 }
 
-async function cancelImport() {
-  const source = importActiveSource || 'releases';
+async function cancelUpdate() {
   try {
-    await fetch(location.origin + '/admin/api/import/cancel?source=' + source,
+    await fetch(location.origin + '/admin/api/update/cancel',
       { method: 'POST', credentials: 'include' });
   } catch(_) {}
+}
+
+function formatDatabaseSize(bytes) {
+  var value = Number(bytes || 0);
+  if (!value) return '0 Б';
+  var units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  var unit = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  var size = value / Math.pow(1024, unit);
+  return size.toLocaleString('ru-RU', { maximumFractionDigits: unit < 2 ? 0 : 1 }) + ' ' + units[unit];
+}
+
+async function loadDatabaseBackupStatus() {
+  var size = document.getElementById('database-backup-size');
+  if (!size) return;
+  try {
+    var data = await apiFetch('/admin/api/database/status');
+    size.textContent = 'База: ' + formatDatabaseSize(data.databaseBytes) +
+      ' · конфигураций: ' + Number(data.configurations || 0).toLocaleString('ru') +
+      ' · релизов: ' + Number(data.releases || 0).toLocaleString('ru');
+  } catch(error) {
+    size.textContent = 'Не удалось получить размер базы';
+  }
+}
+
+async function downloadDatabaseBackup() {
+  var button = document.getElementById('btn-database-backup');
+  var message = document.getElementById('database-backup-message');
+  var frame = document.getElementById('database-backup-frame');
+  button.disabled = true;
+  message.innerHTML = '<span class="spinner"></span> Проверяем состояние базы…';
+  try {
+    var status = await apiFetch('/admin/api/database/status');
+    if (status.restoreRunning) throw new Error('Сейчас выполняется восстановление базы данных.');
+    if (status.activeJobId) throw new Error('Сначала дождитесь завершения задачи обновления #' + status.activeJobId + '.');
+    message.innerHTML = '<span class="spinner"></span> Сервер создаёт копию. Скачивание начнётся автоматически.';
+    frame.src = '/admin/api/database/backup?t=' + Date.now();
+  } catch(error) {
+    message.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  } finally {
+    setTimeout(function() { button.disabled = false; loadDatabaseBackupStatus(); }, 3000);
+  }
+}
+
+async function restoreDatabaseBackup() {
+  var fileInput = document.getElementById('database-restore-file');
+  var confirmationInput = document.getElementById('database-restore-confirmation');
+  var button = document.getElementById('btn-database-restore');
+  var backupButton = document.getElementById('btn-database-backup');
+  var message = document.getElementById('database-backup-message');
+  var file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    message.innerHTML = '<span style="color:var(--red)">Выберите файл резервной копии.</span>';
+    return;
+  }
+  if (confirmationInput.value.trim() !== 'ВОССТАНОВИТЬ') {
+    message.innerHTML = '<span style="color:var(--red)">Для подтверждения введите ВОССТАНОВИТЬ.</span>';
+    return;
+  }
+  var form = new FormData();
+  form.append('backup', file, file.name);
+  form.append('confirmation', confirmationInput.value.trim());
+  button.disabled = true;
+  backupButton.disabled = true;
+  message.innerHTML = '<span class="spinner"></span> Загружаем копию и восстанавливаем каталог. Не закрывайте страницу…';
+  try {
+    var response = await fetch(location.origin + '/admin/api/database/restore', {
+      method: 'POST', credentials: 'include', body: form,
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    fileInput.value = '';
+    confirmationInput.value = '';
+    message.innerHTML = '<span style="color:var(--green)">✓ Каталог и граф восстановлены. ИТС-аккаунты и пароли не изменены.</span>';
+    await Promise.all([loadDatabaseBackupStatus(), loadDash(), loadCatalogAdmin()]);
+  } catch(error) {
+    message.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  } finally {
+    button.disabled = false;
+    backupButton.disabled = false;
+  }
+}
+
+async function clearReleasesData() {
+  var confirmation = prompt(
+    'Будут удалены только данные releases.1c.ru. LST-граф и ИТС-аккаунты сохранятся.\n\nВведите ОЧИСТИТЬ для подтверждения:'
+  );
+  if (confirmation === null) return;
+  confirmation = confirmation.trim();
+  if (confirmation !== 'ОЧИСТИТЬ') {
+    alert('Очистка отменена: подтверждение не совпало.');
+    return;
+  }
+
+  var btn = document.getElementById('btn-clear-releases');
+  var msg = document.getElementById('clear-releases-msg');
+  btn.disabled = true;
+  btn.textContent = 'Удаляем…';
+  msg.innerHTML = '';
+  try {
+    var response = await fetch(location.origin + '/admin/api/data/releases/clear', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmation: confirmation }),
+    });
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    var counts = data.counts || {};
+    msg.innerHTML = '<span style="color:var(--green)">✓ Удалено: проектов ' +
+      (counts.projects || 0) + ', версий ' + (counts.versions || 0) +
+      ', переходов ' + (counts.transitions || 0) + ', ссылок ' +
+      (counts.resources || 0) + ', патчей ' + (counts.patches || 0) + '.</span>';
+    await loadDash();
+  } catch (error) {
+    msg.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(error.message) + '</span>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Удалить данные releases.1c.ru';
+  }
 }
 
 function now() {
   return new Date().toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
 
-// Resume monitoring if import is already running when page is opened
-async function checkRunningImport() {
-  // Guard: don't start a second poller if one is already running
-  if (importPolling) return;
-  var sources = ['lst', 'releases'];
-  for (var si = 0; si < sources.length; si++) {
-    var src = sources[si];
-    try {
-      var chkData = await apiFetch('/admin/api/import/log?source=' + src + '&offset=0');
-      if (chkData.running) {
-        importActiveSource = src;
-        // Show full history from the beginning
-        importLogOffset = 0;
-        var logEl = document.getElementById('import-log');
-        logEl.innerHTML = '';
-        document.getElementById('import-summary').innerHTML = '';
-        setImportRunning(true, src);
-        importPolling = setInterval(function() { pollImportLog(importActiveSource); }, 1500);
-        break;
-      }
-    } catch(chkErr) { void chkErr; }
-  }
+async function checkRunningUpdate() {
+  if (updatePolling) return;
+  try {
+    var data = await apiFetch('/admin/api/update/status?offset=0');
+    if (!data.running) return;
+    updateJobId = data.jobId;
+    updateLogOffset = 0;
+    document.getElementById('import-log').innerHTML = '';
+    document.getElementById('update-details').open = true;
+    setUpdateRunning(true);
+    updatePolling = setInterval(pollUpdate, 1500);
+    await pollUpdate();
+  } catch(error) { void error; }
 }
 
 // ── SSL / Domain ─────────────────────────────────────────────────────────────
@@ -639,7 +2783,7 @@ async function loadSslStatus() {
   try {
     var data = await apiFetch('/admin/api/ssl');
     var inp = document.getElementById('ssl-domain');
-    if (inp && data.domain) inp.value = data.domain;
+    if (inp) inp.value = data.domain || '';
 
     var caddyEl = document.getElementById('ssl-caddy-status');
     var domainEl = document.getElementById('ssl-active-domain');
@@ -672,16 +2816,16 @@ async function applyDomain() {
     });
     var data = await r.json();
     if (!r.ok) {
-      msg.innerHTML = '<span style="color:var(--red)">✗ ' + (data.error || r.status) + '</span>';
+      msg.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(data.error || r.status) + '</span>';
     } else {
       var label = data.domain
-        ? '✓ Домен <b>' + data.domain + '</b> применён. Caddy получает сертификат — это займёт до 1 минуты.'
+        ? '✓ Домен <b>' + escapeHtml(data.domain) + '</b> применён. Caddy получает сертификат — это займёт до 1 минуты.'
         : '✓ HTTPS отключён, сервер работает по HTTP.';
       msg.innerHTML = '<span style="color:var(--green)">' + label + '</span>';
       await loadSslStatus();
     }
   } catch(e) {
-    msg.innerHTML = '<span style="color:var(--red)">✗ Сетевая ошибка: ' + e.message + '</span>';
+    msg.innerHTML = '<span style="color:var(--red)">✗ Сетевая ошибка: ' + escapeHtml(e.message) + '</span>';
   } finally {
     btn.disabled = false;
     btn.textContent = 'Применить';
@@ -689,8 +2833,24 @@ async function applyDomain() {
 }
 
 // Init
+document.addEventListener('click', function(event) {
+  var picker = document.getElementById('update-target-picker');
+  if (picker && !picker.contains(event.target)) hideUpdateTargetResults();
+});
+window.addEventListener('resize', positionUpdateTargetResults);
+window.addEventListener('scroll', positionUpdateTargetResults, { passive: true });
 loadDash();
-checkRunningImport();
+checkRunningUpdate();
+var dashboardMetricRefreshTick = 0;
+setInterval(function() {
+  if (currentPage === 'dash') {
+    loadActiveJobs();
+    dashboardMetricRefreshTick++;
+    // Refresh backlog and the other aggregate metrics every ~10 seconds,
+    // including when an archive task was started by the background worker.
+    if (dashboardMetricRefreshTick % 7 === 0) loadDash();
+  }
+}, 1500);
 
 // Show build version in header
 (async function() {

@@ -14,26 +14,36 @@
 const CADDY_API = process.env.CADDY_API ?? "http://caddy:2019";
 const CADDY_TIMEOUT_MS = 5000;
 
-function buildCaddyfile(domain: string | null | undefined): string {
+interface CaddyConfig {
+  apps?: {
+    http?: {
+      servers?: Record<string, {
+        routes?: Array<{ match?: Array<{ host?: string[] }> }>;
+      }>;
+    };
+  };
+}
+
+export function buildCaddyfile(domain: string | null | undefined): string {
   // origins must be explicit: when admin listens on 0.0.0.0, Caddy does NOT
   // automatically whitelist localhost. We always include it so that subsequent
   // /load calls (after the first domain change) still work.
   const header = `{
-  admin 0.0.0.0:2019 {
-    origins localhost:2019
-  }
+	admin 0.0.0.0:2019 {
+		origins localhost:2019
+	}
 }
 
 `;
   if (!domain || !domain.trim()) {
-    return header + `:80 {\n  reverse_proxy web:3000\n}\n`;
+    return header + `:80 {\n\tencode zstd gzip\n\treverse_proxy web:3000\n}\n`;
   }
   const d = domain.trim().toLowerCase();
   return (
     header +
     `# Redirect HTTP → HTTPS\n` +
-    `http://${d} {\n  redir https://{host}{uri} permanent\n}\n\n` +
-    `${d} {\n  reverse_proxy web:3000\n\n  # Security headers\n  header {\n    Strict-Transport-Security "max-age=31536000; includeSubDomains"\n    X-Content-Type-Options nosniff\n    X-Frame-Options SAMEORIGIN\n  }\n}\n`
+    `http://${d} {\n\tredir https://{host}{uri} permanent\n}\n\n` +
+    `${d} {\n\tencode zstd gzip\n\treverse_proxy web:3000\n\n\t# Security headers\n\theader {\n\t\tStrict-Transport-Security "max-age=31536000; includeSubDomains"\n\t\tX-Content-Type-Options nosniff\n\t\tX-Frame-Options DENY\n\t\tReferrer-Policy "strict-origin-when-cross-origin"\n\t}\n}\n`
   );
 }
 
@@ -91,13 +101,13 @@ export async function getCaddyStatus(): Promise<CaddyStatus> {
       signal: ctrl.signal,
     });
     if (!res.ok) return { reachable: false, domain: null };
-    const cfg = await res.json() as Record<string, unknown>;
+    const cfg = await res.json() as CaddyConfig;
     // Extract domain from the first HTTPS server host matcher
     let domain: string | null = null;
     try {
-      const apps = (cfg as any)?.apps?.http?.servers ?? {};
-      for (const srv of Object.values(apps)) {
-        for (const route of (srv as any)?.routes ?? []) {
+      const servers = cfg.apps?.http?.servers ?? {};
+      for (const server of Object.values(servers)) {
+        for (const route of server.routes ?? []) {
           for (const match of route?.match ?? []) {
             const hosts: string[] = match?.host ?? [];
             const found = hosts.find((h: string) => !h.startsWith(":"));

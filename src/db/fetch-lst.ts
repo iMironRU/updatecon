@@ -6,30 +6,21 @@
  *   path : /tmplts/v8cscdsc.lst
  *   auth : HTTP Basic (ITS login / password)
  *
- * Two modes:
- *   - getLstFromIts()  : fetch over HTTPS with Basic auth.
- *   - getLstFromFile() : read a local copy (dev / offline / replay).
+ * The source is always the current online file over HTTPS with Basic auth.
  *
- * The importer only needs the resulting string, so swapping the source does
- * not touch the verified parser or the import orchestration.
- *
- * Credentials come from env (never hard-coded, never logged):
- *   ITS_LOGIN, ITS_PASSWORD
- *   ITS_HOST   (default downloads.v8.1c.ru)
- *   ITS_PATH   (default /tmplts/v8cscdsc.lst)
+ * Credentials come from ITS_LOGIN / ITS_PASSWORD (never logged). The host and
+ * path are fixed in production; function parameters remain injectable for tests.
  */
 
-import { readFile } from "node:fs/promises";
 import { request } from "node:https";
 
 export interface FetchResult {
   text: string;
   bytes: number;
-  source: string; // "its:<host><path>" or "file:<path>"
+  source: string;
 }
-
-const DEFAULT_HOST = process.env.ITS_HOST ?? "downloads.v8.1c.ru";
-const DEFAULT_PATH = process.env.ITS_PATH ?? "/tmplts/v8cscdsc.lst";
+const DEFAULT_HOST = "downloads.v8.1c.ru";
+const DEFAULT_PATH = "/tmplts/v8cscdsc.lst";
 
 function stripBom(s: string): string {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
@@ -107,21 +98,4 @@ export function getLstFromIts(
     req.on("error", reject);
     req.end();
   });
-}
-
-export async function getLstFromFile(path: string): Promise<FetchResult> {
-  const buf = await readFile(path);
-  const text = stripBom(buf.toString("utf-8"));
-  return { text, bytes: buf.length, source: `file:${path}` };
-}
-
-/**
- * Resolve the source automatically:
- *   - argv path or LST_FILE env  -> file mode (dev/replay)
- *   - otherwise                  -> ITS mode (production)
- */
-export async function resolveLst(argPath?: string): Promise<FetchResult> {
-  const filePath = argPath ?? process.env.LST_FILE;
-  if (filePath) return getLstFromFile(filePath);
-  return getLstFromIts();
 }

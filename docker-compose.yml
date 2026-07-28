@@ -1,10 +1,12 @@
+name: release1c
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-upd}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-upd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-upd}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -18,11 +20,12 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${WEB_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -30,49 +33,72 @@ services:
     # Admin API on :2019 is intentionally NOT exposed to the host —
     # only the web container calls it over the internal Docker network.
 
-  web:
-    image: ghcr.io/imironru/updatecon:latest
-    build: .
-    restart: unless-stopped
+  migrate:
+    image: ${APP_IMAGE:-release1c:latest}
+    pull_policy: ${APP_PULL_POLICY:-never}
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:-upd}@db:5432/${POSTGRES_DB:-upd}
+      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-upd}
+    command: ["node", "dist/db/migrate.js"]
+
+  web:
+    image: ${APP_IMAGE:-release1c:latest}
+    build: .
+    pull_policy: ${APP_PULL_POLICY:-never}
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-upd}
       PORT: 3000
+      TRUST_PROXY: "1"
       ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       ITS_LOGIN: ${ITS_LOGIN:-}
       ITS_PASSWORD: ${ITS_PASSWORD:-}
+      ITS_CREDENTIALS_KEY: ${ITS_CREDENTIALS_KEY:?Set ITS_CREDENTIALS_KEY in .env}
+      DATABASE_BACKUP_MAX_BYTES: ${DATABASE_BACKUP_MAX_BYTES:-21474836480}
       # Internal Caddy Admin API (resolved over Docker compose network)
       CADDY_API: ${CADDY_API:-http://caddy:2019}
     # No host port exposed — all traffic goes through Caddy on :80/:443.
     # For direct access without Caddy (dev/debug), add to docker-compose.override.yml:
     #   ports: ["3000:3000"]
     command: ["node", "dist/db/server.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   worker:
-    image: ghcr.io/imironru/updatecon:latest
-    build: .
+    image: ${APP_IMAGE:-release1c:latest}
+    pull_policy: ${APP_PULL_POLICY:-never}
     restart: unless-stopped
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:-upd}@db:5432/${POSTGRES_DB:-upd}
+      DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-upd}
       ITS_LOGIN: ${ITS_LOGIN:-}
       ITS_PASSWORD: ${ITS_PASSWORD:-}
-      # Optional dev replay instead of ITS:
-      LST_FILE: ${LST_FILE:-}
+      ITS_CREDENTIALS_KEY: ${ITS_CREDENTIALS_KEY:?Set ITS_CREDENTIALS_KEY in .env}
       # Import schedule (cron). Default: every day at 04:00.
       IMPORT_CRON: ${IMPORT_CRON:-0 4 * * *}
       # Run one import immediately on container start (1 = yes).
-      IMPORT_ON_START: ${IMPORT_ON_START:-1}
-    volumes:
-      - ${LST_HOST_DIR:-./data}:/data:ro
+      IMPORT_ON_START: ${IMPORT_ON_START:-0}
+      # Poll persisted failed release pages without running a full import.
+      RETRY_QUEUE_POLL_MINUTES: ${RETRY_QUEUE_POLL_MINUTES:-5}
+      ARCHIVE_BACKFILL_POLL_MINUTES: ${ARCHIVE_BACKFILL_POLL_MINUTES:-60}
     command: ["node", "dist/db/worker.js"]
 
 volumes:
   pgdata:
+    # Keep the database volume stable even if the project directory is renamed.
+    name: ${POSTGRES_VOLUME_NAME:-release1c_pgdata}
   caddy_data:
   caddy_config:
