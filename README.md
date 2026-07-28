@@ -7,6 +7,18 @@
 онлайн-LST и `releases.1c.ru`, а управлять импортом и каталогом можно через
 встроенную административную панель.
 
+## Интерфейс
+
+| Каталог и навигатор обновлений | Карточка конфигурации |
+|---|---|
+| [![Главная страница каталога релизов 1С](docs/images/home.png)](docs/images/home.png) | [![Карточка конфигурации «Управление торговлей»](docs/images/project-trade110.png)](docs/images/project-trade110.png) |
+| **Лента изменений** | **Административная панель** |
+| [![Лента новых версий, файлов и исправлений](docs/images/change-feed.png)](docs/images/change-feed.png) | [![Дашборд административной панели](docs/images/admin-dashboard.png)](docs/images/admin-dashboard.png) |
+
+**Расчёт цепочки обновления `11.5.27.45` → `11.5.27.68`**
+
+[![Расчёт цепочки обновления конфигурации «Управление торговлей»](docs/images/update-path.png)](docs/images/update-path.png)
+
 ## Быстрый старт
 
 Требуются Docker Engine, Docker Compose v2 и учётная запись ИТС с доступом к
