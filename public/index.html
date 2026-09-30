@@ -431,7 +431,7 @@ input, select, textarea { font-family: inherit; }
    API + DATA LAYER
    ================================================================ */
 let CONFIGS = [];
-let DB_META = { last_updated: null, total_configs: 0, total_versions: 0 };
+let DB_META = { last_updated: null, total_configs: 0, total_editions: 0, total_versions: 0 };
 let CONFIGS_LOADED = false;
 const CHAIN_CACHE = {};        // `${cfgId}:${fromV}:${toV}` -> steps[]
 const CHAIN_RENDER_STATE = {}; // blockId -> { steps, fromV, cfg, reversed }
@@ -523,7 +523,9 @@ async function initData() {
     CONFIGS_LOADED = true;
     DB_META = {
       last_updated: stats.last_updated || null,
-      total_configs: stats.configurations || 0,
+      // Same number as the catalog shows by default: current editions only.
+      total_configs: CONFIGS.filter(c => c.isLatestEdition).length,
+      total_editions: CONFIGS.length,
       total_versions: stats.versions || 0,
     };
     // footer-ver is updated by init_version_badge()
@@ -922,7 +924,7 @@ function render_home() {
     <div class="stats-banner fade-up fade-up-2">
       <div>
         <div class="stats-banner-title">База данных обновлений Апдейкон</div>
-        <div style="font-size:12px;opacity:.7;margin-top:2px">${DB_META.last_updated ? 'Обновлено: ' + fmt_date(DB_META.last_updated) + ' · ' + days_ago(DB_META.last_updated) : 'Загрузка...'}</div>
+        <div style="font-size:12px;opacity:.7;margin-top:2px">${DB_META.last_updated ? 'Обновлено: ' + fmt_date(DB_META.last_updated) + ' · ' + days_ago(DB_META.last_updated) : CONFIGS_LOADED ? 'Дата обновления неизвестна' : 'Загрузка...'}</div>
       </div>
       <div class="stats-banner-grid">
         <div class="stats-banner-item"><div class="val">${DB_META.total_configs}</div><div class="lbl">Конфигураций</div></div>
@@ -1414,6 +1416,7 @@ function render_stats() {
     <div class="page-head"><div class="page-title">Статистика</div></div>
     <div class="stats-grid fade-up">
       <div class="stat-card"><div class="stat-card-val">${DB_META.total_configs}</div><div class="stat-card-lbl">Конфигураций в базе</div></div>
+      <div class="stat-card"><div class="stat-card-val">${DB_META.total_editions}</div><div class="stat-card-lbl">Редакций всего (с предыдущими)</div></div>
       <div class="stat-card"><div class="stat-card-val">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="stat-card-lbl">Версий в базе</div></div>
       <div class="stat-card"><div class="stat-card-val">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : '—'}</div><div class="stat-card-lbl">Последнее обновление базы</div></div>
     </div>

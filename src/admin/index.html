@@ -169,6 +169,7 @@ tr:hover td { background: var(--surface2); }
           <div class="stat">
             <div class="stat-label">Конфигурации</div>
             <div class="stat-value" id="s-configs">—</div>
+            <div class="stat-sub" id="s-editions"></div>
           </div>
           <div class="stat">
             <div class="stat-label">Рёбра обновлений</div>
@@ -474,7 +475,9 @@ async function loadDash() {
       apiFetch('/admin/api/status'),
       apiFetch('/api/stats'),
     ]);
-    document.getElementById('s-configs').textContent = (stats.configurations||0).toLocaleString('ru');
+    document.getElementById('s-configs').textContent = (stats.applications||stats.configurations||0).toLocaleString('ru');
+    document.getElementById('s-editions').textContent = stats.applications
+      ? 'редакций всего: ' + (stats.configurations||0).toLocaleString('ru') : '';
     document.getElementById('s-edges').textContent = (stats.edges||0).toLocaleString('ru');
     document.getElementById('s-versions').textContent = (stats.versions||0).toLocaleString('ru');
     const lr = stats.lastRun;

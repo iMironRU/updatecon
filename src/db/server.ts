@@ -738,8 +738,10 @@ export async function buildServer() {
   });
 
   app.get("/api/stats", async () => {
-    const [cfgCount, edgeCount, verCount, lastRun] = await Promise.all([
+    const [cfgCount, appCount, edgeCount, verCount, lastRun] = await Promise.all([
       db.execute(sql`SELECT count(*)::int c FROM configurations`),
+      // Applications = templates (one current edition each); configurations = all editions.
+      db.execute(sql`SELECT count(DISTINCT coalesce(template_key, id::text))::int c FROM configurations`),
       db.execute(sql`SELECT count(*)::int c FROM update_edges`),
       db.execute(sql`SELECT count(DISTINCT to_version)::int c FROM update_edges`),
       db.select().from(importRuns)
@@ -748,11 +750,13 @@ export async function buildServer() {
         .limit(1),
     ]);
     const cfgC = ((cfgCount as any).rows ?? cfgCount)[0]?.c ?? 0;
+    const appC = ((appCount as any).rows ?? appCount)[0]?.c ?? 0;
     const edgeC = ((edgeCount as any).rows ?? edgeCount)[0]?.c ?? 0;
     const verC = ((verCount as any).rows ?? verCount)[0]?.c ?? 0;
     const run = lastRun[0] ?? null;
     return {
       configurations: cfgC,
+      applications: appC,
       edges: edgeC,
       versions: verC,
       last_updated: run?.finishedAt?.toISOString().slice(0, 10) ?? null,
