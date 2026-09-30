@@ -93,12 +93,6 @@ drizzle/                generated migration SQL (committed)
   catalog's `platform` prefers releases.1c.ru's official minimum for its
   newest version (manifests can lag: Клиент ЭДО 2.10 says 8.3, needs 8.5).
 
-## SQL inside sql`…` templates — escaping gotcha
-
-The drizzle `sql` tag receives *cooked* template strings, so TS escapes are
-applied before Postgres sees the text: `\.` in TS source reaches SQL as a
-bare `.` ("any char" in a regex). In TS source write `\\.` to get `\.` in
-SQL, and `'\\'` to get a single-backslash string `'\'`.
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on
@@ -109,6 +103,13 @@ A parsed record `to <- [from...]` fans out into ONE edge per from-version,
 owned by the application edition of its own package (template of `cfuPath`
 + first segment of `to`). API calls address editions by `config_id`
 (`config=<name>` is still accepted but ambiguous).
+
+## SQL inside sql`…` templates — escaping gotcha
+
+The drizzle `sql` tag receives *cooked* template strings, so TS escapes are
+applied before Postgres sees the text: `\.` in TS source reaches SQL as a
+bare `.` ("any char" in a regex). In TS source write `\\.` to get `\.` in
+SQL, and `'\\'` to get a single-backslash string `'\'`.
 
 ## Hash delta (import-lst.ts) — keep this contract
 
