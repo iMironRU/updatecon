@@ -2,6 +2,7 @@
  * parse-releases.ts — HTML → structured data for releases.1c.ru pages.
  */
 
+
 export interface ReleasesConfig {
   href: string;        // "/project/Accounting30"
   displayName: string; // "Бухгалтерия предприятия, редакция 3.0"
@@ -29,6 +30,17 @@ export interface PatchInfo {
   uuid: string;
   patchDate: string | null;  // ISO "YYYY-MM-DD"
   title?: string;
+}
+
+// Planned versions are 3-segment ("3.0.207"): parser/version.ts only knows
+// 4-segment cores, so compare numerically here.
+function cmpLoose(a: string, b: string): number {
+  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
 }
 
 function stripTags(html: string): string {
@@ -81,18 +93,33 @@ export function parseTotalPage(html: string): ReleasesConfig[] {
     const relDateMatch = row.match(/class="releaseDate[^"]*"[^>]*>\s*([0-9]{1,2}\.[0-9]{2}\.[0-9]{2,4})/);
     const latestDate = relDateMatch?.[1] ?? "";
 
-    // Planned version: second versionColumn cell (first is latest)
-    const versionCells = [...row.matchAll(/class="versionColumn[^"]*"[^>]*>\s*([0-9][0-9.]+)\s*</g)];
-    const nextReleaseVersion = versionCells[1]?.[1];
-
-    // Planned release date
-    const planDateMatch = row.match(/class="planReleaseDate[^"]*"[^>]*>\s*([^<\s][^<]+?)\s*</);
-    const nextReleasePlannedDate = planDateMatch?.[1]?.trim();
-
-    // Plan updated date
-    const planUpdMatch = row.match(/class="updateDate[^"]*"[^>]*>\s*([0-9]{1,2}\.[0-9]{2}\.[0-9]{2,4})/);
-    const nextReleasePlanUpdated = planUpdMatch
-      ? (parseDate(planUpdMatch[1]) ?? undefined)
+    // Planned releases: one row may list several ("3.0.220 — Май 2027",
+    // "3.0.207 — Сентябрь 2026"), each as a plan-release-link anchor, with the
+    // dates and "plan updated" dates as parallel <span> lists in the next two
+    // cells. The next release is the lowest planned version beyond the current
+    // release line ("3.1.38." next to 3.1.38.92 is a long-term-support build
+    // of the same line, "3.1.39" is the next release); else the lowest one.
+    const cellText = (cls: string): string[] => {
+      const cell = row.match(new RegExp(`<td class="${cls}[^"]*"[^>]*>([\\s\\S]*?)</td>`));
+      return cell ? [...cell[1].matchAll(/<span[^>]*>\s*([^<]*?)\s*<\/span>/g)].map((m) => m[1].trim()) : [];
+    };
+    const planVersions = [...row.matchAll(/plan-release-link-([0-9][0-9.]*)/g)].map((m) => m[1].replace(/\.+$/, ""));
+    const planDates = cellText("planReleaseDate");
+    const planUpdated = cellText("updateDate");
+    const currentLine = latestVersion.split(".").slice(0, 3).join(".");
+    const lowest = (pred: (v: string) => boolean) => {
+      let best = -1;
+      planVersions.forEach((v, i) => {
+        if (pred(v) && (best < 0 || cmpLoose(v, planVersions[best]) < 0)) best = i;
+      });
+      return best;
+    };
+    let next = currentLine ? lowest((v) => cmpLoose(v, currentLine) > 0) : -1;
+    if (next < 0) next = lowest(() => true);
+    const nextReleaseVersion = next >= 0 ? planVersions[next] : undefined;
+    const nextReleasePlannedDate = next >= 0 ? planDates[next] || undefined : undefined;
+    const nextReleasePlanUpdated = next >= 0 && planUpdated[next]
+      ? (parseDate(planUpdated[next]) ?? undefined)
       : undefined;
 
     configs.push({
