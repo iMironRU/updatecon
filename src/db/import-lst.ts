@@ -25,6 +25,7 @@ import { configurations, updateEdges, importRuns } from "./schema.js";
 import { parseLstStream, type UpdateRecord } from "../parser/lst-parser-stream.js";
 import { parseVersion, compareVersions } from "../parser/version.js";
 import { templateCodeFor } from "./template.js";
+import { refreshTags } from "./tags.js";
 import { resolveLst } from "./fetch-lst.js";
 
 function sha256(s: string): string {
@@ -271,6 +272,10 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
     startedAt,
     finishedAt: new Date(),
   });
+
+  // New templates / renames may change product-line tags.
+  const tagStats = await refreshTags();
+  log(`Теги линеек: своих=${tagStats.own}, «на базе»=${tagStats.based} (по версиям ${tagStats.byVersions})`);
 
   const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
   log(

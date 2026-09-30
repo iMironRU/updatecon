@@ -61,6 +61,8 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align:
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface2); }
 .mono { font-family: var(--mono); font-size: 12px; }
+/* LST names have no spaces ("БухгалтерияСтроительнойОрганизацииДляКазахстана") — let them wrap */
+#page-tags td, #page-match td { overflow-wrap: anywhere; }
 
 /* Badges */
 .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
@@ -142,6 +144,7 @@ tr:hover td { background: var(--surface2); }
     <button class="nav-btn" onclick="show('logs')">Логи</button>
     <button class="nav-btn" onclick="show('import')">Импорт</button>
     <button class="nav-btn" onclick="show('match')">Сопоставление</button>
+    <button class="nav-btn" onclick="show('tags')">Теги</button>
     <button class="nav-btn" onclick="show('settings')">Настройки</button>
   </nav>
   <div class="header-user">
@@ -321,6 +324,43 @@ tr:hover td { background: var(--surface2); }
     </div>
   </div>
 
+  <!-- TAGS -->
+  <div id="page-tags" class="page">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Теги линеек (БУХ, ЗУП, УТ, УНФ…)</span>
+        <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="refreshTagsNow()">↻ Пересчитать</button>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:14px">
+          <div>
+            Теги ставятся на шаблон (все его редакции). Типовые 1С получают тег по имени шаблона,
+            отраслевые и партнёрские решения — «на базе …» по имени или по общим номерам версий с типовой (≥40 версий, ≥50%).
+            Ручные теги имеют приоритет и пересчётом не перезаписываются. Автопересчёт — после каждого импорта LST.
+          </div>
+        </div>
+        <div id="tags-stats" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
+        <div style="display:flex;gap:10px">
+          <select id="tags-filter" onchange="renderTags()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-family:inherit">
+            <option value="all">Все шаблоны</option>
+            <option value="versions">По версиям (проверить)</option>
+            <option value="manual">Вручную</option>
+            <option value="none">Без тегов</option>
+          </select>
+          <div class="field" style="flex:1;margin:0">
+            <input id="tags-search" placeholder="Поиск: шаблон, название или тег (бух, зуп…)" oninput="renderTags()" style="font-family:inherit">
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Шаблон</th><th>Теги</th><th></th></tr></thead>
+          <tbody id="tags-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- SETTINGS -->
   <div id="page-settings" class="page">
 
@@ -405,11 +445,12 @@ function show(page) {
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
-  document.querySelectorAll('.nav-btn')[['dash','logs','import','match','settings'].indexOf(page)].classList.add('active');
+  document.querySelectorAll('.nav-btn')[['dash','logs','import','match','tags','settings'].indexOf(page)].classList.add('active');
   currentPage = page;
   if (page === 'dash') loadDash();
   if (page === 'logs') loadLogs();
   if (page === 'match') loadMatch();
+  if (page === 'tags') loadTags();
   if (page === 'settings') { loadSettings(); loadSslStatus(); }
 }
 
@@ -798,6 +839,124 @@ async function linkProject(nick, body) {
     if (!r.ok) { alert(d.error || ('HTTP ' + r.status)); return; }
     matchPickerNick = null;
     await loadMatch();
+  } catch (e) {
+    alert('Сетевая ошибка: ' + e.message);
+  }
+}
+
+// ── Product-line tags ───────────────────────────────────────────────────────
+var tagsData = { dictionary: [], templates: [] };
+var tagsEditKey = null;
+
+async function loadTags() {
+  try {
+    tagsData = await apiFetch('/admin/api/tags');
+    renderTags();
+  } catch (e) {
+    document.getElementById('tags-tbody').innerHTML =
+      '<tr><td colspan="3" style="color:var(--red)">Ошибка загрузки: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+function tagChip(t) {
+  var src = { rule: 'по имени', versions: 'по версиям', manual: 'вручную' }[t.source] || t.source;
+  var cls = t.source === 'manual' ? 'badge-running' : t.source === 'versions' ? 'badge-skipped' : 'badge-ok';
+  return '<span class="badge ' + cls + '" title="' + esc(src) + '">' + (t.kind === 'based' ? 'на базе ' : '') + esc(t.tag) + '</span>';
+}
+
+function renderTags() {
+  var all = tagsData.templates || [];
+  var f = document.getElementById('tags-filter').value;
+  var q = document.getElementById('tags-search').value.trim().toLowerCase();
+  var real = function(t) { return (t.tags || []).filter(function(x) { return x.tag; }); };
+  var cnt = { tagged: 0, versions: 0, manual: 0, none: 0 };
+  all.forEach(function(t) {
+    var r = real(t);
+    if (r.length) cnt.tagged++; else cnt.none++;
+    if ((t.tags || []).some(function(x) { return x.source === 'manual'; })) cnt.manual++;
+    if (r.some(function(x) { return x.source === 'versions'; })) cnt.versions++;
+  });
+  document.getElementById('tags-stats').innerHTML =
+    'Шаблонов: <b>' + all.length + '</b> · с тегами: ' + cnt.tagged + ' · по версиям: ' + cnt.versions +
+    ' · вручную: ' + cnt.manual + ' · без тегов: ' + cnt.none;
+
+  var list = all.filter(function(t) {
+    var r = real(t);
+    if (f === 'versions' && !r.some(function(x) { return x.source === 'versions'; })) return false;
+    if (f === 'manual' && !(t.tags || []).some(function(x) { return x.source === 'manual'; })) return false;
+    if (f === 'none' && r.length) return false;
+    if (q) {
+      var hay = (t.template_key + ' ' + t.name + ' ' + (t.display_name || '')).toLowerCase();
+      var tagHit = r.some(function(x) { return x.tag.toLowerCase() === q; });
+      if (hay.indexOf(q) < 0 && !tagHit) return false;
+    }
+    return true;
+  }).slice(0, 300);
+
+  document.getElementById('tags-tbody').innerHTML = list.map(function(t) {
+    var r = real(t);
+    var row = '<tr>' +
+      '<td>' + esc(t.display_name || t.name) + '<div class="mono" style="color:var(--muted)">' + esc(t.template_code) +
+        ' · редакций: ' + t.editions + '</div></td>' +
+      '<td>' + (r.length ? r.map(tagChip).join(' ') : '<span style="color:var(--muted)">—</span>') + '</td>' +
+      '<td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:3px 10px;font-size:12px" data-key="' + esc(t.template_key) + '" onclick="openTagEditor(this.dataset.key)">Изменить</button></td>' +
+      '</tr>';
+    if (tagsEditKey === t.template_key) {
+      var cur = {};
+      r.forEach(function(x) { cur[x.tag] = x.kind; });
+      row += '<tr><td colspan="3" style="background:var(--surface2)">' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-bottom:10px">' +
+        tagsData.dictionary.map(function(d) {
+          var v = cur[d.tag] || '';
+          return '<label style="display:flex;align-items:center;gap:6px;font-size:12px" title="' + esc(d.title) + '">' +
+            '<select data-tag="' + esc(d.tag) + '" class="tag-edit-sel" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:3px 6px;font-family:inherit">' +
+            '<option value=""' + (v === '' ? ' selected' : '') + '>—</option>' +
+            '<option value="own"' + (v === 'own' ? ' selected' : '') + '>своя</option>' +
+            '<option value="based"' + (v === 'based' ? ' selected' : '') + '>на базе</option>' +
+            '</select> ' + esc(d.tag) + '</label>';
+        }).join('') +
+        '</div><div style="display:flex;gap:8px">' +
+        '<button class="btn btn-primary" style="font-size:12px" onclick="saveTags(false)">Сохранить вручную</button>' +
+        '<button class="btn btn-ghost" style="font-size:12px" onclick="saveTags(true)">Вернуть автоматические</button>' +
+        '<button class="btn btn-ghost" style="font-size:12px;margin-left:auto" onclick="openTagEditor(null)">Закрыть</button>' +
+        '</div></td></tr>';
+    }
+    return row;
+  }).join('') || '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Ничего не найдено</td></tr>';
+}
+
+function openTagEditor(key) {
+  tagsEditKey = key;
+  renderTags();
+}
+
+async function saveTags(auto) {
+  var body = { template_key: tagsEditKey };
+  if (auto) body.auto = true;
+  else body.tags = Array.from(document.querySelectorAll('.tag-edit-sel'))
+    .filter(function(el) { return el.value; })
+    .map(function(el) { return { tag: el.dataset.tag, kind: el.value }; });
+  try {
+    var r = await fetch(location.origin + '/admin/api/tags', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) { alert(d.error || ('HTTP ' + r.status)); return; }
+    tagsEditKey = null;
+    await loadTags();
+  } catch (e) {
+    alert('Сетевая ошибка: ' + e.message);
+  }
+}
+
+async function refreshTagsNow() {
+  try {
+    var r = await fetch(location.origin + '/admin/api/tags/refresh', { method: 'POST', credentials: 'include' });
+    var d = await r.json();
+    if (!r.ok) { alert(d.error || ('HTTP ' + r.status)); return; }
+    await loadTags();
   } catch (e) {
     alert('Сетевая ошибка: ' + e.message);
   }

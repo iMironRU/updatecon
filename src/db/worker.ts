@@ -18,6 +18,7 @@ import cron from "node-cron";
 import { db } from "./client.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
+import { refreshTags } from "./tags.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +48,15 @@ async function safeImport(reason: string) {
 
 async function main() {
   await migrate();
+
+  // Product-line tags depend on code (the dictionary) as well as on data —
+  // recompute on every start so a new release applies new rules at once.
+  try {
+    const t = await refreshTags();
+    console.log(`[worker] tags: own=${t.own} based=${t.based} (by versions ${t.byVersions})`);
+  } catch (e) {
+    console.error("[worker] tags refresh failed:", (e as Error).message);
+  }
 
   if (process.env.IMPORT_ON_START === "1") {
     await safeImport("on-start");

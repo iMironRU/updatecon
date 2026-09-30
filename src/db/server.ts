@@ -11,6 +11,7 @@
  *   (config=<metadata name> is still accepted on the calls above, but names
  *    are not unique — prefer config_id.)
  *   GET  /api/stats                        -> import/run summary
+ *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /*                                -> static UI (public/)
  *
  * Admin endpoints (cookie session auth via ADMIN_LOGIN / ADMIN_PASSWORD):
@@ -23,6 +24,9 @@
  *   GET  /admin/api/projects               -> releases.1c.ru projects + links
  *   GET  /admin/api/apps?q=                -> application editions (link picker)
  *   POST /admin/api/projects/link          -> manual link / unlink / back to auto
+ *   GET  /admin/api/tags?q=                -> templates with their tags
+ *   POST /admin/api/tags                   -> manual tags / back to auto
+ *   POST /admin/api/tags/refresh           -> recompute automatic tags
  */
 
 import Fastify from "fastify";
@@ -39,6 +43,7 @@ import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns, patches, settings, releaseProjects } from "./schema.js";
 import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus } from "./caddy.js";
+import { TAGS, refreshTags, setManualTags } from "./tags.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
@@ -429,6 +434,57 @@ export async function buildServer() {
     return { ok: true };
   });
 
+  // ── Admin API: product-line tags ─────────────────────────────────────────
+  app.get("/admin/api/tags", async (req) => {
+    const q = String((req.query as any).q ?? "").trim().toLowerCase();
+    const like = "%" + q + "%";
+    const rows = await db.execute(sql`
+      SELECT l.template_key, l.template_code, l.name, l.display_name, l.editions,
+             coalesce(json_agg(json_build_object('tag', t.tag, 'kind', t.kind, 'source', t.source)
+                               ORDER BY t.kind DESC, t.tag) FILTER (WHERE t.tag IS NOT NULL), '[]'::json) AS tags
+      FROM (
+        SELECT DISTINCT ON (template_key) template_key, template_code, name, display_name,
+               (SELECT count(*)::int FROM configurations c2 WHERE c2.template_key = c.template_key) AS editions
+        FROM configurations c
+        WHERE template_key IS NOT NULL
+        ORDER BY template_key, edition DESC
+      ) l
+      LEFT JOIN template_tags t ON t.template_key = l.template_key
+      WHERE ${q ? sql`l.template_key LIKE ${like} OR lower(l.name) LIKE ${like}
+                    OR lower(coalesce(l.display_name, '')) LIKE ${like}
+                    OR EXISTS (SELECT 1 FROM template_tags tt
+                               WHERE tt.template_key = l.template_key AND lower(tt.tag) = ${q})` : sql`true`}
+      GROUP BY l.template_key, l.template_code, l.name, l.display_name, l.editions
+      ORDER BY l.template_key
+    `);
+    return { dictionary: TAGS.map((t) => ({ tag: t.tag, title: t.title })), templates: (rows as any).rows ?? rows };
+  });
+
+  // body: { template_key, tags: [{tag, kind: "own"|"based"}] } → manual (empty = no tags)
+  //       { template_key, auto: true }                        → back to automatic
+  app.post("/admin/api/tags", async (req, reply) => {
+    const body = (req.body as any) ?? {};
+    const key = String(body.template_key ?? "").trim().toLowerCase();
+    if (!key) return reply.status(400).send({ error: "template_key обязателен" });
+    if (body.auto === true) {
+      await setManualTags(key, null);
+      return { ok: true };
+    }
+    if (!Array.isArray(body.tags)) return reply.status(400).send({ error: "tags должен быть массивом" });
+    const known = new Set(TAGS.map((t) => t.tag));
+    const tags: { tag: string; kind: "own" | "based" }[] = [];
+    for (const t of body.tags) {
+      const tag = String(t?.tag ?? "");
+      const kind = t?.kind === "based" ? "based" : "own";
+      if (!known.has(tag)) return reply.status(400).send({ error: `Неизвестный тег: ${tag}` });
+      if (!tags.some((x) => x.tag === tag)) tags.push({ tag, kind });
+    }
+    await setManualTags(key, tags);
+    return { ok: true };
+  });
+
+  app.post("/admin/api/tags/refresh", async () => ({ ok: true, ...(await refreshTags()) }));
+
   // ── Public static + API ───────────────────────────────────────────────────
   app.register(fastifyStatic, {
     root: join(__dirname, "..", "..", "public"),
@@ -534,6 +590,10 @@ export async function buildServer() {
         c.template_code, c.edition,
         (c.edition = (SELECT max(c2.edition) FROM configurations c2
                       WHERE c2.template_key = c.template_key)) AS is_latest_edition,
+        (SELECT coalesce(json_agg(json_build_object('tag', t.tag, 'kind', t.kind)
+                                  ORDER BY t.kind DESC, t.tag), '[]'::json)
+         FROM template_tags t
+         WHERE t.template_key = c.template_key AND t.tag <> '') AS tags,
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
         -- releases.1c.ru data when present, else the newest version the LST knows
         COALESCE(vm.version, mv.v) AS latest_version,
@@ -736,6 +796,9 @@ export async function buildServer() {
     );
     return res;
   });
+
+  app.get("/api/tags", async () =>
+    TAGS.map((t) => ({ tag: t.tag, title: t.title })));
 
   app.get("/api/stats", async () => {
     const [cfgCount, appCount, edgeCount, verCount, lastRun] = await Promise.all([

@@ -121,6 +121,9 @@ input, select, textarea { font-family: inherit; }
 .badge-purple { background: var(--purple-dim); color: var(--purple); }
 .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
 .badge-gray { background: var(--surface3); color: var(--text-muted); }
+/* Product-line tags: own line = solid, "на базе" = dashed outline (no layout shift) */
+.badge-tag { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .3px; }
+.badge-tag-based { background: transparent; color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .card { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); box-shadow: var(--shadow-xs); transition: box-shadow .2s, transform .2s, border-color .2s; }
 .card:hover { box-shadow: var(--shadow); }
@@ -300,10 +303,26 @@ input, select, textarea { font-family: inherit; }
 .theme-opt svg { width: 16px; height: 16px; }
 .catalog-layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; align-items: start; }
 .filters-panel { background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 18px; position: sticky; top: calc(var(--hdr) + 16px); }
+  border-radius: var(--r); padding: 18px; position: sticky; top: calc(var(--hdr) + 16px);
+  /* sticky + taller than the window = unreachable bottom: scroll inside instead */
+  max-height: calc(100vh - var(--hdr) - 32px); overflow-y: auto; overscroll-behavior: contain; }
 .filters-title { font-size: 13px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .5px; color: var(--text-muted); margin-bottom: 16px; display: flex;
   align-items: center; justify-content: space-between; }
+.filters-title > span { display: inline-flex; align-items: center; gap: 6px; }
+.filters-title svg { width: 14px; height: 14px; flex-shrink: 0; }
+.filter-opt-label { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.filter-opt.is-empty { opacity: .45; }
+.filter-search { padding: 6px 10px; font-size: 13px; margin-bottom: 6px; }
+.filter-more { background: none; border: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
+.filter-more:hover { text-decoration: underline; }
+.catalog-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 16px; min-height: 28px; }
+.catalog-found { font-size: 13px; color: var(--text-muted); margin-right: 4px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px;
+  border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent);
+  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.filter-chip:hover { background: var(--accent); color: #fff; }
+.filters-toggle, .filters-done { display: none; }
 .filter-group { margin-bottom: 18px; }
 .filter-group-label { font-size: 12px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px; }
@@ -346,7 +365,14 @@ input, select, textarea { font-family: inherit; }
 .footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
 @media (max-width: 900px) {
   .catalog-layout { grid-template-columns: 1fr; }
-  .filters-panel { position: static; }
+  .filters-panel { position: static; max-height: none; overflow: visible; }
+  /* On narrow screens the panel is a full-screen sheet behind a "Фильтры" button */
+  .filters-panel:not(.open) { display: none; }
+  .filters-panel.open { position: fixed; top: var(--hdr); left: 0; right: 0; bottom: 0; z-index: 90;
+    border-radius: 0; border: none; overflow-y: auto; padding-bottom: 0; }
+  .filters-toggle { display: inline-flex; }
+  .filters-done { display: flex; justify-content: center; position: sticky; bottom: 0; width: 100%;
+    margin: 8px 0 0; border-radius: 0; box-shadow: 0 -8px 16px var(--surface); }
   .chain-builder { grid-template-columns: 1fr 1fr; }
   .chain-builder .btn-lg { grid-column: 1/-1; }
 }
@@ -432,6 +458,7 @@ input, select, textarea { font-family: inherit; }
    ================================================================ */
 let CONFIGS = [];
 let DB_META = { last_updated: null, total_configs: 0, total_editions: 0, total_versions: 0 };
+let TAG_DICT = [];             // [{tag, title}] — product lines, in dictionary order
 let CONFIGS_LOADED = false;
 const CHAIN_CACHE = {};        // `${cfgId}:${fromV}:${toV}` -> steps[]
 const CHAIN_RENDER_STATE = {}; // blockId -> { steps, fromV, cfg, reversed }
@@ -486,6 +513,7 @@ function adapt_config(row) {
     templateKey: templateCode.toLowerCase(),
     editionNum: row.edition,
     isLatestEdition,
+    tags: row.tags || [],       // [{tag, kind: 'own'|'based'}] — product lines of the template
     nick,
     name: displayName,
     short: displayName.split(',')[0].trim(),
@@ -495,7 +523,7 @@ function adapt_config(row) {
     status: isLatestEdition ? 'active' : 'legacy',
     description: '',            // placeholder
     groupName: row.group_name || '',
-    region: row.region || 'ru',
+    region: row.region || infer_region(row) || 'ru',
     nextReleaseVersion: row.next_release_version || '',
     nextReleasePlannedDate: row.next_release_planned_date || '',
     nextReleasePlanUpdated: row.next_release_plan_updated || '',
@@ -515,10 +543,12 @@ function adapt_config(row) {
 async function initData() {
   if (CONFIGS_LOADED) return;
   try {
-    const [rows, stats] = await Promise.all([
+    const [rows, stats, tags] = await Promise.all([
       apiFetch('/api/configs'),
       apiFetch('/api/stats'),
+      apiFetch('/api/tags').catch(() => []),
     ]);
+    TAG_DICT = tags || [];
     CONFIGS = rows.map(adapt_config);
     CONFIGS_LOADED = true;
     DB_META = {
@@ -618,8 +648,35 @@ function days_ago(dateStr) {
   if (diff < 365) return `${Math.round(diff/30)} мес. назад`;
   return `${Math.round(diff/365)} г. назад`;
 }
+function esc_html(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Region for editions without a releases.1c.ru group: "…ДляКазахстана" in the
+// name, else the template's country suffix ("1c/HRMKz", "1c/AccountingBe20").
+var REGION_BY_STEM = [
+  [/казахстан/i, 'kz'], [/беларус|белорус/i, 'by'], [/украин/i, 'ua'], [/кыргыз|киргиз/i, 'kg'],
+  [/азербайджан/i, 'az'], [/узбекистан/i, 'uz'], [/молдов/i, 'md'], [/таджикистан/i, 'tj'],
+  [/армени/i, 'am'], [/грузи/i, 'ge'], [/эстони/i, 'ee'], [/латви/i, 'lv'], [/литв/i, 'lt'],
+  [/болгари/i, 'bg'], [/туркменистан/i, 'tm'], [/стран\s*балтии/i, 'baltics']
+];
+var REGION_BY_SUFFIX = { Kz: 'kz', KZ: 'kz', Ky: 'kg', Az: 'az', Uz: 'uz', UZ: 'uz', Md: 'md', Tj: 'tj', TJ: 'tj',
+  Ukr: 'ua', Tm: 'tm', Am: 'am', Ge: 'ge', Est: 'ee', Be: 'by', Bel: 'by', Balt: 'baltics' };
+function infer_region(row) {
+  var text = (row.display_name || '') + ' ' + humanize_name(row.name || '');
+  var m = text.match(/для\s+([^\s,.;)]+(?:\s+балтии)?)/i);
+  if (m) {
+    for (var i = 0; i < REGION_BY_STEM.length; i++) if (REGION_BY_STEM[i][0].test(m[1])) return REGION_BY_STEM[i][1];
+  }
+  var t = (row.template_code || '').split('/').pop();
+  var sm = t.match(/(Kz|KZ|Ky|Az|Uz|UZ|Md|Tj|TJ|Ukr|Tm|Am|Ge|Est|Bel|Be|Balt)(?:Base|Corp|Prof|Micro)*\d*$/);
+  return sm ? REGION_BY_SUFFIX[sm[1]] : null;
+}
+
 function region_label(r) {
   var labels = {
+    ua: 'Украина', tm: 'Туркменистан',
     ru: 'Россия', kz: 'Казахстан', az: 'Азербайджан', by: 'Беларусь',
     am: 'Армения', ge: 'Грузия', kg: 'Кыргызстан', tj: 'Таджикистан',
     uz: 'Узбекистан', md: 'Молдова', lt: 'Литва', lv: 'Латвия',
@@ -635,6 +692,17 @@ function type_badge(t) {
   const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green' }[t] || 'badge-gray';
   const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry() };
   return `<span class="badge ${cls}">${icons[t]||''} ${type_label(t)}</span>`;
+}
+function tag_title(tag) {
+  var d = TAG_DICT.filter(function(x) { return x.tag === tag; })[0];
+  return d ? d.title : tag;
+}
+function tag_chips(cfg) {
+  return (cfg.tags || []).map(function(t) {
+    return t.kind === 'based'
+      ? '<span class="badge badge-tag-based" title="Решение на базе: ' + tag_title(t.tag) + '">на базе ' + t.tag + '</span>'
+      : '<span class="badge badge-tag" title="' + tag_title(t.tag) + '">' + t.tag + '</span>';
+  }).join(' ');
 }
 function status_badge(s) {
   if (s === 'discontinued') return `<span class="badge badge-red">${icn_x()} Поддержка прекращена</span>`;
@@ -861,8 +929,12 @@ function parse_hash() {
   if (qs) qs.split('&').forEach(p => { const [k,v] = p.split('='); params[k] = decodeURIComponent(v||''); });
   return { path, params };
 }
+let ROUTE_PATH = null;
 async function route() {
   const { path, params } = parse_hash();
+  document.body.style.overflow = '';
+  // Leaving the catalog: remember the scroll position for this exact filter set.
+  if (ROUTE_PATH === '/catalog' && path !== '/catalog') CAT_SCROLL = { hash: CAT_HASH, y: window.scrollY };
   const el = document.getElementById('main-content');
   document.querySelectorAll('.nav-link').forEach(a => {
     a.classList.remove('active');
@@ -890,7 +962,11 @@ async function route() {
   else if (path === '/stats') { el.innerHTML = render_stats(); }
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
   else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
-  window.scrollTo(0, 0);
+  ROUTE_PATH = path;
+  // Back to the same filtered catalog → back to the same place in it.
+  // 'instant': html has scroll-behavior: smooth, which would animate page changes.
+  const top = path === '/catalog' && CAT_SCROLL && CAT_SCROLL.hash === CAT_HASH ? CAT_SCROLL.y : 0;
+  window.scrollTo({ top, behavior: 'instant' });
 }
 window.addEventListener('hashchange', () => route());
 
@@ -1046,47 +1122,102 @@ async function home_build_chain() {
 /* ================================================================
    CATALOG VIEW
    ================================================================ */
+// ── Catalog state ──────────────────────────────────────────────────────────
+// Mirrored into the URL (#/catalog?line=БУХ&region=kz…): "back" from a card
+// restores the filters, and a filtered catalog can be shared as a link.
+const CAT_SEP = '|';
+let CAT = null;          // current catalog state
+let CAT_HASH = '';       // URL of the catalog as last written
+let CAT_SCROLL = null;   // { hash, y } — where the user left the catalog
+
+function catalog_state(params) {
+  const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
+  return {
+    q: params.q || '', lines: list('line'), regions: list('region'), types: list('type'),
+    vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
+    vendorQuery: '', vendorsAll: false, panelOpen: false,
+  };
+}
+function catalog_sync_url() {
+  const parts = [];
+  const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
+  add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('region', CAT.regions.join(CAT_SEP));
+  add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
+  if (CAT.legacy) parts.push('legacy=1');
+  if (CAT.sort !== 'date_desc') add('sort', CAT.sort);
+  CAT_HASH = '#/catalog' + (parts.length ? '?' + parts.join('&') : '');
+  // replaceState: no hashchange → no re-render, the search box keeps focus.
+  if (location.hash !== CAT_HASH) history.replaceState(null, '', CAT_HASH);
+}
+
+// Facets: each one is matched against the others, so counts stay honest
+// ("Казахстан" selected → "БУХ" shows how many БУХ there are for Kazakhstan).
+const CAT_FACETS = {
+  lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
+  regions: (c, v) => v.includes(c.region),
+  types:   (c, v) => v.includes(c.type),
+  vendors: (c, v) => v.includes(c.vendor),
+};
+function cfg_matches_search(c, q) {
+  return (c.name || '').toLowerCase().includes(q)
+    || (c.configName || '').toLowerCase().includes(q)
+    || (c.vendor || '').toLowerCase().includes(q)
+    || c.templateKey.includes(q)
+    || c.tags.some(t => t.tag.toLowerCase() === q);
+}
+function catalog_base(legacy) {
+  const q = CAT.q.trim().toLowerCase();
+  return CONFIGS.filter(c => (legacy ? !c.isLatestEdition : c.isLatestEdition || CAT.legacy)
+    && (!q || cfg_matches_search(c, q)));
+}
+function catalog_filter(base, except) {
+  return base.filter(c => Object.keys(CAT_FACETS).every(f =>
+    f === except || !CAT[f].length || CAT_FACETS[f](c, CAT[f])));
+}
+function count_by(list, keysOf) {
+  const m = new Map();
+  list.forEach(c => keysOf(c).forEach(k => m.set(k, (m.get(k) || 0) + 1)));
+  return m;
+}
+
 function render_catalog() {
-  const vendors = [...new Set(CONFIGS.map(c=>c.vendor))].sort();
+  CAT = catalog_state(parse_hash().params);
   return `<div class="wrap">
     <div class="page-head"><div class="page-title">Каталог конфигураций</div></div>
     <div class="catalog-layout">
-      <aside class="filters-panel fade-up">
+      <aside class="filters-panel fade-up" id="filters-panel">
         <div class="filters-title">
           <span>${icn_filter()} Фильтры</span>
           <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
         </div>
-        <div class="filter-group">
-          <div class="filter-group-label">Тип</div>
-          <label class="filter-opt"><input type="checkbox" value="standard" onchange="apply_filters()" id="f-std"> Типовая <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='standard').length}</span></label>
-          <label class="filter-opt"><input type="checkbox" value="partner" onchange="apply_filters()" id="f-partner"> Партнёрская <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='partner').length}</span></label>
-          <label class="filter-opt"><input type="checkbox" value="industry" onchange="apply_filters()" id="f-industry"> Отраслевая <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='industry').length}</span></label>
-        </div>
-        <div class="filter-group">
-          <div class="filter-group-label">Редакции</div>
-          <label class="filter-opt"><input type="checkbox" onchange="apply_filters()" id="f-legacy"> Показывать предыдущие <span class="filter-opt-count">${CONFIGS.filter(c=>!c.isLatestEdition).length}</span></label>
-        </div>
+        <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types"></div></div>
         <div class="filter-group">
           <div class="filter-group-label">Разработчик</div>
-          ${vendors.map(v => `<label class="filter-opt"><input type="checkbox" value="v_${v}" onchange="apply_filters()" id="f-v-${v.replace(/[^a-z0-9]/gi,'')}"> ${v} <span class="filter-opt-count">${CONFIGS.filter(c=>c.vendor===v).length}</span></label>`).join('')}
+          <input class="input filter-search" id="f-vendor-q" placeholder="Найти разработчика…" autocomplete="off"
+                 oninput="CAT.vendorQuery=this.value; render_facets()">
+          <div id="f-vendors"></div>
         </div>
+        <div class="filter-group"><div class="filter-group-label">Редакции</div><div id="f-legacy"></div></div>
+        <button class="btn btn-primary filters-done" id="filters-done" onclick="toggle_filters_panel()">Показать</button>
       </aside>
       <div>
         <div class="catalog-toolbar fade-up">
+          <button class="btn btn-secondary filters-toggle" id="filters-toggle" onclick="toggle_filters_panel()">${icn_filter()} Фильтры</button>
           <div class="search-wrap" style="flex:1">
             ${icn_search()}
-            <input class="input search-input" id="catalog-search" placeholder="Поиск по названию..." oninput="apply_filters()">
+            <input class="input search-input" id="catalog-search" placeholder="Название, разработчик, шаблон или линейка (бух, зуп…)"
+                   value="${esc_html(CAT.q)}" oninput="CAT.q=this.value; apply_filters()">
           </div>
-          <select class="select sort-select" id="catalog-sort" onchange="apply_filters()">
-            <option value="date_desc">Дата обновления ↓</option>
-            <option value="date_asc">Дата обновления ↑</option>
-            <option value="name_asc">Название А→Я</option>
-            <option value="name_desc">Название Я→А</option>
-            <option value="freq_asc">Частота обновлений ↓</option>
+          <select class="select sort-select" id="catalog-sort" onchange="CAT.sort=this.value; apply_filters()">
+            ${[['date_desc','Дата обновления ↓'],['date_asc','Дата обновления ↑'],['name_asc','Название А→Я'],
+               ['name_desc','Название Я→А'],['freq_asc','Частота обновлений ↓']]
+              .map(([v, l]) => `<option value="${v}"${CAT.sort === v ? ' selected' : ''}>${l}</option>`).join('')}
           </select>
         </div>
+        <div class="catalog-summary" id="catalog-summary"></div>
         <div id="catalog-grid" class="catalog-grid"></div>
-        <div id="catalog-count" class="catalog-count" style="margin-top:12px;text-align:right"></div>
       </div>
     </div>
   </div>`;
@@ -1105,6 +1236,7 @@ function config_card_html(c) {
         </div>
       </div>
       <div class="config-card-badges">
+        ${tag_chips(c)}
         ${type_badge(c.type)}
         ${c.status !== 'active' ? status_badge(c.status) : ''}
         <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
@@ -1121,26 +1253,112 @@ function config_card_html(c) {
   </div>`;
 }
 function bind_catalog() { apply_filters(); }
-function reset_filters() {
-  document.querySelectorAll('.filters-panel input[type=checkbox]').forEach(el => el.checked = false);
-  const s = document.getElementById('catalog-search'); if (s) s.value = '';
+function toggle_filters_panel() {
+  CAT.panelOpen = !CAT.panelOpen;
+  const p = document.getElementById('filters-panel');
+  if (p) p.classList.toggle('open', CAT.panelOpen);
+  // The sheet covers the page on phones: keep the page itself from scrolling under it.
+  document.body.style.overflow = CAT.panelOpen && window.innerWidth <= 900 ? 'hidden' : '';
+  if (!CAT.panelOpen) window.scrollTo({ top: 0, behavior: 'instant' });
+}
+function toggle_facet(field, value) {
+  const i = CAT[field].indexOf(value);
+  if (i >= 0) CAT[field].splice(i, 1); else CAT[field].push(value);
   apply_filters();
 }
+function remove_filter(field, value) {
+  if (field === 'q') { CAT.q = ''; const s = document.getElementById('catalog-search'); if (s) s.value = ''; }
+  else if (field === 'legacy') CAT.legacy = false;
+  else CAT[field] = CAT[field].filter(v => v !== value);
+  apply_filters();
+}
+function reset_filters() {
+  const keep = { sort: CAT.sort, panelOpen: CAT.panelOpen };
+  CAT = Object.assign(catalog_state({}), keep);
+  const s = document.getElementById('catalog-search'); if (s) s.value = '';
+  const vq = document.getElementById('f-vendor-q'); if (vq) vq.value = '';
+  apply_filters();
+}
+
+function facet_opt(field, value, label, count, title) {
+  const on = CAT[field].includes(value);
+  return `<label class="filter-opt${count === 0 && !on ? ' is-empty' : ''}"${title ? ` title="${esc_html(title)}"` : ''}>`
+    + `<input type="checkbox"${on ? ' checked' : ''} data-v="${esc_html(value)}" onchange="toggle_facet('${field}', this.dataset.v)">`
+    + ` <span class="filter-opt-label">${esc_html(label)}</span> <span class="filter-opt-count">${count}</span></label>`;
+}
+
+function render_facets() {
+  const base = catalog_base(false);
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+
+  // Линейка — dictionary order; hide lines with nothing in them (unless selected).
+  const lineCnt = count_by(catalog_filter(base, 'lines'), c => c.tags.map(t => t.tag));
+  set('f-lines', TAG_DICT
+    .filter(d => lineCnt.get(d.tag) || CAT.lines.includes(d.tag))
+    .map(d => facet_opt('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
+    .join('') || '<div class="filter-opt is-empty">нет</div>');
+
+  // Регион — Россия first, then by size.
+  const regCnt = count_by(catalog_filter(base, 'regions'), c => [c.region]);
+  CAT.regions.forEach(r => { if (!regCnt.has(r)) regCnt.set(r, 0); });
+  set('f-regions', [...regCnt.entries()]
+    .sort((a, b) => (b[0] === 'ru') - (a[0] === 'ru') || b[1] - a[1])
+    .map(([r, n]) => facet_opt('regions', r, region_label(r), n)).join(''));
+
+  const typeCnt = count_by(catalog_filter(base, 'types'), c => [c.type]);
+  set('f-types', ['standard', 'partner', 'industry']
+    .map(t => facet_opt('types', t, type_label(t), typeCnt.get(t) || 0)).join(''));
+
+  // Разработчик — ~300 of them: search box, top 8, "show all"; selected ones always visible.
+  const venCnt = count_by(catalog_filter(base, 'vendors'), c => [c.vendor]);
+  CAT.vendors.forEach(v => { if (!venCnt.has(v)) venCnt.set(v, 0); });
+  const vq = CAT.vendorQuery.trim().toLowerCase();
+  let vendors = [...venCnt.entries()]
+    .filter(([v, n]) => (n > 0 || CAT.vendors.includes(v)) && (!vq || v.toLowerCase().includes(vq)))
+    .sort((a, b) => CAT.vendors.includes(b[0]) - CAT.vendors.includes(a[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
+  const LIMIT = 8;
+  const hidden = vq || CAT.vendorsAll ? 0 : Math.max(0, vendors.length - LIMIT);
+  if (hidden) vendors = vendors.slice(0, LIMIT);
+  set('f-vendors', (vendors.map(([v, n]) => facet_opt('vendors', v, v, n)).join('')
+      || '<div class="filter-opt is-empty">никого не нашлось</div>')
+    + (hidden ? `<button class="filter-more" onclick="CAT.vendorsAll=true; render_facets()">Показать все (${hidden + LIMIT})</button>`
+      : CAT.vendorsAll && !vq ? `<button class="filter-more" onclick="CAT.vendorsAll=false; render_facets()">Свернуть</button>` : ''));
+
+  const legacyCnt = catalog_filter(catalog_base(true), null).length;
+  set('f-legacy', `<label class="filter-opt${legacyCnt === 0 && !CAT.legacy ? ' is-empty' : ''}"><input type="checkbox"${CAT.legacy ? ' checked' : ''}
+      onchange="CAT.legacy=this.checked; apply_filters()"> <span class="filter-opt-label">Показывать предыдущие</span>
+      <span class="filter-opt-count">${legacyCnt}</span></label>`);
+}
+
+function render_summary(found) {
+  const chips = [];
+  const chip = (field, value, label) => chips.push(
+    `<button class="filter-chip" data-v="${esc_html(value)}" onclick="remove_filter('${field}', this.dataset.v)" title="Убрать фильтр">${esc_html(label)} ✕</button>`);
+  if (CAT.q.trim()) chip('q', '', '«' + CAT.q.trim() + '»');
+  CAT.lines.forEach(v => chip('lines', v, v));
+  CAT.regions.forEach(v => chip('regions', v, region_label(v)));
+  CAT.types.forEach(v => chip('types', v, type_label(v)));
+  CAT.vendors.forEach(v => chip('vendors', v, v));
+  if (CAT.legacy) chip('legacy', '', 'Предыдущие редакции');
+  const el = document.getElementById('catalog-summary');
+  if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
+    + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
+  const active = CAT.lines.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+  const t = document.getElementById('filters-toggle');
+  if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
+  const done = document.getElementById('filters-done');
+  if (done) done.textContent = `Показать ${found}`;
+}
+
 function apply_filters() {
-  const types    = Array.from(document.querySelectorAll('.filter-opt input[value="standard"],.filter-opt input[value="partner"],.filter-opt input[value="industry"]')).filter(el=>el.checked).map(el=>el.value);
-  const vendors  = Array.from(document.querySelectorAll('.filter-opt input[value^="v_"]')).filter(el=>el.checked).map(el=>el.value.replace('v_',''));
-  const search   = (document.getElementById('catalog-search')?.value || '').toLowerCase();
-  const sortVal  = document.getElementById('catalog-sort')?.value || 'date_desc';
+  if (!CAT) return;
+  const list = catalog_filter(catalog_base(false), null);
 
-  const showLegacy = !!(document.getElementById('f-legacy') || {}).checked;
-
-  let list = [...CONFIGS];
-  if (!showLegacy)    list = list.filter(c=>c.isLatestEdition);
-  if (types.length)   list = list.filter(c=>types.includes(c.type));
-  if (vendors.length) list = list.filter(c=>vendors.includes(c.vendor));
-  if (search) list = list.filter(c=>(c.name||'').toLowerCase().includes(search)||(c.vendor||'').toLowerCase().includes(search)||c.templateKey.includes(search));
-
+  // With a line filter on, the line's own products come before the ones built on it.
+  const ownRank = c => CAT.lines.length && c.tags.some(t => t.kind === 'own' && CAT.lines.includes(t.tag)) ? 0 : 1;
+  const sortVal = CAT.sort;
   list.sort((a,b) => {
+    if (CAT.lines.length && ownRank(a) !== ownRank(b)) return ownRank(a) - ownRank(b);
     if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
     if (sortVal==='date_asc')  return new Date(a.latestDate||0) - new Date(b.latestDate||0);
     if (sortVal==='name_asc')  return (a.name||'').localeCompare(b.name||'','ru');
@@ -1150,11 +1368,12 @@ function apply_filters() {
   });
 
   const grid = document.getElementById('catalog-grid');
-  const cnt  = document.getElementById('catalog-count');
   if (grid) grid.innerHTML = list.length
     ? list.map(config_card_html).join('')
-    : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте изменить фильтры</div></div>`;
-  if (cnt) cnt.textContent = `Показано: ${list.length} из ${CONFIGS.length}`;
+    : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте убрать часть фильтров</div></div>`;
+  render_facets();
+  render_summary(list.length);
+  catalog_sync_url();
 }
 
 /* ================================================================
@@ -1221,7 +1440,7 @@ function render_config(id) {
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
-        <div class="config-detail-badges">${type_badge(cfg.type)} ${status_badge(cfg.status)}
+        <div class="config-detail-badges">${tag_chips(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
           ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>

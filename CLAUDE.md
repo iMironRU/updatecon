@@ -25,6 +25,7 @@ src/parser/
 src/db/
   schema.ts             Drizzle schema (configurations, update_edges, import_runs, release_projects, …)
   template.ts           application identity: template folder from cfu_path, nick↔template rule
+  tags.ts               product-line tags dictionary + refresh (name rule, shared versions)
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
   fetch-lst.ts          ITS Basic-auth fetch OR local file (LST_FILE/argv)
   import-lst.ts         runImport(): two-level hash delta, fan-out to edges
@@ -79,6 +80,10 @@ drizzle/                generated migration SQL (committed)
   project.
 - `release_projects` (nick PK → config_id, match_method rule|versions|manual)
   — every project from releases.1c.ru `/total`, matched or not.
+- `template_tags` (template_key, tag PK) — product-line tags (БУХ, ЗУП, УТ,
+  УНФ…, dictionary in `src/db/tags.ts`), kind own|based, source
+  rule|versions|manual. Recomputed after every LST import and on worker
+  start; manual rows are never touched (tag '' = "manually: no tags").
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on

@@ -23,6 +23,7 @@ import {
   index,
   bigserial,
   date,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -255,6 +256,30 @@ export const settings = pgTable("settings", {
     .defaultNow(),
 });
 
+/**
+ * Product-line tags ("БУХ", "ЗУП", "УТ", …) per template — shared by all its
+ * editions. kind: "own" = the 1C product line itself, "based" = a partner or
+ * industry solution built on that line. source: "rule" (template name),
+ * "versions" (shares its version numbers with a typical 1C template),
+ * "manual" (admin UI). A template with manual rows is never recomputed;
+ * a manual row with tag '' means "manually set to no tags".
+ */
+export const templateTags = pgTable(
+  "template_tags",
+  {
+    templateKey: text("template_key").notNull(),
+    tag: text("tag").notNull(),
+    kind: text("kind").notNull().default("own"),
+    source: text("source").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.templateKey, t.tag] }),
+  }),
+);
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
@@ -262,3 +287,4 @@ export type VersionMeta = typeof versionMeta.$inferSelect;
 export type Patch = typeof patches.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
 export type ReleaseProject = typeof releaseProjects.$inferSelect;
+export type TemplateTag = typeof templateTags.$inferSelect;
