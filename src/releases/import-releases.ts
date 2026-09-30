@@ -119,10 +119,19 @@ async function overlapCounts(ids: number[] | null, versions: string[]): Promise<
 /** Rule: nick = template name + edition suffix. Returns the app id or null. */
 export async function matchByRule(nick: string, versions: string[], apps: App[]): Promise<App | null> {
   let cands = apps.filter((a) => nickMatchesTemplate(nick, a.templateCode));
-  if (cands.length === 0 || versions.length === 0) return null;
+  if (cands.length === 0) return null;
   // Most specific template wins ("AccountingCorp" over "Accounting").
   const maxLen = Math.max(...cands.map((a) => templateName(a.templateCode).length));
   cands = cands.filter((a) => templateName(a.templateCode).length === maxLen);
+
+  if (versions.length === 0) {
+    // Some partner projects publish no version list at all (the partner
+    // distributes the release). Without versions the edition can't be
+    // checked, so link only the unambiguous case: nick is exactly the
+    // template name and that template has a single edition.
+    const exact = cands.filter((a) => templateName(a.templateCode).toLowerCase() === nick.toLowerCase());
+    return exact.length === 1 && cands.length === 1 ? exact[0] : null;
+  }
 
   // The project's dominant edition (first version segment).
   const edCount = new Map<number, number>();

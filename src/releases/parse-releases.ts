@@ -48,10 +48,17 @@ export function parseDate(raw: string): string | null {
 export function parseTotalPage(html: string): ReleasesConfig[] {
   const configs: ReleasesConfig[] = [];
 
-  // Build group id → name map
+  // Build group id → name map from the group header rows: <tr group="481">…
+  // <span class="group-name">…</span>…</tr>. The attribute must be exactly
+  // `group=` — config rows carry `parent-group=`, and matching those (a bare
+  // \bgroup= does, "-" is a word boundary) shifted every group's name onto
+  // the previous group ("для России" projects came out as "для Азербайджана").
   const groupMap = new Map<string, string>();
-  for (const m of html.matchAll(/<tr[^>]*\bgroup="(\d+)"[^>]*>[\s\S]*?<span class="group-name">([^<]+)</g)) {
-    groupMap.set(m[1], m[2].trim());
+  for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/g)) {
+    const id = m[1].match(/(?:^|\s)group="(\d+)"/);
+    if (!id) continue;
+    const name = m[2].match(/<span class="group-name">([^<]+)</);
+    if (name) groupMap.set(id[1], name[1].trim());
   }
 
   // Parse each config row
