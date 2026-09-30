@@ -540,6 +540,8 @@ function adapt_config(row) {
     nextReleasePlanUpdated: row.next_release_plan_updated || '',
     platform_min: row.latest_platform || '—',
     url_1c: row.releases_href ? 'https://releases.1c.ru' + row.releases_href : '',
+    infoUrl: row.info_url || '',   // "Общая информация о конфигурации": solutions.1c.ru / v8.1c.ru
+    bugsUrl: row.bugs_url || '',   // "Каталог ошибок продукта": bugboard.v8.1c.ru
     release_year: row.latest_date ? new Date(row.latest_date).getFullYear() : null,
     avg_update_days: row.avg_days ? Number(row.avg_days) : null,
     version_count: Number(row.version_count) || 0,
@@ -765,6 +767,13 @@ function type_badge(t) {
   const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green' }[t] || 'badge-gray';
   const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry() };
   return `<span class="badge ${cls}">${icons[t]||''} ${type_label(t)}</span>`;
+}
+// Where the releases.1c.ru "Общая информация о конфигурации" link points to.
+function info_link_label(url) {
+  if (/\/\/solutions\.1c\.ru\//.test(url)) return 'О продукте на 1С:Решения';
+  if (/\/\/(www\.)?1c\.ru\/news\//.test(url)) return 'Информационное письмо 1С';
+  if (/\/\/([a-z0-9-]+\.)*1c\.ru\//i.test(url)) return 'О продукте на сайте 1С';
+  return 'Сайт разработчика';
 }
 function tag_title(tag) {
   var d = TAG_DICT.filter(function(x) { return x.tag === tag; })[0];
@@ -1554,7 +1563,9 @@ function render_config(id) {
         </div>
       </div>
       <div class="config-detail-actions">
+        ${cfg.infoUrl ? `<a href="${esc_html(cfg.infoUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Общая информация о конфигурации">${icn_link()} ${info_link_label(cfg.infoUrl)}</a>` : ''}
         ${cfg.url_1c ? `<a href="${cfg.url_1c}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icn_link()} На releases.1c.ru</a>` : ''}
+        ${cfg.bugsUrl ? `<a href="${esc_html(cfg.bugsUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Известные ошибки и сроки исправления">${icn_link()} Каталог ошибок</a>` : ''}
         ${cfg.status==='discontinued'?`<span class="badge badge-red" style="padding:8px 14px">${icn_alert()} Поддержка прекращена</span>`:''}
       </div>
     </div>

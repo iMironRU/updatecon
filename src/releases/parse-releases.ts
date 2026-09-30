@@ -158,6 +158,29 @@ export function parseProjectPage(html: string): VersionRow[] {
   return rows;
 }
 
+export interface ProjectLinks {
+  /** "Общая информация о конфигурации": solutions.1c.ru/catalog/…/features or v8.1c.ru/… */
+  infoUrl: string | null;
+  /** "Каталог ошибок продукта": bugboard.v8.1c.ru/project/….html */
+  bugsUrl: string | null;
+}
+
+// The site still links over plain http; all 1c.ru hosts serve https.
+const httpsFor = (url: string) =>
+  url.replace(/^http:\/\/((?:[a-z0-9-]+\.)*1c\.ru\/)/i, "https://$1");
+
+/** Product links from a /project/XXX page (same markup with ?allUpdates=true). */
+export function parseProjectLinks(html: string): ProjectLinks {
+  let infoUrl: string | null = null;
+  for (const m of html.matchAll(/<a\b([^>]*)>/g)) {
+    if (!/class="[^"]*\bprogram-info-url\b/.test(m[1])) continue;
+    const href = m[1].match(/href="(https?:\/\/[^"]+)"/);
+    if (href) { infoUrl = httpsFor(href[1].replace(/&amp;/g, "&")); break; }
+  }
+  const bugs = html.match(/href="(https?:\/\/bugboard\.v8\.1c\.ru\/[^"]+)"/);
+  return { infoUrl, bugsUrl: bugs ? httpsFor(bugs[1].replace(/&amp;/g, "&")) : null };
+}
+
 /** Parse /version_files?nick=X&ver=Y — returns file list with property IDs. */
 export function parseVersionFiles(html: string): VersionFileInfo[] {
   const files: VersionFileInfo[] = [];

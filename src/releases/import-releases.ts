@@ -29,7 +29,7 @@ import { compareVersions } from "../parser/version.js";
 import { ReleasesSession } from "./fetch-releases.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles,
-  parseFileProperties, parsePatchesPage,
+  parseFileProperties, parsePatchesPage, parseProjectLinks,
   type ReleasesConfig, type VersionRow,
 } from "./parse-releases.js";
 
@@ -435,7 +435,14 @@ export async function runReleasesImport(
 
     let rows: VersionRow[];
     try {
-      rows = parseProjectPage(await session.get(`${p.href}?allUpdates=true`));
+      const html = await session.get(`${p.href}?allUpdates=true`);
+      rows = parseProjectPage(html);
+      // Product page (solutions.1c.ru / v8.1c.ru) and bug catalog links —
+      // stored for every project, matched or not.
+      const links = parseProjectLinks(html);
+      await db.update(releaseProjects)
+        .set({ infoUrl: links.infoUrl, bugsUrl: links.bugsUrl })
+        .where(eq(releaseProjects.nick, nick));
     } catch (e) {
       log(`  ✗ ${nick}: ${(e as Error).message}`);
       continue;

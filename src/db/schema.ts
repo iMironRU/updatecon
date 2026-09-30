@@ -94,6 +94,11 @@ export const releaseProjects = pgTable(
     nextReleasePlanUpdated: date("next_release_plan_updated"),
     configId: integer("config_id").references(() => configurations.id, { onDelete: "set null" }),
     matchMethod: text("match_method"),
+    // "Общая информация о конфигурации" on the project page:
+    // solutions.1c.ru/catalog/<slug>/features (industry/partner) or v8.1c.ru/<product>/
+    infoUrl: text("info_url"),
+    // "Каталог ошибок продукта" — bugboard.v8.1c.ru/project/<code>.html
+    bugsUrl: text("bugs_url"),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

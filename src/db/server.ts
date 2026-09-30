@@ -595,6 +595,7 @@ export async function buildServer() {
          FROM template_tags t
          WHERE t.template_key = c.template_key AND t.tag <> '') AS tags,
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
+        rp.info_url, rp.bugs_url,
         -- releases.1c.ru data when present, else the newest version the LST knows
         COALESCE(vm.version, mv.v) AS latest_version,
         -- Platform generation (8.2 / 8.3 / 8.5 …): the official minimum from
@@ -612,6 +613,7 @@ export async function buildServer() {
         COALESCE(vc.cnt, 0) AS version_count,
         avgd.avg_days
       FROM configurations c
+      LEFT JOIN release_projects rp ON rp.href = c.releases_href
       LEFT JOIN LATERAL (
         SELECT version, release_date, min_platform
         FROM version_meta
