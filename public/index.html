@@ -124,6 +124,7 @@ input, select, textarea { font-family: inherit; }
 /* Product-line tags: own line = solid, "на базе" = dashed outline (no layout shift) */
 .badge-tag { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .3px; }
 .badge-tag-based { background: transparent; color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
+.badge-level { background: var(--surface3); color: var(--text); font-weight: 700; letter-spacing: .3px; }
 .card { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); box-shadow: var(--shadow-xs); transition: box-shadow .2s, transform .2s, border-color .2s; }
 .card:hover { box-shadow: var(--shadow); }
@@ -514,6 +515,7 @@ function adapt_config(row) {
     editionNum: row.edition,
     isLatestEdition,
     tags: row.tags || [],       // [{tag, kind: 'own'|'based'}] — product lines of the template
+    level: null,                // 'base' | 'prof' | 'corp' — set by assign_levels()
     nick,
     name: displayName,
     short: displayName.split(',')[0].trim(),
@@ -550,6 +552,7 @@ async function initData() {
     ]);
     TAG_DICT = tags || [];
     CONFIGS = rows.map(adapt_config);
+    assign_levels(CONFIGS);
     CONFIGS_LOADED = true;
     DB_META = {
       last_updated: stats.last_updated || null,
@@ -672,6 +675,55 @@ function infer_region(row) {
   var t = (row.template_code || '').split('/').pop();
   var sm = t.match(/(Kz|KZ|Ky|Az|Uz|UZ|Md|Tj|TJ|Ukr|Tm|Am|Ge|Est|Bel|Be|Balt)(?:Base|Corp|Prof|Micro)*\d*$/);
   return sm ? REGION_BY_SUFFIX[sm[1]] : null;
+}
+
+// Edition level ("уровень поставки") — Базовая / ПРОФ / КОРП.
+// Explicit: a level token in the template name (not at its start: "CorpUniversity"
+// is a corporate university, not КОРП; "KnowledgeBases" is not "Base") or in the
+// Russian name ("…КОРП", "ДокументооборотКорп", "…базовая", "…ПРОФ").
+// Implied ПРОФ: a template without a level whose sibling (same vendor folder,
+// same name minus the level token) has one — 1C ships the ПРОФ as the bare name
+// (Accounting next to AccountingBase / AccountingCorp).
+var LEVEL_TOKEN = { corp: /.(Corp|CORP|corp)(?=[A-Z0-9_]|$)/, prof: /.(Prof|PROF)(?=[A-Z0-9_]|$)/, base: /.(Base|BASE)(?=[A-Z0-9_]|$)/ };
+var LEVEL_WORD = { corp: /(КОРП|Корп)(?![а-яё])/, prof: /(ПРОФ|Проф)(?![а-яё])/, base: /базов/i };
+function level_explicit(templateCode, text) {
+  var t = (templateCode || '').split('/').pop();
+  var order = ['corp', 'prof', 'base'];
+  for (var i = 0; i < order.length; i++) {
+    var l = order[i];
+    if (LEVEL_TOKEN[l].test(t) || LEVEL_WORD[l].test(text)) return l;
+  }
+  return null;
+}
+function level_stem(templateCode) {
+  var parts = (templateCode || '').toLowerCase().split('/');
+  var t = parts.pop().replace(/(corp|prof|base)(?=[a-z0-9_]*$)/, '');
+  return parts.join('/') + '/' + t;
+}
+function assign_levels(configs) {
+  var byTpl = {};
+  configs.forEach(function(c) {
+    var text = (c.name || '') + ' ' + (c.configName || '');
+    var l = level_explicit(c.templateCode, text);
+    if (l && !byTpl[c.templateKey]) byTpl[c.templateKey] = l;
+  });
+  // Levels present among the siblings of each stem.
+  var stemLevels = {};
+  Object.keys(byTpl).forEach(function(k) {
+    var st = level_stem(k);
+    (stemLevels[st] = stemLevels[st] || {})[byTpl[k]] = true;
+  });
+  configs.forEach(function(c) {
+    var sib = stemLevels[level_stem(c.templateCode)] || {};
+    // Bare name = ПРОФ only when the family has Базовая/КОРП but no explicit ПРОФ
+    // (next to "BibliotekaProf" the bare "Biblioteka" is the junior edition).
+    var implied = (sib.base || sib.corp) && !sib.prof ? 'prof' : null;
+    c.level = byTpl[c.templateKey] || implied;
+  });
+}
+var LEVEL_LABEL = { base: 'Базовая', prof: 'ПРОФ', corp: 'КОРП' };
+function level_badge(c) {
+  return c.level ? '<span class="badge badge-level" title="Уровень поставки">' + LEVEL_LABEL[c.level] + '</span>' : '';
 }
 
 function region_label(r) {
@@ -1133,7 +1185,7 @@ let CAT_SCROLL = null;   // { hash, y } — where the user left the catalog
 function catalog_state(params) {
   const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
   return {
-    q: params.q || '', lines: list('line'), regions: list('region'), types: list('type'),
+    q: params.q || '', lines: list('line'), levels: list('level'), regions: list('region'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
     vendorQuery: '', vendorsAll: false, panelOpen: false,
   };
@@ -1141,7 +1193,8 @@ function catalog_state(params) {
 function catalog_sync_url() {
   const parts = [];
   const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
-  add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('region', CAT.regions.join(CAT_SEP));
+  add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
+  add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
   if (CAT.sort !== 'date_desc') add('sort', CAT.sort);
@@ -1154,6 +1207,7 @@ function catalog_sync_url() {
 // ("Казахстан" selected → "БУХ" shows how many БУХ there are for Kazakhstan).
 const CAT_FACETS = {
   lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
+  levels:  (c, v) => v.includes(c.level),
   regions: (c, v) => v.includes(c.region),
   types:   (c, v) => v.includes(c.type),
   vendors: (c, v) => v.includes(c.vendor),
@@ -1163,7 +1217,8 @@ function cfg_matches_search(c, q) {
     || (c.configName || '').toLowerCase().includes(q)
     || (c.vendor || '').toLowerCase().includes(q)
     || c.templateKey.includes(q)
-    || c.tags.some(t => t.tag.toLowerCase() === q);
+    || c.tags.some(t => t.tag.toLowerCase() === q)
+    || (c.level && LEVEL_LABEL[c.level].toLowerCase().startsWith(q) && q.length >= 3);
 }
 function catalog_base(legacy) {
   const q = CAT.q.trim().toLowerCase();
@@ -1191,6 +1246,7 @@ function render_catalog() {
           <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
         </div>
         <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
         <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
         <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types"></div></div>
         <div class="filter-group">
@@ -1237,6 +1293,7 @@ function config_card_html(c) {
       </div>
       <div class="config-card-badges">
         ${tag_chips(c)}
+        ${level_badge(c)}
         ${type_badge(c.type)}
         ${c.status !== 'active' ? status_badge(c.status) : ''}
         <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
@@ -1298,6 +1355,10 @@ function render_facets() {
     .map(d => facet_opt('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
     .join('') || '<div class="filter-opt is-empty">нет</div>');
 
+  const lvlCnt = count_by(catalog_filter(base, 'levels'), c => c.level ? [c.level] : []);
+  set('f-levels', ['base', 'prof', 'corp']
+    .map(l => facet_opt('levels', l, LEVEL_LABEL[l], lvlCnt.get(l) || 0)).join(''));
+
   // Регион — Россия first, then by size.
   const regCnt = count_by(catalog_filter(base, 'regions'), c => [c.region]);
   CAT.regions.forEach(r => { if (!regCnt.has(r)) regCnt.set(r, 0); });
@@ -1336,6 +1397,7 @@ function render_summary(found) {
     `<button class="filter-chip" data-v="${esc_html(value)}" onclick="remove_filter('${field}', this.dataset.v)" title="Убрать фильтр">${esc_html(label)} ✕</button>`);
   if (CAT.q.trim()) chip('q', '', '«' + CAT.q.trim() + '»');
   CAT.lines.forEach(v => chip('lines', v, v));
+  CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
   CAT.regions.forEach(v => chip('regions', v, region_label(v)));
   CAT.types.forEach(v => chip('types', v, type_label(v)));
   CAT.vendors.forEach(v => chip('vendors', v, v));
@@ -1343,7 +1405,7 @@ function render_summary(found) {
   const el = document.getElementById('catalog-summary');
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
-  const active = CAT.lines.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+  const active = CAT.lines.length + CAT.levels.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -1440,7 +1502,7 @@ function render_config(id) {
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
-        <div class="config-detail-badges">${tag_chips(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
+        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
           ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
