@@ -447,27 +447,52 @@ function nick_from_href(href) {
   return href ? href.replace('/project/', '') : '';
 }
 
+// "ЗарплатаИУправлениеПерсоналомДляКазахстана" -> "Зарплата и управление персоналом для Казахстана"
+// (fallback title for editions without a releases.1c.ru project)
+function humanize_name(n) {
+  if (!n) return '';
+  var words = n.replace(/([a-zа-яё0-9])([A-ZА-ЯЁ])/g, '$1 $2')
+               .replace(/([a-zа-яё])([0-9])/g, '$1 $2')
+               .replace(/([A-ZА-ЯЁ]+)([A-ZА-ЯЁ][a-zа-яё])/g, '$1 $2')
+               .split(' ');
+  return words.map(function(w, i) {
+    if (i === 0 || words[i - 1] === 'Для') return w;          // keep proper nouns after "для"
+    if (w.length === 1 || /^[A-ZА-ЯЁ][a-zа-яё]/.test(w)) return w.toLowerCase();
+    return w;                                                  // acronyms: КОРП, ERP, ITIL
+  }).join(' ').replace(/ Для /g, ' для ');
+}
+
 function adapt_config(row) {
   const id = String(row.id);
   const nick = nick_from_href(row.releases_href);
-  const displayName = row.display_name || row.name;
+  const displayName = row.display_name || humanize_name(row.name);
   const latestV = row.latest_version || '';
   const seg = latestV.split('.');
   const edition = seg.length >= 2 ? seg[0] + '.' + seg[1] : seg[0] || '';
   const gn = row.group_name || '';
+  const templateCode = row.template_code || '';
+  const vendorDir = templateCode.split('/')[0].toLowerCase();
+  // Type from the releases.1c.ru group; without one, guess from the template's vendor folder.
   const cfgType = /Конфигурации проекта/i.test(gn) ? 'partner'
                 : /Отраслевые решения/i.test(gn)   ? 'industry'
-                : 'standard';
+                : gn                                ? 'standard'
+                : vendorDir === '1c'                ? 'standard'
+                : 'partner';
+  const isLatestEdition = row.is_latest_edition !== false;
   return {
     id,
-    configName: row.name,       // DB internal name used for API calls
+    configName: row.name,       // LST metadata name (not unique — API calls use id)
+    templateCode,
+    templateKey: templateCode.toLowerCase(),
+    editionNum: row.edition,
+    isLatestEdition,
     nick,
     name: displayName,
-    short: (row.display_name || row.name || '').split(',')[0].trim(),
+    short: displayName.split(',')[0].trim(),
     edition,
-    type: cfgType,              // derived from group_name via releases import
+    type: cfgType,
     vendor: row.vendor || '1С',
-    status: 'active',           // placeholder
+    status: isLatestEdition ? 'active' : 'legacy',
     description: '',            // placeholder
     groupName: row.group_name || '',
     region: row.region || 'ru',
@@ -512,7 +537,7 @@ async function loadVersionsForConfig(cfgId) {
   const cfg = CONFIGS.find(c => c.id === String(cfgId));
   if (!cfg || cfg.versions.length > 0) return cfg;
   try {
-    const data = await apiFetch('/api/versions', { config: cfg.configName });
+    const data = await apiFetch('/api/versions', { config_id: cfg.id });
     cfg._meta = data.meta || {};
     cfg._cfu = data.cfu || {};
     // API returns oldest→newest; reverse for display (newest first)
@@ -611,6 +636,7 @@ function type_badge(t) {
 }
 function status_badge(s) {
   if (s === 'discontinued') return `<span class="badge badge-red">${icn_x()} Поддержка прекращена</span>`;
+  if (s === 'legacy') return `<span class="badge badge-gray">Предыдущая редакция</span>`;
   return `<span class="badge badge-green">${icn_check()} Поддерживается</span>`;
 }
 function avatar_cls(t) {
@@ -804,7 +830,7 @@ async function do_copy_chain(cfgId, fromV, toV) {
   let steps = CHAIN_CACHE[key];
   if (!steps) {
     try {
-      const r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV });
+      const r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV });
       steps = chain_response_to_steps(r, cfg);
       if (steps) CHAIN_CACHE[key] = steps;
     } catch(e) { toast('Ошибка при получении цепочки'); return; }
@@ -870,7 +896,7 @@ window.addEventListener('hashchange', () => route());
    HOME VIEW
    ================================================================ */
 function render_home() {
-  const latest = [...CONFIGS].filter(c => c.latestDate).sort((a,b) => new Date(b.latestDate) - new Date(a.latestDate)).slice(0,3);
+  const latest = [...CONFIGS].filter(c => c.latestDate && c.isLatestEdition).sort((a,b) => new Date(b.latestDate) - new Date(a.latestDate)).slice(0,3);
   return `<div class="wrap">
     <div class="page-head"><div></div></div>
     <div class="hero fade-up">
@@ -946,7 +972,7 @@ function home_version_input(ver) {
     let html = `<div class="matched-list">`;
     html += `<div class="matched-list-header">Версия встречается в ${found.length} конфигурациях — выберите нужную:</div>`;
     found.forEach(c => {
-      const sub = [c.vendor, c.version_count ? c.version_count + ' версий' : ''].filter(Boolean).join(' · ');
+      const sub = [c.vendor, c.edition ? 'ред. ' + c.edition : '', c.version_count ? c.version_count + ' версий' : ''].filter(Boolean).join(' · ');
       html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">
         ${type_badge(c.type)}
         <span class="matched-cfg-name">${c.name}</span>
@@ -993,7 +1019,7 @@ async function home_build_chain() {
     const toV = toVRaw || cfg.latestV;
     if (!toV) continue;
     let r;
-    try { r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV }); }
+    try { r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV }); }
     catch(e) { continue; }
 
     if (r.note && !r.found) {
@@ -1035,6 +1061,10 @@ function render_catalog() {
           <label class="filter-opt"><input type="checkbox" value="industry" onchange="apply_filters()" id="f-industry"> Отраслевая <span class="filter-opt-count">${CONFIGS.filter(c=>c.type==='industry').length}</span></label>
         </div>
         <div class="filter-group">
+          <div class="filter-group-label">Редакции</div>
+          <label class="filter-opt"><input type="checkbox" onchange="apply_filters()" id="f-legacy"> Показывать предыдущие <span class="filter-opt-count">${CONFIGS.filter(c=>!c.isLatestEdition).length}</span></label>
+        </div>
+        <div class="filter-group">
           <div class="filter-group-label">Разработчик</div>
           ${vendors.map(v => `<label class="filter-opt"><input type="checkbox" value="v_${v}" onchange="apply_filters()" id="f-v-${v.replace(/[^a-z0-9]/gi,'')}"> ${v} <span class="filter-opt-count">${CONFIGS.filter(c=>c.vendor===v).length}</span></label>`).join('')}
         </div>
@@ -1074,7 +1104,7 @@ function config_card_html(c) {
       </div>
       <div class="config-card-badges">
         ${type_badge(c.type)}
-        ${c.status === 'discontinued' ? status_badge(c.status) : ''}
+        ${c.status !== 'active' ? status_badge(c.status) : ''}
         <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
       </div>
       <div class="config-card-desc">${c.description || c.short || c.name}</div>
@@ -1100,10 +1130,13 @@ function apply_filters() {
   const search   = (document.getElementById('catalog-search')?.value || '').toLowerCase();
   const sortVal  = document.getElementById('catalog-sort')?.value || 'date_desc';
 
+  const showLegacy = !!(document.getElementById('f-legacy') || {}).checked;
+
   let list = [...CONFIGS];
+  if (!showLegacy)    list = list.filter(c=>c.isLatestEdition);
   if (types.length)   list = list.filter(c=>types.includes(c.type));
   if (vendors.length) list = list.filter(c=>vendors.includes(c.vendor));
-  if (search) list = list.filter(c=>(c.name||'').toLowerCase().includes(search)||(c.vendor||'').toLowerCase().includes(search));
+  if (search) list = list.filter(c=>(c.name||'').toLowerCase().includes(search)||(c.vendor||'').toLowerCase().includes(search)||c.templateKey.includes(search));
 
   list.sort((a,b) => {
     if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
@@ -1125,6 +1158,20 @@ function apply_filters() {
 /* ================================================================
    CONFIG DETAIL VIEW
    ================================================================ */
+// Links to the other editions of the same template ("Редакции: 3.0 · 2.0 · 1.6").
+function editions_nav_html(cfg) {
+  if (!cfg.templateKey) return '';
+  var sibs = CONFIGS.filter(function(c) { return c.templateKey === cfg.templateKey; })
+    .sort(function(a, b) { return (b.editionNum || 0) - (a.editionNum || 0); });
+  if (sibs.length < 2) return '';
+  return '<div style="margin-top:10px;font-size:13px;color:var(--text-muted)">Редакции: ' + sibs.map(function(c) {
+    var label = c.edition || String(c.editionNum);
+    return c.id === cfg.id
+      ? '<strong style="color:var(--text)">' + label + '</strong>'
+      : '<a href="#/config/' + c.id + '" onclick="navigate(\'/config/' + c.id + '\')" style="color:var(--accent)">' + label + '</a>';
+  }).join(' · ') + '</div>';
+}
+
 function render_config(id) {
   const cfg = CONFIGS.find(c=>c.id===id);
   if (!cfg) return `<div class="wrap"><div class="empty"><div class="empty-title">Конфигурация не найдена</div></div></div>`;
@@ -1176,6 +1223,7 @@ function render_config(id) {
           ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
+        ${editions_nav_html(cfg)}
         ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
         <div class="config-meta-grid">
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
@@ -1257,7 +1305,7 @@ async function load_version_patches(cfgId, verIdx) {
   const el = document.getElementById(patchesElId);
   if (el) el.innerHTML = '<span style="color:var(--text-muted);font-size:13px">Загрузка патчей…</span>';
   try {
-    const data = await apiFetch('/api/patches', { config: cfg.configName, ver: ver.v });
+    const data = await apiFetch('/api/patches', { config_id: cfg.id, ver: ver.v });
     ver.patches = data.patches || [];
   } catch(e) {
     ver.patches = [];
@@ -1303,7 +1351,7 @@ async function cfg_do_chain(id) {
 
   result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Строю цепочку...</span></div>`;
   let r;
-  try { r = await apiFetch('/api/chain', { config: cfg.configName, from: fromV, to: toV }); }
+  try { r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV }); }
   catch(e) { result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>Ошибка сервера</span></div>`; return; }
 
   if (!r.found) {
@@ -1339,7 +1387,7 @@ async function bind_chain_page(params) {
   await loadVersionsForConfig(config);
   const toV = to || cfg.latestV;
   let r;
-  try { r = await apiFetch('/api/chain', { config: cfg.configName, from, to: toV }); }
+  try { r = await apiFetch('/api/chain', { config_id: cfg.id, from, to: toV }); }
   catch(e) { el.innerHTML = `<div class="alert alert-warning">${icn_alert()} Ошибка сервера</div>`; return; }
 
   if (!r.found) {
@@ -1420,8 +1468,8 @@ function render_settings() {
         ${[
           ['GET', '/api/configs', 'Список конфигураций с метаданными'],
           ['GET', '/api/configs?version=X', 'Конфигурации по версии'],
-          ['GET', '/api/versions?config=NAME', 'Версии + даты + платформы'],
-          ['GET', '/api/chain?config=&from=&to=', 'Построить цепочку обновлений'],
+          ['GET', '/api/versions?config_id=ID', 'Версии + даты + платформы'],
+          ['GET', '/api/chain?config_id=&from=&to=', 'Построить цепочку обновлений'],
           ['GET', '/api/stats', 'Статистика базы данных'],
         ].map(([m,u,d]) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface2);border-radius:var(--r-xs);flex-wrap:wrap">
           <span style="color:var(--accent);font-weight:700;min-width:40px">${m}</span>

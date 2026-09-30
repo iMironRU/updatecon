@@ -141,6 +141,7 @@ tr:hover td { background: var(--surface2); }
     <button class="nav-btn active" onclick="show('dash')">Дашборд</button>
     <button class="nav-btn" onclick="show('logs')">Логи</button>
     <button class="nav-btn" onclick="show('import')">Импорт</button>
+    <button class="nav-btn" onclick="show('match')">Сопоставление</button>
     <button class="nav-btn" onclick="show('settings')">Настройки</button>
   </nav>
   <div class="header-user">
@@ -282,6 +283,43 @@ tr:hover td { background: var(--surface2); }
     </div>
   </div>
 
+  <!-- MATCHING -->
+  <div id="page-match" class="page">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Проекты releases.1c.ru ↔ приложения</span>
+        <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="loadMatch()">↻ Обновить</button>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:14px">
+          <div>
+            Приложение = шаблон конфигурации (каталог в tmplts, например <span class="mono">1c/Accounting</span>) + редакция.
+            Проекты сопоставляются автоматически при импорте releases.1c.ru: по правилу «nick = шаблон + редакция»,
+            затем строго по совпадению версий. Ручная привязка имеет приоритет и импортом не перезаписывается.
+          </div>
+        </div>
+        <div id="match-stats" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
+          <select id="match-filter" onchange="renderMatch()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-family:inherit">
+            <option value="unmatched">Не сопоставленные</option>
+            <option value="all">Все</option>
+            <option value="versions">По версиям (проверить)</option>
+            <option value="manual">Вручную</option>
+          </select>
+          <div class="field" style="flex:1;margin:0">
+            <input id="match-search" placeholder="Поиск: nick, название, шаблон…" oninput="renderMatch()" style="font-family:inherit">
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Проект</th><th>Приложение</th><th>Способ</th><th></th></tr></thead>
+          <tbody id="match-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- SETTINGS -->
   <div id="page-settings" class="page">
 
@@ -366,10 +404,11 @@ function show(page) {
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
-  document.querySelectorAll('.nav-btn')[['dash','logs','import','settings'].indexOf(page)].classList.add('active');
+  document.querySelectorAll('.nav-btn')[['dash','logs','import','match','settings'].indexOf(page)].classList.add('active');
   currentPage = page;
   if (page === 'dash') loadDash();
   if (page === 'logs') loadLogs();
+  if (page === 'match') loadMatch();
   if (page === 'settings') { loadSettings(); loadSslStatus(); }
 }
 
@@ -631,6 +670,133 @@ async function checkRunningImport() {
         break;
       }
     } catch(chkErr) { void chkErr; }
+  }
+}
+
+// ── Matching: releases.1c.ru projects ↔ application editions ────────────────
+var matchData = { projects: [], appsWithoutProject: 0 };
+var matchPickerNick = null;
+var matchPickerTimer = null;
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function methodBadge(m) {
+  if (m === 'manual')   return '<span class="badge badge-running">вручную</span>';
+  if (m === 'rule')     return '<span class="badge badge-ok">правило</span>';
+  if (m === 'versions') return '<span class="badge badge-skipped">по версиям</span>';
+  return '<span class="badge badge-error">нет</span>';
+}
+
+async function loadMatch() {
+  try {
+    matchData = await apiFetch('/admin/api/projects');
+    renderMatch();
+  } catch (e) {
+    document.getElementById('match-tbody').innerHTML =
+      '<tr><td colspan="4" style="color:var(--red)">Ошибка загрузки: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+function renderMatch() {
+  var all = matchData.projects || [];
+  var f = document.getElementById('match-filter').value;
+  var q = document.getElementById('match-search').value.trim().toLowerCase();
+  var cnt = { rule: 0, versions: 0, manual: 0, none: 0 };
+  all.forEach(function(p) {
+    if (!p.config_id) cnt.none++;
+    else cnt[p.match_method] = (cnt[p.match_method] || 0) + 1;
+  });
+  document.getElementById('match-stats').innerHTML =
+    'Проектов: <b>' + all.length + '</b> · по правилу: ' + cnt.rule + ' · по версиям: ' + cnt.versions +
+    ' · вручную: ' + cnt.manual + ' · <span style="color:var(--orange)">не сопоставлено: ' + cnt.none + '</span>' +
+    ' · приложений без проекта: ' + matchData.appsWithoutProject;
+
+  var list = all.filter(function(p) {
+    if (f === 'unmatched' && p.config_id) return false;
+    if (f === 'manual' && p.match_method !== 'manual') return false;
+    if (f === 'versions' && p.match_method !== 'versions') return false;
+    if (q) {
+      var hay = (p.nick + ' ' + p.display_name + ' ' + (p.config_name || '') + ' ' + (p.template_code || '')).toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+
+  var html = list.map(function(p) {
+    var app = p.config_id
+      ? esc(p.config_name) + '<div class="mono" style="color:var(--muted)">' + esc(p.template_code) + ' · ред. ' + esc(p.edition) + ' · id ' + p.config_id + '</div>'
+      : '<span style="color:var(--muted)">—</span>';
+    var row = '<tr>' +
+      '<td>' + esc(p.display_name) + '<div class="mono" style="color:var(--muted)">' +
+        '<a href="https://releases.1c.ru' + esc(p.href) + '" target="_blank" rel="noopener">' + esc(p.nick) + '</a>' +
+        (p.latest_version ? ' · ' + esc(p.latest_version) : '') + '</div></td>' +
+      '<td>' + app + '</td>' +
+      '<td>' + methodBadge(p.config_id || p.match_method === 'manual' ? p.match_method : null) + '</td>' +
+      '<td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:3px 10px;font-size:12px" data-nick="' + esc(p.nick) + '" onclick="openMatchPicker(this.dataset.nick)">Изменить</button></td>' +
+      '</tr>';
+    if (matchPickerNick === p.nick) {
+      row += '<tr><td colspan="4" style="background:var(--surface2)">' +
+        '<div class="field" style="margin-bottom:8px"><input id="match-picker-q" placeholder="Найти приложение: название или шаблон (например 1c/accounting)" oninput="searchMatchApps()" style="font-family:inherit"></div>' +
+        '<div id="match-picker-results" style="max-height:220px;overflow-y:auto;margin-bottom:8px"></div>' +
+        '<div style="display:flex;gap:8px">' +
+        '<button class="btn btn-ghost" style="font-size:12px" data-nick="' + esc(p.nick) + '" onclick="linkProject(this.dataset.nick, {config_id: null})">Не привязывать</button>' +
+        '<button class="btn btn-ghost" style="font-size:12px" data-nick="' + esc(p.nick) + '" onclick="linkProject(this.dataset.nick, {auto: true})">Вернуть автосопоставление</button>' +
+        '<button class="btn btn-ghost" style="font-size:12px;margin-left:auto" onclick="openMatchPicker(null)">Закрыть</button>' +
+        '</div></td></tr>';
+    }
+    return row;
+  }).join('');
+  document.getElementById('match-tbody').innerHTML = html ||
+    '<tr><td colspan="4" style="color:var(--muted);text-align:center;padding:20px">Нет проектов (запустите импорт releases.1c.ru)</td></tr>';
+  if (matchPickerNick) {
+    var inp = document.getElementById('match-picker-q');
+    if (inp) { inp.focus(); searchMatchApps(); }
+  }
+}
+
+function openMatchPicker(nick) {
+  matchPickerNick = nick;
+  renderMatch();
+}
+
+function searchMatchApps() {
+  clearTimeout(matchPickerTimer);
+  matchPickerTimer = setTimeout(async function() {
+    var inp = document.getElementById('match-picker-q');
+    var box = document.getElementById('match-picker-results');
+    if (!inp || !box) return;
+    try {
+      var data = await apiFetch('/admin/api/apps?q=' + encodeURIComponent(inp.value.trim()));
+      box.innerHTML = (data.apps || []).map(function(a) {
+        return '<div style="padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer" data-id="' + a.id + '" ' +
+          'onmouseover="this.style.background=\'var(--surface)\'" onmouseout="this.style.background=\'\'" ' +
+          'onclick="linkProject(matchPickerNick, {config_id: Number(this.dataset.id)})">' +
+          esc(a.display_name || a.name) + ' <span class="mono" style="color:var(--muted)">' + esc(a.template_code) +
+          ' · ред. ' + esc(a.edition) + ' · id ' + a.id + ' · рёбер ' + a.edges + '</span></div>';
+      }).join('') || '<div style="color:var(--muted);padding:6px 8px">Ничего не найдено</div>';
+    } catch (e) {
+      box.innerHTML = '<div style="color:var(--red)">' + esc(e.message) + '</div>';
+    }
+  }, 250);
+}
+
+async function linkProject(nick, body) {
+  body.nick = nick;
+  try {
+    var r = await fetch(location.origin + '/admin/api/projects/link', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) { alert(d.error || ('HTTP ' + r.status)); return; }
+    matchPickerNick = null;
+    await loadMatch();
+  } catch (e) {
+    alert('Сетевая ошибка: ' + e.message);
   }
 }
 

@@ -1,33 +1,44 @@
 /**
  * import-releases.ts — fetch releases.1c.ru and merge into DB as secondary source.
  *
- * Primary source (ITS / .lst) owns configurations and update_edges.
- * This adapter writes:
- *   - configurations: display_name, releases_href, group_name,
- *                     next_release_version, next_release_planned_date, next_release_plan_updated
+ * Primary source (ITS / .lst) owns configurations (application editions) and
+ * update_edges. This adapter writes:
+ *   - release_projects: every project from /total + its link to an application
+ *   - configurations: display fields copied from the primary linked project
  *   - version_meta: release_date, min_platform, file_size_bytes
  *   - patches: uuid, patch_date, title, download_key
  *
- * Matching strategy: version-set intersection.
- *   For each releases.1c.ru project, collect its known versions.
- *   Find all our configs whose to_version set overlaps ≥ MIN_MATCH_RATIO.
- *   If exactly one config matches above threshold → link it.
+ * Matching (project → application edition), in order:
+ *   1. manual  — set in the admin UI, never overwritten here.
+ *   2. rule    — nick = template name + edition suffix ("Accounting30" →
+ *                "1c/Accounting"); edition picked by version overlap within
+ *                that template only.
+ *   3. versions — strict fallback for what the rule cannot see: ≥90% of the
+ *                project's versions in one application, a clear single winner,
+ *                and that application has no project yet.
  */
 
-import { sql, eq } from "drizzle-orm";
+import { sql, eq, and, inArray, isNotNull, or } from "drizzle-orm";
 import { db, pool } from "../db/client.js";
-import { configurations, versionMeta, patches, importRuns } from "../db/schema.js";
+import {
+  configurations, versionMeta, patches, importRuns, releaseProjects,
+  type ReleaseProject,
+} from "../db/schema.js";
+import { nickMatchesTemplate, templateName } from "../db/template.js";
+import { compareVersions } from "../parser/version.js";
 import { ReleasesSession } from "./fetch-releases.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles,
   parseFileProperties, parsePatchesPage,
+  type ReleasesConfig, type VersionRow,
 } from "./parse-releases.js";
 
-// releases→DB: ≥80% of releases versions must appear in our DB for the winning config.
-const MIN_FORWARD_RATIO = 0.8;
-// DB→releases: the winning config must have ≥30% of its own to_versions in releases.
-const MIN_REVERSE_RATIO = 0.3;
-const MIN_RELEASES_VERSIONS = 10;
+// Fallback (versions) thresholds — deliberately strict: a wrong link is worse
+// than no link, and the admin can always link by hand.
+const FALLBACK_MIN_VERSIONS = 10;
+const FALLBACK_MIN_FORWARD = 0.9;   // share of the project's versions found in the app
+const FALLBACK_MIN_REVERSE = 0.5;   // share of the app's versions found in the project
+const FALLBACK_MAX_RUNNER_UP = 0.5; // runner-up must be below this share of the winner
 
 /** Map a releases.1c.ru group_name to a short region code. */
 function groupToRegion(groupName: string | null | undefined): string | null {
@@ -54,136 +65,138 @@ function groupToRegion(groupName: string | null | undefined): string | null {
   return "ru"; // default
 }
 
-/** Region stems to search in config names/display names (handles Russian declension). */
-const REGION_STEMS: Record<string, string[]> = {
-  az: ["азербайджан", "azerbaij"],
-  am: ["армени", "armeni"],
-  baltics: ["балти", "baltic"],
-  by: ["беларус", "белорус", "belarus"],
-  bg: ["болгари", "bulgari"],
-  ge: ["грузи", "georgi"],
-  kz: ["казахстан", "kazakhst"],
-  kg: ["кыргыз", "kyrgyz"],
-  lv: ["латви", "latvia"],
-  lt: ["литв", "lithu"],
-  md: ["молдов", "moldova"],
-  tj: ["таджик", "tajik"],
-  uz: ["узбек", "uzbek"],
-  ee: ["эстони", "estoni"],
-  stdlib: ["библиотек", "library"],
-  intl: ["международн", "internation"],
-};
 
-/** Returns true if the DB config's name/displayName indicates it belongs to the given region. */
-function configMatchesRegion(configName: string, configDisplayName: string | null | undefined, region: string): boolean {
-  if (region === "ru") return true; // no restriction for Russian
-  const stems = REGION_STEMS[region];
-  if (!stems) return true; // unknown region — allow
-  const haystack = ((configName || "") + " " + (configDisplayName || "")).toLowerCase();
-  return stems.some((s) => haystack.includes(s));
+// ── Applications & matching ──────────────────────────────────────────────────
+
+export interface App {
+  id: number;
+  name: string;
+  templateCode: string;
+  templateKey: string;
+  edition: number;
 }
 
-interface MatchResult {
-  configId: number;
-  configName: string;
-  configDisplayName: string | null;
-  forwardRatio: number;
-  reverseRatio: number;
+export async function loadApps(): Promise<App[]> {
+  const rows = await db
+    .select({
+      id: configurations.id, name: configurations.name,
+      templateCode: configurations.templateCode, templateKey: configurations.templateKey,
+      edition: configurations.edition,
+    })
+    .from(configurations);
+  const apps: App[] = [];
+  for (const r of rows) {
+    if (r.templateCode && r.templateKey && r.edition !== null) {
+      apps.push({ id: r.id, name: r.name, templateCode: r.templateCode, templateKey: r.templateKey, edition: r.edition });
+    }
+  }
+  return apps;
 }
 
-async function findMatchingConfig(
-  releasesVersions: string[],
-  displayName?: string,
-): Promise<MatchResult | null> {
-  if (releasesVersions.length < MIN_RELEASES_VERSIONS) return null;
-  const versionLiterals = sql.join(
-    releasesVersions.map((v) => sql`${v}`),
-    sql`, `,
-  );
+const appLabel = (a: App) => `${a.name} [${a.templateCode}, ред. ${a.edition}]`;
+const nickOf = (href: string) => href.replace(/^\/project\//, "");
+const firstSegment = (v: string) => Number(v.split(".")[0]);
+
+/** Distinct to_versions each config shares with the given version list. */
+async function overlapCounts(ids: number[] | null, versions: string[]): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (versions.length === 0 || (ids && ids.length === 0)) return out;
+  const idFilter = ids
+    ? sql`AND config_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
+    : sql``;
   const rows = await db.execute(sql`
-    SELECT config_id, count(*)::int AS matches
+    SELECT config_id, count(DISTINCT to_version)::int AS n
     FROM update_edges
-    WHERE to_version IN (${versionLiterals})
+    WHERE to_version IN (${sql.join(versions.map((v) => sql`${v}`), sql`, `)}) ${idFilter}
     GROUP BY config_id
-    ORDER BY matches DESC
-    LIMIT 10
   `);
-  const hits: { config_id: number; matches: number }[] =
-    (rows as any).rows ?? (rows as any);
-  if (!hits.length) return null;
-
-  const qualifying = hits
-    .map((h) => ({ config_id: Number(h.config_id), matches: Number(h.matches) }))
-    .filter((h) => h.matches / releasesVersions.length >= MIN_FORWARD_RATIO);
-  if (!qualifying.length) return null;
-
-  let winnerId = Number(qualifying[0].config_id);
-  let winnerMatches = Number(qualifying[0].matches);
-
-  if (displayName && qualifying.length > 0) {
-    const candidateIds = qualifying.map((h) => h.config_id);
-    const cfgsRows = await db.execute(sql`
-      SELECT id, name, display_name FROM configurations
-      WHERE id IN (${sql.join(candidateIds.map((id) => sql`${id}`), sql`, `)})
-    `);
-    const cfgs: { id: number; name: string; display_name: string | null }[] =
-      (cfgsRows as any).rows ?? (cfgsRows as any);
-    const matchesByConfigId = new Map(
-      qualifying.map((h) => [Number(h.config_id), h.matches]),
-    );
-    const norm = (s: string) =>
-      s.toLowerCase().replace(/[^а-яёa-z0-9]/gi, "");
-    const relNorm = norm(displayName);
-    let bestScore = -1;
-    for (const cfg of cfgs) {
-      const cfgNorm = norm(cfg.name);
-      const lcs = longestCommonSubstring(relNorm, cfgNorm);
-      const score = (2 * lcs) / (relNorm.length + cfgNorm.length);
-      if (score > bestScore) {
-        bestScore = score;
-        winnerId = Number(cfg.id);
-        winnerMatches = matchesByConfigId.get(Number(cfg.id)) ?? winnerMatches;
-      }
-    }
+  for (const r of ((rows as any).rows ?? rows) as { config_id: number; n: number }[]) {
+    out.set(Number(r.config_id), Number(r.n));
   }
-
-  const forwardRatio = winnerMatches / releasesVersions.length;
-
-  const totalRows = await db.execute(sql`
-    SELECT count(DISTINCT to_version)::int AS total
-    FROM update_edges WHERE config_id = ${winnerId}
-  `);
-  const total: number =
-    ((totalRows as any).rows ?? (totalRows as any))[0]?.total ?? 0;
-  const reverseRatio = total > 0 ? winnerMatches / total : 0;
-  if (reverseRatio < MIN_REVERSE_RATIO) return null;
-
-  const cfgRows = await db
-    .select({ id: configurations.id, name: configurations.name, displayName: configurations.displayName })
-    .from(configurations)
-    .where(eq(configurations.id, winnerId))
-    .limit(1);
-  if (!cfgRows.length) return null;
-
-  return {
-    configId: cfgRows[0].id,
-    configName: cfgRows[0].name,
-    configDisplayName: cfgRows[0].displayName ?? null,
-    forwardRatio,
-    reverseRatio,
-  };
+  return out;
 }
 
-function longestCommonSubstring(a: string, b: string): number {
-  let max = 0;
-  for (let i = 0; i < a.length; i++) {
-    for (let j = 0; j < b.length; j++) {
-      let len = 0;
-      while (i + len < a.length && j + len < b.length && a[i + len] === b[j + len]) len++;
-      if (len > max) max = len;
-    }
+/** Rule: nick = template name + edition suffix. Returns the app id or null. */
+export async function matchByRule(nick: string, versions: string[], apps: App[]): Promise<App | null> {
+  let cands = apps.filter((a) => nickMatchesTemplate(nick, a.templateCode));
+  if (cands.length === 0 || versions.length === 0) return null;
+  // Most specific template wins ("AccountingCorp" over "Accounting").
+  const maxLen = Math.max(...cands.map((a) => templateName(a.templateCode).length));
+  cands = cands.filter((a) => templateName(a.templateCode).length === maxLen);
+
+  // The project's dominant edition (first version segment).
+  const edCount = new Map<number, number>();
+  for (const v of versions) edCount.set(firstSegment(v), (edCount.get(firstSegment(v)) ?? 0) + 1);
+  let domEd = -1, domN = -1;
+  for (const [ed, n] of edCount) if (n > domN) { domEd = ed; domN = n; }
+
+  const overlap = await overlapCounts(cands.map((a) => a.id), versions);
+  let best: App | null = null, bestScore = -1;
+  for (const a of cands) {
+    const score = (overlap.get(a.id) ?? 0) * 2 + (a.edition === domEd ? 1 : 0);
+    if (score > bestScore) { best = a; bestScore = score; }
   }
-  return max;
+  if (!best) return null;
+  // Right template but neither the versions nor the edition fit: the edition
+  // is probably not in the LST yet — do not force it onto another edition.
+  if ((overlap.get(best.id) ?? 0) === 0 && best.edition !== domEd) return null;
+  return best;
+}
+
+/** Strict version-overlap fallback. `taken` = apps that already have a project. */
+export async function matchByVersions(versions: string[], apps: Map<number, App>, taken: Set<number>): Promise<App | null> {
+  const distinct = [...new Set(versions)];
+  if (distinct.length < FALLBACK_MIN_VERSIONS) return null;
+  const hits = [...(await overlapCounts(null, distinct)).entries()].sort((a, b) => b[1] - a[1]);
+  if (hits.length === 0) return null;
+  const [winId, winN] = hits[0];
+  // The best fit already has its own project → this one is a sibling product
+  // (mobile client, library, …) rather than a new link.
+  if (taken.has(winId)) return null;
+  if (winN / distinct.length < FALLBACK_MIN_FORWARD) return null;
+  if (hits[1] && hits[1][1] >= winN * FALLBACK_MAX_RUNNER_UP) return null;
+  const totalRows = await db.execute(sql`
+    SELECT count(DISTINCT to_version)::int AS total FROM update_edges WHERE config_id = ${winId}
+  `);
+  const total = Number(((totalRows as any).rows ?? totalRows)[0]?.total ?? 0);
+  if (total === 0 || winN / total < FALLBACK_MIN_REVERSE) return null;
+  return apps.get(winId) ?? null;
+}
+
+/**
+ * Copy display fields of each application's primary project into
+ * configurations (manual links first, then the project with the newest
+ * version). Also used by the admin UI after a manual link.
+ */
+export async function refreshPrimaryProjects(): Promise<void> {
+  const linked = await db.select().from(releaseProjects).where(isNotNull(releaseProjects.configId));
+  const primary = new Map<number, ReleaseProject>();
+  for (const p of linked) {
+    const cur = primary.get(p.configId!);
+    if (!cur) { primary.set(p.configId!, p); continue; }
+    const pm = p.matchMethod === "manual", cm = cur.matchMethod === "manual";
+    if (pm !== cm) { if (pm) primary.set(p.configId!, p); continue; }
+    const cmp = compareVersions(p.latestVersion ?? "", cur.latestVersion ?? "");
+    if (cmp > 0 || (cmp === 0 && p.nick < cur.nick)) primary.set(p.configId!, p);
+  }
+  await db.transaction(async (tx) => {
+    // Clear first: releases_href is unique and may move between applications.
+    await tx.update(configurations).set({
+      releasesHref: null, displayName: null, groupName: null, region: null,
+      nextReleaseVersion: null, nextReleasePlannedDate: null, nextReleasePlanUpdated: null,
+    }).where(or(isNotNull(configurations.releasesHref), isNotNull(configurations.displayName)));
+    for (const [configId, p] of primary) {
+      await tx.update(configurations).set({
+        releasesHref: p.href,
+        displayName: p.displayName || null,
+        groupName: p.groupName,
+        region: p.region,
+        nextReleaseVersion: p.nextReleaseVersion,
+        nextReleasePlannedDate: p.nextReleasePlannedDate,
+        nextReleasePlanUpdated: p.nextReleasePlanUpdated,
+      }).where(eq(configurations.id, configId));
+    }
+  });
 }
 
 // ── File size fetching ────────────────────────────────────────────────────────
@@ -275,7 +288,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export interface ReleasesImportOptions {
-  /** Sync group names and planned release dates from /total (fast, one page) */
+  /** Ignored: /total is always synced (release_projects needs it). Kept for callers. */
   syncTotalPage?: boolean;
   /** Fetch file sizes for version_meta rows (slow, many pages) */
   syncSizes?: boolean;
@@ -291,13 +304,13 @@ export interface ReleasesImportOptions {
   signal?: AbortSignal;
 }
 
+
 export async function runReleasesImport(
   login = process.env.ITS_LOGIN,
   password = process.env.ITS_PASSWORD,
   opts: ReleasesImportOptions = {},
 ): Promise<void> {
   const {
-    syncTotalPage = true,
     syncSizes = true,
     syncPatchesData = false,
     sizesLimit = 200,
@@ -323,98 +336,64 @@ export async function runReleasesImport(
   log("Авторизация успешна");
 
   log("Загрузка списка проектов (/total)...");
-  const totalHtml = await session.get("/total");
-  const allConfigs = parseTotalPage(totalHtml);
-  log(`Найдено проектов: ${allConfigs.length}`);
+  const projects = parseTotalPage(await session.get("/total"));
+  log(`Найдено проектов: ${projects.length}`);
 
-  let matched = 0, skipped = 0, metaRows = 0, totalSized = 0, totalPatches = 0;
+  const apps = await loadApps();
+  const appsById = new Map(apps.map((a) => [a.id, a]));
+  const siblings = new Map(apps.map((a) => [`${a.templateKey}#${a.edition}`, a]));
 
-  const bestMatchForConfig = new Map<number, { matches: number; href: string }>();
+  // Manual links from the admin UI are authoritative (config_id NULL = "never link").
+  const manual = new Map<string, number | null>();
+  for (const p of await db
+    .select({ nick: releaseProjects.nick, configId: releaseProjects.configId, matchMethod: releaseProjects.matchMethod })
+    .from(releaseProjects)) {
+    if (p.matchMethod === "manual") manual.set(p.nick, p.configId);
+  }
 
-  for (let i = 0; i < allConfigs.length; i++) {
-    // Check abort signal between iterations
-    if (signal?.aborted) {
-      const e = new Error("Cancelled by user");
-      e.name = "AbortError";
-      throw e;
-    }
+  // Every project from /total is stored, matched or not — the admin UI lists them.
+  const seenAt = new Date();
+  for (const p of projects) {
+    const meta = {
+      href: p.href,
+      displayName: p.displayName,
+      groupName: p.groupName || null,
+      region: groupToRegion(p.groupName),
+      latestVersion: p.latestVersion || null,
+      nextReleaseVersion: p.nextReleaseVersion ?? null,
+      nextReleasePlannedDate: p.nextReleasePlannedDate ?? null,
+      nextReleasePlanUpdated: p.nextReleasePlanUpdated ?? null,
+      lastSeenAt: seenAt,
+    };
+    await db.insert(releaseProjects)
+      .values({ nick: nickOf(p.href), ...meta })
+      .onConflictDoUpdate({ target: releaseProjects.nick, set: meta });
+  }
 
-    const cfg = allConfigs[i];
-    const nick = cfg.href.replace(/^\/project\//, "");
+  let byRule = 0, byVersions = 0, byManual = 0, metaRows = 0, totalSized = 0;
+  const linkedNicks = new Set<string>();
+  const taken = new Set<number>();          // apps that got a project this run
+  const fetchedNicks: string[] = [];
+  const pending: { p: ReleasesConfig; rows: VersionRow[] }[] = [];
 
-    onProgress?.(i + 1, allConfigs.length, nick);
-    if (!onLog) {
-      process.stdout.write(`\r[releases] [${i + 1}/${allConfigs.length}] ${cfg.href.padEnd(40)}`);
-    }
+  const applyLink = async (p: ReleasesConfig, rows: VersionRow[], app: App, method: string) => {
+    const nick = nickOf(p.href);
+    await db.update(releaseProjects)
+      .set({ configId: app.id, matchMethod: method })
+      .where(eq(releaseProjects.nick, nick));
+    linkedNicks.add(nick);
+    taken.add(app.id);
 
-    let versionRows;
-    try {
-      const html = await session.get(`${cfg.href}?allUpdates=true`);
-      versionRows = parseProjectPage(html);
-    } catch (e) {
-      log(`  ✗ ${nick}: ${(e as Error).message}`);
-      skipped++;
-      continue;
-    }
-
-    if (versionRows.length === 0) { skipped++; continue; }
-
-    const versions = versionRows.map((r) => r.version);
-    const match = await findMatchingConfig(versions, cfg.displayName);
-    if (!match) { skipped++; continue; }
-
-    const releasesRegion = groupToRegion(cfg.groupName);
-
-    // For non-Russian regional projects: the matched DB config must have a name/display_name
-    // that hints at the same region. This prevents Russian configs from being matched to
-    // Azerbaijani/Kazakh/etc. projects that share version ranges (localised ports).
-    if (releasesRegion && releasesRegion !== "ru" && releasesRegion !== "stdlib" && releasesRegion !== "intl") {
-      if (!configMatchesRegion(match.configName, match.configDisplayName, releasesRegion)) {
-        log(`  ✗ ${nick}: регион ${releasesRegion} не совпадает с конфигом ${match.configName}`);
-        skipped++;
-        continue;
-      }
-    }
-
-    const prev = bestMatchForConfig.get(match.configId);
-    const currentMatches = Math.round(match.forwardRatio * versions.length);
-    if (prev && prev.matches >= currentMatches) { skipped++; continue; }
-    bestMatchForConfig.set(match.configId, { matches: currentMatches, href: cfg.href });
-
-    log(`  ✓ ${nick} → ${match.configName}`);
-
-    // If releases_href was previously assigned to a different config (matching
-    // heuristic can change between runs), clear it there first — the unique
-    // constraint does not allow two rows to share the same href.
-    await db.execute(sql`
-      UPDATE configurations SET releases_href = NULL
-      WHERE releases_href = ${cfg.href} AND id <> ${match.configId}
-    `);
-
-    // Write config enrichment (display_name, releases_href, group, region, planned dates)
-    await db.execute(sql`
-      UPDATE configurations SET
-        display_name                = ${cfg.displayName},
-        releases_href               = ${cfg.href},
-        group_name                  = ${cfg.groupName || null},
-        region                      = ${releasesRegion},
-        next_release_version        = ${cfg.nextReleaseVersion ?? null},
-        next_release_planned_date   = ${cfg.nextReleasePlannedDate ?? null},
-        next_release_plan_updated   = ${cfg.nextReleasePlanUpdated ?? null}::date
-      WHERE id = ${match.configId}
-    `);
-
-    // Upsert version_meta rows
-    for (const row of versionRows) {
+    // Each version goes to its own edition of the same template (a project
+    // occasionally lists versions of a neighbouring edition).
+    for (const row of rows) {
       if (!row.releaseDate && !row.minPlatform) continue;
+      const ed = firstSegment(row.version);
+      const target = ed === app.edition ? app : siblings.get(`${app.templateKey}#${ed}`);
+      if (!target) continue;
       await db.execute(sql`
         INSERT INTO version_meta (config_id, version, release_date, min_platform, source, updated_at)
-        VALUES (
-          ${match.configId}, ${row.version},
-          ${row.releaseDate ?? null}::date,
-          ${row.minPlatform ?? null},
-          'releases', now()
-        )
+        VALUES (${target.id}, ${row.version}, ${row.releaseDate ?? null}::date, ${row.minPlatform ?? null}, 'releases', now())
         ON CONFLICT (config_id, version) DO UPDATE
           SET release_date = EXCLUDED.release_date,
               min_platform = EXCLUDED.min_platform,
@@ -423,26 +402,95 @@ export async function runReleasesImport(
       metaRows++;
     }
 
-    // File sizes (incremental, limited per run)
     if (syncSizes) {
-      const sized = await syncFileSizesForConfig(session, match.configId, nick, Math.ceil(sizesLimit / allConfigs.length) + 1);
+      const sized = await syncFileSizesForConfig(session, app.id, nick, Math.ceil(sizesLimit / projects.length) + 1);
       if (sized > 0) log(`    размеры: ${sized} версий`);
       totalSized += sized;
     }
-
-    // Patches (only if explicitly requested)
     if (syncPatchesData) {
-      // Only fetch patches for the latest 3 versions to keep it manageable
-      const recentVersions = versions.slice(-3);
-      const p = await syncPatchesForConfig(session, match.configId, nick, recentVersions);
-      totalPatches += p;
+      await syncPatchesForConfig(session, app.id, nick, rows.map((r) => r.version).slice(-3));
+    }
+  };
+
+  // ── Pass 1: fetch every project; manual and rule links are applied at once ──
+  for (let i = 0; i < projects.length; i++) {
+    if (signal?.aborted) {
+      const e = new Error("Cancelled by user");
+      e.name = "AbortError";
+      throw e;
+    }
+    const p = projects[i];
+    const nick = nickOf(p.href);
+    onProgress?.(i + 1, projects.length, nick);
+    if (!onLog) process.stdout.write(`\r[releases] [${i + 1}/${projects.length}] ${nick.padEnd(40)}`);
+
+    let rows: VersionRow[];
+    try {
+      rows = parseProjectPage(await session.get(`${p.href}?allUpdates=true`));
+    } catch (e) {
+      log(`  ✗ ${nick}: ${(e as Error).message}`);
+      continue;
+    }
+    fetchedNicks.push(nick);
+
+    if (manual.has(nick)) {
+      const app = appsById.get(manual.get(nick) ?? -1);
+      if (app) {
+        log(`  ✓ ${nick} → ${appLabel(app)} [вручную]`);
+        await applyLink(p, rows, app, "manual");
+        byManual++;
+      } else {
+        linkedNicks.add(nick); // manual "no link": keep it that way
+      }
+      continue;
     }
 
-    matched++;
+    const app = await matchByRule(nick, rows.map((r) => r.version), apps);
+    if (app) {
+      log(`  ✓ ${nick} → ${appLabel(app)}`);
+      await applyLink(p, rows, app, "rule");
+      byRule++;
+    } else {
+      pending.push({ p, rows });
+    }
   }
 
+  // ── Pass 2: strict version fallback for what the rule could not place ──
+  for (const { p, rows } of pending) {
+    if (signal?.aborted) {
+      const e = new Error("Cancelled by user");
+      e.name = "AbortError";
+      throw e;
+    }
+    const app = await matchByVersions(rows.map((r) => r.version), appsById, taken);
+    if (!app) continue;
+    log(`  ≈ ${nickOf(p.href)} → ${appLabel(app)} [по версиям]`);
+    await applyLink(p, rows, app, "versions");
+    byVersions++;
+  }
+
+  // Auto links that no longer hold are dropped (only for projects we could
+  // actually fetch this run — a network error must not unlink anything).
+  const stale = fetchedNicks.filter((n) => !linkedNicks.has(n));
+  for (let i = 0; i < stale.length; i += 500) {
+    await db.update(releaseProjects)
+      .set({ configId: null, matchMethod: null })
+      .where(and(
+        inArray(releaseProjects.nick, stale.slice(i, i + 500)),
+        sql`${releaseProjects.matchMethod} IS DISTINCT FROM 'manual'`,
+      ));
+  }
+
+  await refreshPrimaryProjects();
+
   if (!onLog) process.stdout.write("\n");
-  log(`Готово: совпало=${matched}, пропущено=${skipped}, метаданных=${metaRows}, размеров=${totalSized}`);
+  const matched = byRule + byVersions + byManual;
+  const unmatched = projects.length - matched;
+  log(
+    `Готово: сопоставлено=${matched} (правило=${byRule}, по версиям=${byVersions}, вручную=${byManual}), ` +
+    `не сопоставлено=${unmatched}, метаданных=${metaRows}, размеров=${totalSized}`,
+  );
+  if (unmatched > 0) log(`Несопоставленные проекты — в админке, вкладка «Сопоставление».`);
 
   await db.insert(importRuns).values({
     source: "releases",
@@ -450,9 +498,9 @@ export async function runReleasesImport(
     fileBytes: 0,
     configsFound: matched,
     edgesUpserted: metaRows,
-    edgesUnchanged: skipped,
+    edgesUnchanged: unmatched,
     status: "ok",
-    message: `matched=${matched} skipped=${skipped} meta=${metaRows} sizes=${totalSized}`,
+    message: `rule=${byRule} versions=${byVersions} manual=${byManual} unmatched=${unmatched} meta=${metaRows} sizes=${totalSized}`,
     startedAt,
     finishedAt: new Date(),
   });

@@ -35,7 +35,7 @@ interface Predecessor {
 }
 
 export async function findChain(
-  configName: string,
+  configId: number,
   fromVersion: string,
   toVersion: string,
   maxDepth = 64,
@@ -49,14 +49,6 @@ export async function findChain(
   if (from === to) return { found: true, steps: [], length: 0 };
 
   const edition = toPv.segments[0] ?? 0;
-
-  // Resolve config id once.
-  const cfgRows = await db.execute(
-    sql`SELECT id FROM configurations WHERE name = ${configName} LIMIT 1`,
-  );
-  const cfgList = (cfgRows as any).rows ?? (cfgRows as any);
-  if (!cfgList?.length) return { found: false, steps: [], length: 0 };
-  const configId: number = cfgList[0].id;
 
   // BFS: frontier = versions to expand next; pred = how we got there.
   const visited = new Set<string>([from]);

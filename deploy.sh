@@ -233,6 +233,16 @@ if $IS_FRESH && [[ "${RESTORE_SEED:-n}" =~ ^[Yy] ]] && [ -f "$SEED_FILE" ]; then
   run_spin "Восстанавливаем дамп данных" bash -c \
     "zcat '$SEED_FILE' | $DC exec -T db psql -U upd -d upd -q"
 
+  # Страховка: дамп данных может не нести позиции счётчиков id — без этого
+  # первая же вставка нового приложения/ребра упадёт на первичном ключе.
+  $DC exec -T db psql -U upd -d upd -q >> "$LOG_FILE" 2>&1 <<'SQL' || true
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['configurations','update_edges','version_meta','patches','import_runs'] LOOP
+    EXECUTE format('SELECT setval(pg_get_serial_sequence(%L, ''id''), greatest((SELECT max(id) FROM %I), 1))', t, t);
+  END LOOP;
+END $$;
+SQL
+
   sed -i "s/^IMPORT_ON_START=.*/IMPORT_ON_START=0/" .env
 fi
 

@@ -23,7 +23,8 @@ src/parser/
   lst-parser.ts         ORACLE: faithful port of 1C ПарсерLST (do not "optimize")
   lst-parser-stream.ts  streaming parser used in production
 src/db/
-  schema.ts             Drizzle schema (configurations, update_edges, import_runs)
+  schema.ts             Drizzle schema (configurations, update_edges, import_runs, release_projects, …)
+  template.ts           application identity: template folder from cfu_path, nick↔template rule
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
   fetch-lst.ts          ITS Basic-auth fetch OR local file (LST_FILE/argv)
   import-lst.ts         runImport(): two-level hash delta, fan-out to edges
@@ -56,17 +57,38 @@ drizzle/                generated migration SQL (committed)
    to it — there is a parity check; re-run it after any parser change.
 5. **PostgreSQL, not Mongo.** Chain = graph, path via recursive CTE; raw
    source payload lives in `update_edges.raw_json` (JSONB).
+6. **Application identity = (template folder, edition), NOT the metadata
+   name.** Template folder = `cfu_path` prefix before the version folder
+   (`1c/Accounting/3_0_197_22/1cv8.cfu` → `1c/Accounting`); edition = first
+   version segment. The LST `name` is not unique: other vendors ship products
+   with the same metadata name (AlaBait's `БухгалтерияПредприятия` once got
+   into 1С:БП chains), regional ports get renamed. One catalog card = one
+   (template, edition). `template.ts` and the SQL in
+   `drizzle/0005_sleepy_nocturne.sql` must stay in sync.
+7. **releases.1c.ru projects are linked by rule, not by fuzzy matching.**
+   nick = template name + edition suffix (`Accounting30` → `1c/Accounting`).
+   Fallback by version overlap is deliberately strict; manual links from the
+   admin UI (`release_projects.match_method = 'manual'`) are never
+   overwritten. A wrong link is worse than no link.
 
 ## Data model (schema.ts)
 
-- `configurations` (id, name UNIQUE, vendor) — one per template.
+- `configurations` — one per application edition: UNIQUE `(template_key,
+  edition)`; `template_code` ("1c/Accounting"), `name`/`vendor` follow the
+  latest LST record; display fields are copied from the primary releases
+  project.
+- `release_projects` (nick PK → config_id, match_method rule|versions|manual)
+  — every project from releases.1c.ru `/total`, matched or not.
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on
   `(config_id, edition, from_version)` and `(... to_version)`.
 - `import_runs` (file_sha256, counts, status: ok|skipped|error).
 
-A parsed record `to <- [from...]` fans out into ONE edge per from-version.
+A parsed record `to <- [from...]` fans out into ONE edge per from-version,
+owned by the application edition of its own package (template of `cfuPath`
++ first segment of `to`). API calls address editions by `config_id`
+(`config=<name>` is still accepted but ambiguous).
 
 ## Hash delta (import-lst.ts) — keep this contract
 

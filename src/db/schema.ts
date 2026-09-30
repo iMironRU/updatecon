@@ -26,8 +26,14 @@ import {
 } from "drizzle-orm/pg-core";
 
 /**
- * A configuration template (Справочник.ШаблоныКонфигурации).
- * Identified by its human name; vendor kept for display/disambiguation.
+ * An application edition: one configuration template (catalog folder in
+ * tmplts, e.g. "1c/Accounting") at one edition (first version segment).
+ *
+ * Identity is (template_key, edition), NOT the LST metadata name: the name is
+ * not unique (other vendors ship products with the same metadata name, and
+ * regional ports get renamed), while the template folder is what 1C itself
+ * uses to tell products apart. Name/vendor are kept for display and follow
+ * the latest LST record.
  */
 export const configurations = pgTable(
   "configurations",
@@ -35,7 +41,14 @@ export const configurations = pgTable(
     id: bigserial("id", { mode: "number" }).primaryKey(),
     name: text("name").notNull(),
     vendor: text("vendor").notNull().default(""),
-    // Populated by releases.1c.ru adapter (secondary source):
+    // Template folder from cfu_path, original case: "1c/Accounting".
+    templateCode: text("template_code"),
+    // Lower-cased template_code — matching key.
+    templateKey: text("template_key"),
+    // First version segment (same meaning as update_edges.edition).
+    edition: integer("edition"),
+    // Populated by releases.1c.ru adapter (secondary source), copied from the
+    // primary release project (see release_projects):
     displayName: text("display_name"),           // "Бухгалтерия предприятия, редакция 3.0"
     releasesHref: text("releases_href"),          // "/project/Accounting30"
     // Category from releases.1c.ru /total page group name
@@ -53,8 +66,39 @@ export const configurations = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    nameUq: uniqueIndex("configurations_name_uq").on(t.name),
+    nameIdx: index("configurations_name_idx").on(t.name),
+    templateEditionUq: uniqueIndex("configurations_template_edition_uq").on(t.templateKey, t.edition),
     releasesHrefUq: uniqueIndex("configurations_releases_href_uq").on(t.releasesHref),
+  }),
+);
+
+/**
+ * A project on releases.1c.ru (/project/<nick>), one row per project found on
+ * /total. Linked to at most one application edition; an edition may have
+ * several projects. match_method: "rule" (nick = template + edition suffix),
+ * "versions" (strict version-set overlap fallback), "manual" (set in admin —
+ * never overwritten by the importer). config_id NULL = not matched.
+ */
+export const releaseProjects = pgTable(
+  "release_projects",
+  {
+    nick: text("nick").primaryKey(),
+    href: text("href").notNull(),
+    displayName: text("display_name").notNull().default(""),
+    groupName: text("group_name"),
+    region: text("region"),
+    latestVersion: text("latest_version"),
+    nextReleaseVersion: text("next_release_version"),
+    nextReleasePlannedDate: text("next_release_planned_date"),
+    nextReleasePlanUpdated: date("next_release_plan_updated"),
+    configId: integer("config_id").references(() => configurations.id, { onDelete: "set null" }),
+    matchMethod: text("match_method"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    configIdx: index("release_projects_config_idx").on(t.configId),
   }),
 );
 
@@ -217,3 +261,4 @@ export type ImportRun = typeof importRuns.$inferSelect;
 export type VersionMeta = typeof versionMeta.$inferSelect;
 export type Patch = typeof patches.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
+export type ReleaseProject = typeof releaseProjects.$inferSelect;

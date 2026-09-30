@@ -3,11 +3,13 @@
  *
  * Public endpoints:
  *   GET  /api/health
- *   GET  /api/configs?q=<substr>           -> matching configurations (enriched)
- *   GET  /api/configs?version=<v>          -> configs that contain this version
- *   GET  /api/versions?config=<name>       -> known versions + version_meta
- *   GET  /api/patches?config=&ver=          -> patches list for a version
- *   GET  /api/chain?config=&from=&to=      -> computed update chain
+ *   GET  /api/configs?q=<substr>           -> application editions (enriched)
+ *   GET  /api/configs?version=<v>          -> editions that contain this version
+ *   GET  /api/versions?config_id=<id>      -> known versions + version_meta
+ *   GET  /api/patches?config_id=&ver=      -> patches list for a version
+ *   GET  /api/chain?config_id=&from=&to=   -> computed update chain
+ *   (config=<metadata name> is still accepted on the calls above, but names
+ *    are not unique — prefer config_id.)
  *   GET  /api/stats                        -> import/run summary
  *   GET  /*                                -> static UI (public/)
  *
@@ -18,6 +20,9 @@
  *   GET  /admin/api/import/status          -> is import running + last run
  *   POST /admin/api/import/lst             -> trigger LST import
  *   POST /admin/api/import/releases        -> trigger releases import
+ *   GET  /admin/api/projects               -> releases.1c.ru projects + links
+ *   GET  /admin/api/apps?q=                -> application editions (link picker)
+ *   POST /admin/api/projects/link          -> manual link / unlink / back to auto
  */
 
 import Fastify from "fastify";
@@ -31,12 +36,12 @@ import { request as httpsRequest } from "node:https";
 import { randomBytes } from "node:crypto";
 import { sql, eq, desc } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { configurations, updateEdges, importRuns, patches, settings } from "./schema.js";
+import { configurations, updateEdges, importRuns, patches, settings, releaseProjects } from "./schema.js";
 import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus } from "./caddy.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
-import { runReleasesImport } from "../releases/import-releases.js";
+import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
 import { ReleasesSession } from "../releases/fetch-releases.js";
 import { parsePatchesPage } from "../releases/parse-releases.js";
 
@@ -96,6 +101,32 @@ async function safeAdminImport(source: "lst" | "releases") {
     importRunning[source] = false;
     importAbort[source] = null;
   }
+}
+
+interface ResolvedConfig { id: number; edition: number | null; releasesHref: string | null; }
+
+/**
+ * Which application edition an API call is about. Preferred: config_id.
+ * Legacy: config=<metadata name> — names are not unique any more (one name
+ * can span several templates/editions), so prefer the edition matching the
+ * version hint's first segment, then the newest edition.
+ */
+async function resolveConfig(q: Record<string, unknown>, versionHint?: string): Promise<ResolvedConfig | null> {
+  const cols = { id: configurations.id, edition: configurations.edition, releasesHref: configurations.releasesHref };
+  const idRaw = String(q.config_id ?? "").trim();
+  if (/^\d+$/.test(idRaw)) {
+    const [row] = await db.select(cols).from(configurations).where(eq(configurations.id, Number(idRaw))).limit(1);
+    return row ?? null;
+  }
+  const name = String(q.config ?? "").trim();
+  if (!name) return null;
+  const rows = await db.select(cols).from(configurations).where(eq(configurations.name, name));
+  if (rows.length === 0) return null;
+  const hintEd = versionHint ? parseVersion(versionHint)?.segments[0] : undefined;
+  rows.sort((a, b) =>
+    Number(b.edition === hintEd) - Number(a.edition === hintEd) ||
+    (b.edition ?? -1) - (a.edition ?? -1));
+  return rows[0];
 }
 
 export async function buildServer() {
@@ -333,6 +364,71 @@ export async function buildServer() {
     return { ok: true, domain: cleaned || null };
   });
 
+  // ── Admin API: releases.1c.ru project ↔ application matching ─────────────
+  app.get("/admin/api/projects", async () => {
+    const rows = await db.execute(sql`
+      SELECT p.nick, p.href, p.display_name, p.group_name, p.region, p.latest_version,
+             p.match_method, p.config_id, p.last_seen_at,
+             c.name AS config_name, c.template_code, c.edition
+      FROM release_projects p
+      LEFT JOIN configurations c ON c.id = p.config_id
+      ORDER BY (p.config_id IS NULL) DESC, p.display_name
+    `);
+    const orphans = await db.execute(sql`
+      SELECT count(*)::int AS n FROM configurations c
+      WHERE NOT EXISTS (SELECT 1 FROM release_projects p WHERE p.config_id = c.id)
+    `);
+    return {
+      projects: (rows as any).rows ?? rows,
+      appsWithoutProject: ((orphans as any).rows ?? orphans)[0]?.n ?? 0,
+    };
+  });
+
+  app.get("/admin/api/apps", async (req) => {
+    const q = String((req.query as any).q ?? "").trim().toLowerCase();
+    const like = "%" + q + "%";
+    const rows = await db.execute(sql`
+      SELECT c.id, c.name, c.display_name, c.template_code, c.edition,
+             (SELECT count(*)::int FROM update_edges e WHERE e.config_id = c.id) AS edges
+      FROM configurations c
+      WHERE ${q ? sql`lower(c.name) LIKE ${like}
+                    OR lower(coalesce(c.display_name, '')) LIKE ${like}
+                    OR coalesce(c.template_key, '') LIKE ${like}` : sql`true`}
+      ORDER BY c.template_key, c.edition DESC
+      LIMIT 30
+    `);
+    return { apps: (rows as any).rows ?? rows };
+  });
+
+  // body: { nick, config_id: number | null } → manual link (null = "never link")
+  //       { nick, auto: true }                → forget the manual decision
+  app.post("/admin/api/projects/link", async (req, reply) => {
+    const body = (req.body as any) ?? {};
+    const nick = String(body.nick ?? "").trim();
+    if (!nick) return reply.status(400).send({ error: "nick обязателен" });
+    const [proj] = await db.select({ nick: releaseProjects.nick }).from(releaseProjects)
+      .where(eq(releaseProjects.nick, nick)).limit(1);
+    if (!proj) return reply.status(404).send({ error: "Проект не найден" });
+
+    if (body.auto === true) {
+      await db.update(releaseProjects).set({ configId: null, matchMethod: null })
+        .where(eq(releaseProjects.nick, nick));
+    } else {
+      const raw = body.config_id;
+      const configId = raw === null || raw === undefined || raw === "" ? null : Number(raw);
+      if (configId !== null) {
+        if (!Number.isInteger(configId)) return reply.status(400).send({ error: "Некорректный config_id" });
+        const [cfg] = await db.select({ id: configurations.id }).from(configurations)
+          .where(eq(configurations.id, configId)).limit(1);
+        if (!cfg) return reply.status(404).send({ error: "Приложение не найдено" });
+      }
+      await db.update(releaseProjects).set({ configId, matchMethod: "manual" })
+        .where(eq(releaseProjects.nick, nick));
+    }
+    await refreshPrimaryProjects();
+    return { ok: true };
+  });
+
   // ── Public static + API ───────────────────────────────────────────────────
   app.register(fastifyStatic, {
     root: join(__dirname, "..", "..", "public"),
@@ -346,9 +442,10 @@ export async function buildServer() {
 
   // ── Proxy download via ITS (credentials stay server-side) ─────────────────
   app.get("/api/download", async (req, reply) => {
-    const { config, from, to } = req.query as Record<string, string>;
-    if (!config || !from || !to) {
-      return reply.status(400).send({ error: "config, from, to are required" });
+    const { from, to } = req.query as Record<string, string>;
+    const cfg = await resolveConfig(req.query as Record<string, unknown>, to);
+    if (!cfg || !from || !to) {
+      return reply.status(400).send({ error: "config_id, from, to are required" });
     }
     if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
       return reply.status(503).send({ error: "ITS credentials not configured" });
@@ -358,8 +455,7 @@ export async function buildServer() {
     const rows = await db.execute(sql`
       SELECT ue.cfu_path
       FROM update_edges ue
-      JOIN configurations c ON c.id = ue.config_id
-      WHERE c.name = ${config} AND ue.from_version = ${from} AND ue.to_version = ${to}
+      WHERE ue.config_id = ${cfg.id} AND ue.from_version = ${from} AND ue.to_version = ${to}
       LIMIT 1
     `);
     const edge = ((rows as any).rows ?? rows)[0] as { cfu_path: string } | undefined;
@@ -413,10 +509,12 @@ export async function buildServer() {
     // By-version lookup: find configs that contain this version in their edges.
     if (version) {
       const rows = await db.execute(sql`
-        SELECT DISTINCT c.id, c.name, c.display_name, c.vendor, c.releases_href
+        SELECT DISTINCT c.id, c.name, c.display_name, c.vendor, c.releases_href, c.template_code, c.edition
         FROM configurations c
         JOIN update_edges ue ON ue.config_id = c.id
-        WHERE ue.to_version = ${version} OR ue.from_version = ${version}
+        WHERE (ue.to_version = ${version} OR ue.from_version = ${version})
+          -- the from-side of a cross-edition edge belongs to the previous edition
+          AND (c.edition IS NULL OR c.edition::text = split_part(${version}, '.', 1))
         ORDER BY c.name
         LIMIT 20
       `);
@@ -426,14 +524,19 @@ export async function buildServer() {
     // Full catalog with enrichment from version_meta and edge counts.
     const filter = q
       ? sql`lower(c.name) like ${"%" + q.toLowerCase() + "%"}
-            OR lower(coalesce(c.display_name, '')) like ${"%" + q.toLowerCase() + "%"}`
+            OR lower(coalesce(c.display_name, '')) like ${"%" + q.toLowerCase() + "%"}
+            OR coalesce(c.template_key, '') like ${"%" + q.toLowerCase() + "%"}`
       : sql`true`;
 
     const rows = await db.execute(sql`
       SELECT
         c.id, c.name, c.display_name, c.vendor, c.releases_href,
+        c.template_code, c.edition,
+        (c.edition = (SELECT max(c2.edition) FROM configurations c2
+                      WHERE c2.template_key = c.template_key)) AS is_latest_edition,
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
-        vm.version       AS latest_version,
+        -- releases.1c.ru data when present, else the newest version the LST knows
+        COALESCE(vm.version, mv.v) AS latest_version,
         vm.release_date  AS latest_date,
         vm.min_platform  AS latest_platform,
         COALESCE(vc.cnt, 0) AS version_count,
@@ -446,6 +549,13 @@ export async function buildServer() {
         ORDER BY release_date DESC
         LIMIT 1
       ) vm ON true
+      LEFT JOIN LATERAL (
+        SELECT to_version AS v
+        FROM update_edges
+        WHERE config_id = c.id
+        ORDER BY string_to_array(to_version, '.')::bigint[] DESC
+        LIMIT 1
+      ) mv ON true
       LEFT JOIN LATERAL (
         SELECT count(DISTINCT to_version)::int AS cnt
         FROM update_edges WHERE config_id = c.id
@@ -467,34 +577,24 @@ export async function buildServer() {
   });
 
   app.get("/api/versions", async (req) => {
-    const name = String((req.query as any).config ?? "").trim();
-    if (!name) return { versions: [] };
-    const cfg = await db
-      .select({ id: configurations.id })
-      .from(configurations)
-      .where(eq(configurations.name, name))
-      .limit(1);
-    if (cfg.length === 0) return { versions: [] };
+    const found = await resolveConfig(req.query as Record<string, unknown>);
+    if (!found) return { versions: [] };
+    const cfg = [found];
 
-    // Only include versions from the dominant edition (most edges) so that
-    // cross-edition migration edges (e.g. 10.x→11.x stored under UT 11) don't
-    // pollute the version list with entries from a different product generation.
     const rows = await db.execute(sql`
-      WITH dom AS (
-        SELECT edition FROM update_edges WHERE config_id = ${cfg[0].id}
-        GROUP BY edition ORDER BY count(*) DESC LIMIT 1
-      )
       SELECT DISTINCT v FROM (
-        SELECT from_version v FROM update_edges
-          WHERE config_id = ${cfg[0].id} AND edition = (SELECT edition FROM dom)
+        SELECT from_version v FROM update_edges WHERE config_id = ${cfg[0].id}
         UNION
-        SELECT to_version   v FROM update_edges
-          WHERE config_id = ${cfg[0].id} AND edition = (SELECT edition FROM dom)
+        SELECT to_version   v FROM update_edges WHERE config_id = ${cfg[0].id}
       ) t
     `);
+    // An application edition only lists its own edition's versions: the
+    // from-side of cross-edition migration edges (10.x→11.x stored under
+    // UT 11) belongs to the previous edition.
     const list: string[] = (
       (rows as any).rows ?? (rows as any)
-    ).map((r: any) => r.v);
+    ).map((r: any) => r.v)
+      .filter((v: string) => found.edition === null || parseVersion(v)?.segments[0] === found.edition);
 
     list.sort((a, b) => {
       const pa = parseVersion(a)?.segments ?? [];
@@ -552,18 +652,14 @@ export async function buildServer() {
   });
 
   app.get("/api/patches", async (req) => {
-    const { config, ver } = req.query as any;
-    if (!config || !ver) return { patches: [] };
+    const { ver } = req.query as any;
+    if (!ver) return { patches: [] };
 
-    // 1. Look up config by name to get id and releases_href.
-    const cfgRows = await db
-      .select({ id: configurations.id, releasesHref: configurations.releasesHref })
-      .from(configurations)
-      .where(eq(configurations.name, String(config)))
-      .limit(1);
-    if (cfgRows.length === 0) return { patches: [] };
-    const configId = cfgRows[0].id;
-    const releasesHref = cfgRows[0].releasesHref ?? null;
+    // 1. Resolve the application edition (id + releases_href).
+    const cfgRow = await resolveConfig(req.query as Record<string, unknown>, String(ver));
+    if (!cfgRow) return { patches: [] };
+    const configId = cfgRow.id;
+    const releasesHref = cfgRow.releasesHref ?? null;
 
     // 2. Query DB first.
     const dbRows = await db.execute(sql`
@@ -618,9 +714,10 @@ export async function buildServer() {
   });
 
   app.get("/api/chain", async (req) => {
-    const { config, from, to } = req.query as any;
-    if (!config || !from || !to) {
-      return { error: "config, from, to are required" };
+    const { from, to } = req.query as any;
+    const cfg = await resolveConfig(req.query as Record<string, unknown>, to ? String(to) : undefined);
+    if (!cfg || !from || !to) {
+      return { error: "config_id, from, to are required" };
     }
     const fp = parseVersion(String(from));
     const tp = parseVersion(String(to));
@@ -633,7 +730,7 @@ export async function buildServer() {
       };
     }
     const res = await findChain(
-      String(config),
+      cfg.id,
       String(from),
       String(to),
     );

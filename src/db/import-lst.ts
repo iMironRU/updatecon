@@ -23,7 +23,8 @@ import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns } from "./schema.js";
 import { parseLstStream, type UpdateRecord } from "../parser/lst-parser-stream.js";
-import { parseVersion } from "../parser/version.js";
+import { parseVersion, compareVersions } from "../parser/version.js";
+import { templateCodeFor } from "./template.js";
 import { resolveLst } from "./fetch-lst.js";
 
 function sha256(s: string): string {
@@ -90,38 +91,81 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
   const stats = parseLstStream(raw, (rec) => allRecords.push(rec));
   log(`Распарсено: ${stats.configsFound} конфигов, ${stats.packagesEmitted} пакетов`);
 
-  // ── Step 2: resolve config IDs — bulk, 2 queries total ───────────────
-  log("Загрузка конфигураций из БД...");
-  const cfgCache = new Map<string, number>();
-  const existingCfgs = await db
-    .select({ id: configurations.id, name: configurations.name })
-    .from(configurations);
-  for (const c of existingCfgs) cfgCache.set(c.name, c.id);
-
-  // Find new configs not yet in DB
-  const newCfgMap = new Map<string, string>(); // name → vendor
+  // ── Step 2: resolve application editions — (template folder, edition) ──
+  // Identity is the template folder of the package + first version segment,
+  // NOT the metadata name (see template.ts). Name/vendor follow the latest
+  // record of each group.
+  interface Group {
+    key: string;          // `${templateKey}#${edition}`
+    templateCode: string;
+    templateKey: string;
+    edition: number;
+    name: string;
+    vendor: string;
+    latest: string;       // highest to-version seen, drives name/vendor
+  }
+  const groupOf = (rec: UpdateRecord): Group | null => {
+    const pv = parseVersion(rec.version);
+    if (!pv) return null;
+    const templateCode = templateCodeFor(rec.cfuPath, rec.name);
+    const templateKey = templateCode.toLowerCase();
+    const edition = pv.segments[0] ?? 0;
+    return { key: `${templateKey}#${edition}`, templateCode, templateKey, edition,
+             name: rec.name, vendor: rec.vendor, latest: rec.version };
+  };
+  const groups = new Map<string, Group>();
   for (const rec of allRecords) {
-    if (!cfgCache.has(rec.name)) newCfgMap.set(rec.name, rec.vendor);
+    if (rec.fromVersions.length === 0) continue; // no edges → no application
+    const g = groupOf(rec);
+    if (!g) continue;
+    const prev = groups.get(g.key);
+    if (!prev || compareVersions(g.latest, prev.latest) > 0) groups.set(g.key, g);
   }
-  if (newCfgMap.size > 0) {
-    log(`Добавляем ${newCfgMap.size} новых конфигураций...`);
-    const newCfgValues = [...newCfgMap.entries()].map(([name, vendor]) => ({ name, vendor }));
-    // Bulk insert (idempotent)
-    const CFGCHUNK = 500;
-    for (let i = 0; i < newCfgValues.length; i += CFGCHUNK) {
-      await db.insert(configurations)
-        .values(newCfgValues.slice(i, i + CFGCHUNK))
-        .onConflictDoNothing({ target: configurations.name });
+
+  log("Загрузка приложений из БД...");
+  const cfgCache = new Map<string, number>(); // group key → configurations.id
+  const existingCfgs = await db
+    .select({
+      id: configurations.id, name: configurations.name, vendor: configurations.vendor,
+      templateKey: configurations.templateKey, edition: configurations.edition,
+    })
+    .from(configurations);
+  const renamed: { id: number; name: string; vendor: string }[] = [];
+  for (const c of existingCfgs) {
+    if (c.templateKey === null || c.edition === null) continue;
+    const key = `${c.templateKey}#${c.edition}`;
+    cfgCache.set(key, c.id);
+    const g = groups.get(key);
+    if (g && (g.name !== c.name || g.vendor !== c.vendor)) {
+      renamed.push({ id: c.id, name: g.name, vendor: g.vendor });
     }
-    // Fetch their IDs in one query
-    const newNames = newCfgValues.map((c) => c.name);
-    const newRows = await db
-      .select({ id: configurations.id, name: configurations.name })
-      .from(configurations)
-      .where(inArray(configurations.name, newNames));
-    for (const row of newRows) cfgCache.set(row.name, row.id);
   }
-  log(`Конфигураций в кэше: ${cfgCache.size}`);
+
+  const newGroups = [...groups.values()].filter((g) => !cfgCache.has(g.key));
+  if (newGroups.length > 0) {
+    log(`Добавляем ${newGroups.length} новых приложений (шаблон + редакция)...`);
+    const CFGCHUNK = 500;
+    for (let i = 0; i < newGroups.length; i += CFGCHUNK) {
+      await db.insert(configurations)
+        .values(newGroups.slice(i, i + CFGCHUNK).map((g) => ({
+          name: g.name, vendor: g.vendor,
+          templateCode: g.templateCode, templateKey: g.templateKey, edition: g.edition,
+        })))
+        .onConflictDoNothing({ target: [configurations.templateKey, configurations.edition] });
+    }
+    const newRows = await db
+      .select({ id: configurations.id, templateKey: configurations.templateKey, edition: configurations.edition })
+      .from(configurations)
+      .where(inArray(configurations.templateKey, [...new Set(newGroups.map((g) => g.templateKey))]));
+    for (const row of newRows) cfgCache.set(`${row.templateKey}#${row.edition}`, row.id);
+  }
+  for (const r of renamed) {
+    await db.update(configurations)
+      .set({ name: r.name, vendor: r.vendor })
+      .where(eq(configurations.id, r.id));
+  }
+  if (renamed.length > 0) log(`Обновлены имя/вендор у ${renamed.length} приложений`);
+  log(`Приложений (шаблон + редакция): ${groups.size}`);
 
   // ── Step 3: build all edge rows in memory ─────────────────────────────
   interface EdgeRow {
@@ -135,11 +179,11 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
   }
   const allEdges: EdgeRow[] = [];
   for (const rec of allRecords) {
-    const cid = cfgCache.get(rec.name);
+    const g = groupOf(rec);
+    if (!g) continue;
+    const cid = cfgCache.get(g.key);
     if (cid === undefined) continue;
-    const toPv = parseVersion(rec.version);
-    if (!toPv) continue;
-    const edition = toPv.segments[0] ?? 0;
+    const edition = g.edition;
     for (const from of rec.fromVersions) {
       allEdges.push({
         configId: cid,
