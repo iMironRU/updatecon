@@ -335,7 +335,8 @@ tr:hover td { background: var(--surface2); }
         <div class="alert alert-info" style="margin-bottom:14px">
           <div>
             Теги ставятся на шаблон (все его редакции). Типовые 1С получают тег по имени шаблона,
-            отраслевые и партнёрские решения — «на базе …» по имени или по общим номерам версий с типовой (≥40 версий, ≥50%).
+            отраслевые и партнёрские решения — «на базе …» по «Базовой конфигурации» с 1С:Решения (официально, в приоритете),
+            иначе по имени или по общим номерам версий с типовой (≥40 версий, ≥50%).
             Ручные теги имеют приоритет и пересчётом не перезаписываются. Автопересчёт — после каждого импорта LST.
           </div>
         </div>
@@ -859,7 +860,7 @@ async function loadTags() {
 }
 
 function tagChip(t) {
-  var src = { rule: 'по имени', versions: 'по версиям', manual: 'вручную' }[t.source] || t.source;
+  var src = { rule: 'по имени', solutions: 'по 1С:Решения', versions: 'по версиям', manual: 'вручную' }[t.source] || t.source;
   var cls = t.source === 'manual' ? 'badge-running' : t.source === 'versions' ? 'badge-skipped' : 'badge-ok';
   return '<span class="badge ' + cls + '" title="' + esc(src) + '">' + (t.kind === 'based' ? 'на базе ' : '') + esc(t.tag) + '</span>';
 }

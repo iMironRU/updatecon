@@ -596,6 +596,11 @@ export async function buildServer() {
          WHERE t.template_key = c.template_key AND t.tag <> '') AS tags,
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
         rp.info_url, rp.bugs_url,
+        -- solutions.1c.ru product card (industry/partner products only)
+        si.product_kind AS sol_kind, si.enterprise_types AS sol_org_types, si.countries AS sol_countries,
+        si.developers AS sol_developers, si.base_config AS sol_base, si.industries AS sol_industries,
+        si.tasks AS sol_tasks, si.editions AS sol_editions,
+        si.support_phone AS sol_phone, si.support_email AS sol_email,
         -- releases.1c.ru data when present, else the newest version the LST knows
         COALESCE(vm.version, mv.v) AS latest_version,
         -- Platform generation (8.2 / 8.3 / 8.5 …): the official minimum from
@@ -614,6 +619,7 @@ export async function buildServer() {
         avgd.avg_days
       FROM configurations c
       LEFT JOIN release_projects rp ON rp.href = c.releases_href
+      LEFT JOIN solutions_info si ON si.url = rp.info_url AND si.status = 'ok'
       LEFT JOIN LATERAL (
         SELECT version, release_date, min_platform
         FROM version_meta

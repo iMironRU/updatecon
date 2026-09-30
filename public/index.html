@@ -125,6 +125,12 @@ input, select, textarea { font-family: inherit; }
 .badge-tag { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .3px; }
 .badge-tag-based { background: transparent; color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .badge-level { background: var(--surface3); color: var(--text); font-weight: 700; letter-spacing: .3px; }
+.sol-info { margin-top: 14px; padding: 12px 14px; border-radius: var(--r-xs); background: var(--surface2); display: grid; gap: 8px; }
+.sol-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: baseline; }
+.sol-val { font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.sol-val a { color: var(--accent); }
+.sol-src { font-size: 11px; color: var(--text-light); }
+@media (max-width: 640px) { .sol-row { grid-template-columns: 1fr; gap: 2px; } }
 /* Platform generation: 8.5 is the news, 8.3 is the norm, 8.2 and older are legacy */
 .badge-plat { font-family: var(--mono); font-weight: 700; }
 .badge-plat-new { background: var(--green-dim); color: var(--green); }
@@ -525,6 +531,12 @@ function adapt_config(row) {
     tags: row.tags || [],       // [{tag, kind: 'own'|'based'}] — product lines of the template
     level: null,                // 'base' | 'prof' | 'corp' — set by assign_levels()
     platform: row.platform || null, // platform generation of the newest version: '8.2' | '8.3' | '8.5' …
+    sol: {                      // solutions.1c.ru product card (industry/partner products)
+      kind: row.sol_kind || '', orgTypes: row.sol_org_types || [], countries: row.sol_countries || [],
+      developers: row.sol_developers || [], base: row.sol_base || '', industries: row.sol_industries || [],
+      tasks: row.sol_tasks || [], editions: row.sol_editions || [], phone: row.sol_phone || '', email: row.sol_email || '',
+    },
+    vendorName: clean_vendor((row.sol_developers || []).length ? row.sol_developers.join(', ') : row.vendor),
     nick,
     name: displayName,
     short: displayName.split(',')[0].trim(),
@@ -535,6 +547,12 @@ function adapt_config(row) {
     description: '',            // placeholder
     groupName: row.group_name || '',
     region: row.region || infer_region(row) || 'ru',
+    // Countries from 1С:Решения when known; "Для всех стран" matches every region filter.
+    allRegions: (row.sol_countries || []).some(function(x) { return /всех стран/i.test(x); }),
+    regions: (function() {
+      var codes = (row.sol_countries || []).map(country_code).filter(Boolean);
+      return codes.length ? codes : [row.region || infer_region(row) || 'ru'];
+    })(),
     nextReleaseVersion: row.next_release_version || '',
     nextReleasePlannedDate: row.next_release_planned_date || '',
     nextReleasePlanUpdated: row.next_release_plan_updated || '',
@@ -747,6 +765,24 @@ function platform_badge(c) {
 }
 function level_badge(c) {
   return c.level ? '<span class="badge badge-level" title="Уровень поставки">' + LEVEL_LABEL[c.level] + '</span>' : '';
+}
+
+// "Фирма ""1С"", ООО ""ЦентрПрограммСистем""" → "ЦентрПрограммСистем": legal forms
+// and quotes go, and with several developers the partner is what tells products apart.
+var LEGAL_FORMS = /(^|[\s,(])(ООО|ЗАО|ОАО|ПАО|АО|ТОО|ИП|ЧУП|УП|ЧП|НПФ|НПП|НПО|ПКФ|Фирма|Компания|ГК|Группа компаний|LLC|Ltd\.?)(?=[\s"«,.)]|$)/gi;
+function clean_vendor(v) {
+  var parts = String(v || '').split(',').map(function(p) {
+    return p.replace(/["«»“”]/g, ' ').replace(LEGAL_FORMS, '$1').replace(/\s+/g, ' ')
+      .replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\(\)/g, '').replace(/^[\s.]+|[\s.,;]+$/g, '');
+  }).filter(function(p) { return p && !/^(https?:\/\/|www\.)/i.test(p); });  // "…, www.appius.ru"
+  var partners = parts.filter(function(p) { return !/^1[СC]$/i.test(p); });
+  return (partners.length ? partners : parts).join(', ') || '1С';
+}
+function country_code(name) {
+  var n = String(name || '').trim().toLowerCase();
+  if (n === 'россия') return 'ru';
+  for (var i = 0; i < REGION_BY_STEM.length; i++) if (REGION_BY_STEM[i][0].test(n)) return REGION_BY_STEM[i][1];
+  return null;
 }
 
 function region_label(r) {
@@ -1217,16 +1253,18 @@ let CAT_SCROLL = null;   // { hash, y } — where the user left the catalog
 function catalog_state(params) {
   const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
   return {
-    q: params.q || '', lines: list('line'), levels: list('level'), platforms: list('plat'), regions: list('region'), types: list('type'),
+    q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
+    platforms: list('plat'), regions: list('region'), orgs: list('org'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
-    vendorQuery: '', vendorsAll: false, panelOpen: false,
+    vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
   };
 }
 function catalog_sync_url() {
   const parts = [];
   const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
   add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
-  add('plat', CAT.platforms.join(CAT_SEP));
+  add('plat', CAT.platforms.join(CAT_SEP)); add('ind', CAT.industries.join(CAT_SEP));
+  add('task', CAT.tasks.join(CAT_SEP)); add('org', CAT.orgs.join(CAT_SEP));
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
@@ -1242,14 +1280,20 @@ const CAT_FACETS = {
   lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
   levels:  (c, v) => v.includes(c.level),
   platforms: (c, v) => v.includes(c.platform),
-  regions: (c, v) => v.includes(c.region),
+  regions: (c, v) => c.allRegions || c.regions.some(r => v.includes(r)),   // "Для всех стран" fits any region
+  industries: (c, v) => c.sol.industries.some(x => v.includes(x)),
+  tasks:   (c, v) => c.sol.tasks.some(x => v.includes(x)),
+  orgs:    (c, v) => c.sol.orgTypes.some(x => v.includes(x)),
   types:   (c, v) => v.includes(c.type),
-  vendors: (c, v) => v.includes(c.vendor),
+  vendors: (c, v) => v.includes(c.vendorName.toLowerCase()),
 };
 function cfg_matches_search(c, q) {
   return (c.name || '').toLowerCase().includes(q)
     || (c.configName || '').toLowerCase().includes(q)
     || (c.vendor || '').toLowerCase().includes(q)
+    || c.vendorName.toLowerCase().includes(q)
+    || c.sol.industries.some(x => x.toLowerCase().includes(q))
+    || c.sol.tasks.some(x => x.toLowerCase().includes(q))
     || c.templateKey.includes(q)
     || c.tags.some(t => t.tag.toLowerCase() === q)
     || (c.level && LEVEL_LABEL[c.level].toLowerCase().startsWith(q) && q.length >= 3);
@@ -1280,9 +1324,12 @@ function render_catalog() {
           <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
         </div>
         <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines"></div></div>
+        <div class="filter-group" id="g-industries"><div class="filter-group-label">Отрасль</div><div id="f-industries"></div></div>
+        <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
         <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms"></div></div>
         <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
         <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
+        <div class="filter-group" id="g-orgs"><div class="filter-group-label">Для кого</div><div id="f-orgs"></div></div>
         <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types"></div></div>
         <div class="filter-group">
           <div class="filter-group-label">Разработчик</div>
@@ -1323,7 +1370,7 @@ function config_card_html(c) {
         ${config_avatar(c)}
         <div>
           <div class="config-card-name">${c.name}</div>
-          <div class="config-card-short">${c.vendor}${c.edition ? ' · ред. ' + c.edition : ''}</div>
+          <div class="config-card-short">${esc_html(c.vendorName)}${c.edition ? ' · ред. ' + c.edition : ''}</div>
         </div>
       </div>
       <div class="config-card-badges">
@@ -1334,7 +1381,8 @@ function config_card_html(c) {
         ${c.status !== 'active' ? status_badge(c.status) : ''}
         <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
       </div>
-      <div class="config-card-desc">${c.description || c.short || c.name}</div>
+      <div class="config-card-desc">${c.sol.industries.length ? 'Отрасль: ' + esc_html(c.sol.industries.join(', '))
+        : c.sol.tasks.length ? 'Задачи: ' + esc_html(c.sol.tasks.join(', ')) : (c.description || c.short || c.name)}</div>
     </div>
     <div class="config-card-footer">
       <div>
@@ -1403,28 +1451,56 @@ function render_facets() {
   set('f-levels', ['base', 'prof', 'corp']
     .map(l => facet_opt('levels', l, LEVEL_LABEL[l], lvlCnt.get(l) || 0)).join(''));
 
-  // Регион — Россия first, then by size.
-  const regCnt = count_by(catalog_filter(base, 'regions'), c => [c.region]);
-  CAT.regions.forEach(r => { if (!regCnt.has(r)) regCnt.set(r, 0); });
+  // Регион — Россия first, then by size. "Для всех стран" products count for every
+  // region (that is what selecting one would show) and have an option of their own.
+  const regBase = catalog_filter(base, 'regions');
+  const allCnt = regBase.filter(c => c.allRegions).length;
+  const regCnt = count_by(regBase.filter(c => !c.allRegions), c => c.regions);
+  CAT.regions.forEach(r => { if (r !== 'all' && !regCnt.has(r)) regCnt.set(r, 0); });
   set('f-regions', [...regCnt.entries()]
     .sort((a, b) => (b[0] === 'ru') - (a[0] === 'ru') || b[1] - a[1])
-    .map(([r, n]) => facet_opt('regions', r, region_label(r), n)).join(''));
+    .map(([r, n]) => facet_opt('regions', r, region_label(r), n + allCnt)).join('')
+    + (allCnt || CAT.regions.includes('all') ? facet_opt('regions', 'all', 'Для всех стран', allCnt) : ''));
+
+  // Отрасль / Задачи / Для кого — from 1С:Решения; groups hide when nobody has data.
+  const facetList = (field, keysOf, opts) => {
+    const cnt = count_by(catalog_filter(base, field), keysOf);
+    CAT[field].forEach(v => { if (!cnt.has(v)) cnt.set(v, 0); });
+    let entries = [...cnt.entries()].sort((a, b) => CAT[field].includes(b[0]) - CAT[field].includes(a[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
+    const limit = opts && opts.limit, allFlag = opts && opts.allFlag;
+    const hidden = limit && !CAT[allFlag] ? Math.max(0, entries.length - limit) : 0;
+    if (hidden) entries = entries.slice(0, limit);
+    return { total: cnt.size, html: entries.map(([v, n]) => facet_opt(field, v, v, n)).join('')
+      + (hidden ? `<button class="filter-more" onclick="CAT.${allFlag}=true; render_facets()">Показать все (${hidden + limit})</button>`
+        : limit && CAT[allFlag] ? `<button class="filter-more" onclick="CAT.${allFlag}=false; render_facets()">Свернуть</button>` : '') };
+  };
+  const showGroup = (id, r) => { const g = document.getElementById(id); if (g) g.style.display = r.total ? '' : 'none'; };
+  const ind = facetList('industries', c => c.sol.industries, { limit: 8, allFlag: 'industriesAll' });
+  set('f-industries', ind.html); showGroup('g-industries', ind);
+  const tsk = facetList('tasks', c => c.sol.tasks);
+  set('f-tasks', tsk.html); showGroup('g-tasks', tsk);
+  const org = facetList('orgs', c => c.sol.orgTypes);
+  set('f-orgs', org.html); showGroup('g-orgs', org);
 
   const typeCnt = count_by(catalog_filter(base, 'types'), c => [c.type]);
   set('f-types', ['standard', 'partner', 'industry']
     .map(t => facet_opt('types', t, type_label(t), typeCnt.get(t) || 0)).join(''));
 
   // Разработчик — ~300 of them: search box, top 8, "show all"; selected ones always visible.
-  const venCnt = count_by(catalog_filter(base, 'vendors'), c => [c.vendor]);
+  // Keyed by the cleaned name, case-insensitively ("1С-Рарус" = "1С-РАРУС").
+  const venBase = catalog_filter(base, 'vendors');
+  const venCnt = count_by(venBase, c => [c.vendorName.toLowerCase()]);
+  const venLabel = new Map();
+  venBase.forEach(c => { if (!venLabel.has(c.vendorName.toLowerCase())) venLabel.set(c.vendorName.toLowerCase(), c.vendorName); });
   CAT.vendors.forEach(v => { if (!venCnt.has(v)) venCnt.set(v, 0); });
   const vq = CAT.vendorQuery.trim().toLowerCase();
   let vendors = [...venCnt.entries()]
-    .filter(([v, n]) => (n > 0 || CAT.vendors.includes(v)) && (!vq || v.toLowerCase().includes(vq)))
+    .filter(([v, n]) => (n > 0 || CAT.vendors.includes(v)) && (!vq || v.includes(vq)))
     .sort((a, b) => CAT.vendors.includes(b[0]) - CAT.vendors.includes(a[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
   const LIMIT = 8;
   const hidden = vq || CAT.vendorsAll ? 0 : Math.max(0, vendors.length - LIMIT);
   if (hidden) vendors = vendors.slice(0, LIMIT);
-  set('f-vendors', (vendors.map(([v, n]) => facet_opt('vendors', v, v, n)).join('')
+  set('f-vendors', (vendors.map(([v, n]) => facet_opt('vendors', v, venLabel.get(v) || v, n)).join('')
       || '<div class="filter-opt is-empty">никого не нашлось</div>')
     + (hidden ? `<button class="filter-more" onclick="CAT.vendorsAll=true; render_facets()">Показать все (${hidden + LIMIT})</button>`
       : CAT.vendorsAll && !vq ? `<button class="filter-more" onclick="CAT.vendorsAll=false; render_facets()">Свернуть</button>` : ''));
@@ -1441,16 +1517,20 @@ function render_summary(found) {
     `<button class="filter-chip" data-v="${esc_html(value)}" onclick="remove_filter('${field}', this.dataset.v)" title="Убрать фильтр">${esc_html(label)} ✕</button>`);
   if (CAT.q.trim()) chip('q', '', '«' + CAT.q.trim() + '»');
   CAT.lines.forEach(v => chip('lines', v, v));
+  CAT.industries.forEach(v => chip('industries', v, v));
+  CAT.tasks.forEach(v => chip('tasks', v, v));
   CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
   CAT.platforms.forEach(v => chip('platforms', v, 'Платформа ' + v));
-  CAT.regions.forEach(v => chip('regions', v, region_label(v)));
+  CAT.regions.forEach(v => chip('regions', v, v === 'all' ? 'Для всех стран' : region_label(v)));
+  CAT.orgs.forEach(v => chip('orgs', v, v));
   CAT.types.forEach(v => chip('types', v, type_label(v)));
-  CAT.vendors.forEach(v => chip('vendors', v, v));
+  CAT.vendors.forEach(v => chip('vendors', v, (CONFIGS.find(c => c.vendorName.toLowerCase() === v) || { vendorName: v }).vendorName));
   if (CAT.legacy) chip('legacy', '', 'Предыдущие редакции');
   const el = document.getElementById('catalog-summary');
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
-  const active = CAT.lines.length + CAT.levels.length + CAT.platforms.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+  const active = CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
+    + CAT.levels.length + CAT.platforms.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -1486,6 +1566,30 @@ function apply_filters() {
 /* ================================================================
    CONFIG DETAIL VIEW
    ================================================================ */
+// Product card from 1С:Решения: developer, base, industries, tasks, support line.
+function solutions_block_html(cfg) {
+  var s = cfg.sol;
+  if (!s || !(s.developers.length || s.base || s.industries.length || s.tasks.length || s.phone || s.email)) return '';
+  var chips = function(list, param) {
+    return list.map(function(x) {
+      return '<a class="badge badge-gray" href="#/catalog?' + param + '=' + encodeURIComponent(x) + '" onclick="navigate(\'/catalog?' + param + '=' + encodeURIComponent(x).replace(/'/g, '%27') + '\')">' + esc_html(x) + '</a>';
+    }).join(' ');
+  };
+  var rows = [];
+  if (s.developers.length) rows.push(['Разработчик', esc_html(s.developers.join(', ')) + (s.kind ? ' <span style="color:var(--text-muted)">· ' + esc_html(s.kind) + '</span>' : '')]);
+  if (s.base) rows.push(['Основа', /Оригинальн/i.test(s.base) ? 'Оригинальная разработка' : 'на базе ' + esc_html(s.base)]);
+  if (s.industries.length) rows.push(['Отрасли', chips(s.industries, 'ind')]);
+  if (s.tasks.length) rows.push(['Задачи', chips(s.tasks, 'task')]);
+  if (s.orgTypes.length || s.countries.length) rows.push(['Для', esc_html(s.orgTypes.join(', ') + (s.orgTypes.length && s.countries.length ? ' · ' : '') + s.countries.join(', '))]);
+  if (s.editions.length) rows.push(['Поставки', esc_html(s.editions.join(', '))]);
+  if (s.phone || s.email) rows.push(['Сопровождение', [
+    s.phone ? '<a href="tel:' + esc_html(s.phone.replace(/[^+\d]/g, '')) + '">' + esc_html(s.phone) + '</a>' : '',
+    s.email ? '<a href="mailto:' + esc_html(s.email) + '">' + esc_html(s.email) + '</a>' : ''].filter(Boolean).join(' · ')]);
+  return '<div class="sol-info">' + rows.map(function(r) {
+    return '<div class="sol-row"><div class="meta-item-label">' + r[0] + '</div><div class="sol-val">' + r[1] + '</div></div>';
+  }).join('') + '<div class="sol-src">По данным <a href="' + esc_html(cfg.infoUrl) + '" target="_blank" rel="noopener">1С:Решения</a></div></div>';
+}
+
 // Links to the other editions of the same template ("Редакции: 3.0 · 2.0 · 1.6").
 function editions_nav_html(cfg) {
   if (!cfg.templateKey) return '';
@@ -1546,12 +1650,12 @@ function render_config(id) {
       ${config_detail_avatar(cfg)}
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
-        <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
+        <div class="config-detail-sub">${esc_html(cfg.vendorName)}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
         <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
-          ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
         ${editions_nav_html(cfg)}
+        ${solutions_block_html(cfg)}
         ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
         <div class="config-meta-grid">
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>

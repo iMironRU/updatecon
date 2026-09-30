@@ -27,6 +27,8 @@ src/db/
   template.ts           application identity: template folder from cfu_path, nick↔template rule
   tags.ts               product-line tags dictionary + refresh (name rule, shared versions)
   manifests.ts          platform generation (8.2/8.3/8.5) from tmplts/<pkg>/1cv8.mft
+src/releases/
+  solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
   fetch-lst.ts          ITS Basic-auth fetch OR local file (LST_FILE/argv)
   import-lst.ts         runImport(): two-level hash delta, fan-out to edges
@@ -103,6 +105,13 @@ A parsed record `to <- [from...]` fans out into ONE edge per from-version,
 owned by the application edition of its own package (template of `cfuPath`
 + first segment of `to`). API calls address editions by `config_id`
 (`config=<name>` is still accepted but ambiguous).
+
+- `solutions_info` (url PK) — solutions.1c.ru product card for linked
+  projects: product kind, enterprise types, countries, developers, **base
+  configuration** (official "на базе", outranks the version heuristic in
+  `tags.ts`; "Оригинальная" = based on nothing), industries, tasks,
+  editions, support phone/e-mail. Fetched at the end of the releases import,
+  one page a second, refreshed weekly.
 
 ## SQL inside sql`…` templates — escaping gotcha
 

@@ -287,7 +287,7 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
 
   // New templates / renames may change product-line tags.
   const tagStats = await refreshTags();
-  log(`Теги линеек: своих=${tagStats.own}, «на базе»=${tagStats.based} (по версиям ${tagStats.byVersions})`);
+  log(`Теги линеек: своих=${tagStats.own}, «на базе»=${tagStats.based} (по 1С:Решения ${tagStats.bySolutions}, по версиям ${tagStats.byVersions})`);
   await syncManifestsSafe(log);
 
   const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);

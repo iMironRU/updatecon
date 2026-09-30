@@ -7,6 +7,10 @@
  *              templates (vendor folder "1c") that is the line itself
  *              (kind "own"); for other vendors it means "built on" (kind
  *              "based"), e.g. "1CMinsk/HRMCorpBe", "practicon/TradeAZS".
+ *   solutions — solutions.1c.ru states the base configuration of a partner or
+ *              industry product ("Базовая конфигурация: 1С:Бухгалтерия 8");
+ *              "Оригинальная" means it is built on nothing. Official, so it
+ *              outranks both rules below for non-typical templates.
  *   versions — partner/industry solutions follow the version numbering of
  *              their base (Элеватор 3.0.x = БП 3.0.x). Strict: ≥40 shared
  *              versions, ≥50% of the solution's versions, and a clear winner
@@ -24,21 +28,35 @@ export interface TagDef {
   title: string;
   /** Matched against the template name (last path component). Order matters: first match wins. */
   pattern: RegExp;
+  /** Matched against solutions.1c.ru "Базовая конфигурация" ("1С:Бухгалтерия 8"). */
+  base: RegExp;
 }
 
 export const TAGS: TagDef[] = [
-  { tag: "ЗКГУ",    title: "Зарплата и кадры государственного учреждения", pattern: /^(StateHRM|BudgetHRM)/i },
-  { tag: "БГУ",     title: "Бухгалтерия государственного (автономного) учреждения", pattern: /^(StateAccounting|BudgetAccounting|AccountingAI)/i },
-  { tag: "БУХ",     title: "Бухгалтерия предприятия",            pattern: /^Accounting(?!G[CP])/i }, // not AccountingGC «Гаражи» / GP «Садовод»
-  { tag: "ЗУП",     title: "Зарплата и управление персоналом",   pattern: /^HRM/i },
-  { tag: "ERP",     title: "ERP Управление предприятием",        pattern: /^(Enterprise2|ERP)/i },
-  { tag: "УПП",     title: "Управление производственным предприятием", pattern: /^Enterprise/i },
-  { tag: "КА",      title: "Комплексная автоматизация",          pattern: /^ARAutomation/i },
-  { tag: "УТ",      title: "Управление торговлей",               pattern: /^(Trade|TrCRM|TrCP)/i },
-  { tag: "УНФ",     title: "Управление нашей фирмой / Управление компанией", pattern: /^(SmallBusiness|CompanyManage?ment)/i },
-  { tag: "Розница", title: "Розница",                            pattern: /^Retail/i },
-  { tag: "ДО",      title: "Документооборот",                    pattern: /^(DocMng|BudgetDocMng)/i },
-  { tag: "Касса",   title: "Касса",                              pattern: /^Cashbox/i },
+  { tag: "ЗКГУ",    title: "Зарплата и кадры государственного учреждения", pattern: /^(StateHRM|BudgetHRM)/i,
+    base: /Зарплата и кадры (государственного|бюджетного)/i },
+  { tag: "БГУ",     title: "Бухгалтерия государственного (автономного) учреждения", pattern: /^(StateAccounting|BudgetAccounting|AccountingAI)/i,
+    base: /Бухгалтерия (государственного|автономного|бюджетного)/i },
+  { tag: "БУХ",     title: "Бухгалтерия предприятия",            pattern: /^Accounting(?!G[CP])/i, // not AccountingGC «Гаражи» / GP «Садовод»
+    base: /Бухгалтери/i },
+  { tag: "ЗУП",     title: "Зарплата и управление персоналом",   pattern: /^HRM/i,
+    base: /Зарплата и управление персоналом/i },
+  { tag: "ERP",     title: "ERP Управление предприятием",        pattern: /^(Enterprise2|ERP)/i,
+    base: /ERP/i },
+  { tag: "УПП",     title: "Управление производственным предприятием", pattern: /^Enterprise/i,
+    base: /Управление производственным предприятием/i },
+  { tag: "КА",      title: "Комплексная автоматизация",          pattern: /^ARAutomation/i,
+    base: /Комплексная автоматизация/i },
+  { tag: "УТ",      title: "Управление торговлей",               pattern: /^(Trade|TrCRM|TrCP)/i,
+    base: /Управление торговлей/i },
+  { tag: "УНФ",     title: "Управление нашей фирмой / Управление компанией", pattern: /^(SmallBusiness|CompanyManage?ment)/i,
+    base: /Управление (нашей|небольшой) фирмой/i },
+  { tag: "Розница", title: "Розница",                            pattern: /^Retail/i,
+    base: /Розница/i },
+  { tag: "ДО",      title: "Документооборот",                    pattern: /^(DocMng|BudgetDocMng)/i,
+    base: /Документооборот/i },
+  { tag: "Касса",   title: "Касса",                              pattern: /^Cashbox/i,
+    base: /(^|[^а-яё])Касса/i },
 ];
 
 const MIN_SHARED = 40;
@@ -52,10 +70,10 @@ export function tagByName(templateCode: string): TagDef | null {
 
 const isTypical = (templateCode: string) => templateCode.split("/")[0].toLowerCase() === "1c";
 
-interface Row { templateKey: string; tag: string; kind: "own" | "based"; source: "rule" | "versions"; }
+interface Row { templateKey: string; tag: string; kind: "own" | "based"; source: "rule" | "solutions" | "versions"; }
 
 /** Recompute rule/versions tags for every template without manual tags. */
-export async function refreshTags(): Promise<{ own: number; based: number; byVersions: number }> {
+export async function refreshTags(): Promise<{ own: number; based: number; bySolutions: number; byVersions: number }> {
   // Latest edition of each template stands for the whole template.
   const latestRes = await db.execute(sql`
     SELECT DISTINCT ON (template_key) id, template_key, template_code
@@ -70,7 +88,22 @@ export async function refreshTags(): Promise<{ own: number; based: number; byVer
   `);
   const manual = new Set((((manualRes as any).rows ?? manualRes) as { template_key: string }[]).map((r) => r.template_key));
 
+  // Official base configuration from solutions.1c.ru, per template (newest edition).
+  const baseRes = await db.execute(sql`
+    SELECT DISTINCT ON (c.template_key) c.template_key, si.base_config
+    FROM configurations c
+    JOIN release_projects rp ON rp.href = c.releases_href
+    JOIN solutions_info si ON si.url = rp.info_url AND si.status = 'ok' AND si.base_config IS NOT NULL
+    WHERE c.template_key IS NOT NULL
+    ORDER BY c.template_key, c.edition DESC
+  `);
+  const officialBase = new Map(
+    (((baseRes as any).rows ?? baseRes) as { template_key: string; base_config: string }[])
+      .map((r) => [r.template_key, r.base_config]),
+  );
+
   const rows: Row[] = [];
+  let bySolutions = 0;
   const typicalTag = new Map<number, string | null>(); // typical config id → its own tag (or none)
   const pending: { id: number; key: string }[] = [];
 
@@ -79,6 +112,17 @@ export async function refreshTags(): Promise<{ own: number; based: number; byVer
     const typical = isTypical(t.template_code);
     if (typical) typicalTag.set(Number(t.id), def?.tag ?? null);
     if (manual.has(t.template_key)) continue;
+    const base = !typical ? officialBase.get(t.template_key) : undefined;
+    if (base !== undefined) {
+      // Official answer: "Оригинальная" = built on nothing; else map the named
+      // 1C product to a line (a product outside the dictionary → no tag).
+      const baseDef = /Оригинальн/i.test(base) ? null : TAGS.find((d) => d.base.test(base));
+      if (baseDef) {
+        rows.push({ templateKey: t.template_key, tag: baseDef.tag, kind: "based", source: "solutions" });
+        bySolutions++;
+      }
+      continue;
+    }
     if (def) rows.push({ templateKey: t.template_key, tag: def.tag, kind: typical ? "own" : "based", source: "rule" });
     else if (!typical) pending.push({ id: Number(t.id), key: t.template_key });
   }
@@ -133,6 +177,7 @@ export async function refreshTags(): Promise<{ own: number; based: number; byVer
   return {
     own: rows.filter((r) => r.kind === "own").length,
     based: rows.filter((r) => r.kind === "based").length,
+    bySolutions,
     byVersions,
   };
 }

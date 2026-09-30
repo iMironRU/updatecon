@@ -27,6 +27,8 @@ import {
 import { nickMatchesTemplate, templateName } from "../db/template.js";
 import { compareVersions } from "../parser/version.js";
 import { ReleasesSession } from "./fetch-releases.js";
+import { syncSolutions } from "./solutions.js";
+import { refreshTags } from "../db/tags.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles,
   parseFileProperties, parsePatchesPage, parseProjectLinks,
@@ -498,6 +500,16 @@ export async function runReleasesImport(
   }
 
   await refreshPrimaryProjects();
+
+  // Product cards from solutions.1c.ru (industries, tasks, base configuration,
+  // support contacts), then retag: the official base outranks the heuristics.
+  try {
+    await syncSolutions({ onLog: log, signal });
+    const t = await refreshTags();
+    log(`Теги линеек: своих=${t.own}, «на базе»=${t.based} (по 1С:Решения ${t.bySolutions}, по версиям ${t.byVersions})`);
+  } catch (e) {
+    log(`1С:Решения: ошибка — ${(e as Error).message}`);
+  }
 
   if (!onLog) process.stdout.write("\n");
   const matched = byRule + byVersions + byManual;

@@ -53,7 +53,7 @@ async function main() {
   // recompute on every start so a new release applies new rules at once.
   try {
     const t = await refreshTags();
-    console.log(`[worker] tags: own=${t.own} based=${t.based} (by versions ${t.byVersions})`);
+    console.log(`[worker] tags: own=${t.own} based=${t.based} (solutions ${t.bySolutions}, versions ${t.byVersions})`);
   } catch (e) {
     console.error("[worker] tags refresh failed:", (e as Error).message);
   }

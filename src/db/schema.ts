@@ -301,6 +301,31 @@ export const packageManifests = pgTable("package_manifests", {
     .defaultNow(),
 });
 
+/**
+ * Product card from solutions.1c.ru ("1С:Решения"), one row per product page
+ * that a linked releases project points to (release_projects.info_url).
+ * Structured fields of the page's product_summary block; refreshed weekly.
+ * status: ok | missing (404 / no product block) | error.
+ */
+export const solutionsInfo = pgTable("solutions_info", {
+  url: text("url").primaryKey(),
+  status: text("status").notNull(),
+  title: text("title"),
+  productKind: text("product_kind"),               // "1С-Совместно", "1С", …
+  enterpriseTypes: text("enterprise_types").array(), // "Коммерческий", "Государственный"
+  countries: text("countries").array(),            // "Россия" / "Для всех стран"
+  developers: text("developers").array(),          // "1С", "ЦентрПрограммСистем"
+  baseConfig: text("base_config"),                 // "1С:Бухгалтерия 8" / "Оригинальная"
+  industries: text("industries").array(),          // "Сельское хозяйство", "ЖКХ"
+  tasks: text("tasks").array(),                    // "Комплексное управление ресурсами предприятия (ERP)"
+  editions: text("editions").array(),              // "Базовая", "ПРОФ", "КОРП"
+  supportPhone: text("support_phone"),
+  supportEmail: text("support_email"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
@@ -310,3 +335,4 @@ export type Setting = typeof settings.$inferSelect;
 export type ReleaseProject = typeof releaseProjects.$inferSelect;
 export type TemplateTag = typeof templateTags.$inferSelect;
 export type PackageManifest = typeof packageManifests.$inferSelect;
+export type SolutionInfo = typeof solutionsInfo.$inferSelect;
