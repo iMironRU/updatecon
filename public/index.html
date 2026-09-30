@@ -125,6 +125,14 @@ input, select, textarea { font-family: inherit; }
 .badge-tag { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .3px; }
 .badge-tag-based { background: transparent; color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .badge-level { background: var(--surface3); color: var(--text); font-weight: 700; letter-spacing: .3px; }
+/* Platform generation: 8.5 is the news, 8.3 is the norm, 8.2 and older are legacy */
+.badge-plat { font-family: var(--mono); font-weight: 700; }
+.badge-plat-new { background: var(--green-dim); color: var(--green); }
+.badge-plat-cur { background: var(--surface3); color: var(--text-muted); }
+.badge-plat-old { background: var(--orange-dim); color: var(--orange); }
+.plat-callout { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; padding: 6px 14px;
+  border-radius: 99px; background: var(--green-dim); color: var(--green); font-size: 13px; font-weight: 600; }
+.plat-callout:hover { filter: brightness(1.1); }
 .card { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); box-shadow: var(--shadow-xs); transition: box-shadow .2s, transform .2s, border-color .2s; }
 .card:hover { box-shadow: var(--shadow); }
@@ -516,6 +524,7 @@ function adapt_config(row) {
     isLatestEdition,
     tags: row.tags || [],       // [{tag, kind: 'own'|'based'}] — product lines of the template
     level: null,                // 'base' | 'prof' | 'corp' — set by assign_levels()
+    platform: row.platform || null, // platform generation of the newest version: '8.2' | '8.3' | '8.5' …
     nick,
     name: displayName,
     short: displayName.split(',')[0].trim(),
@@ -722,6 +731,18 @@ function assign_levels(configs) {
   });
 }
 var LEVEL_LABEL = { base: 'Базовая', prof: 'ПРОФ', corp: 'КОРП' };
+var PLATFORM_NEWEST = '8.5';
+function platform_cmp(a, b) {   // '8.5' > '8.3' > '8.2' > '8.1'
+  var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+}
+function platform_badge(c) {
+  if (!c.platform) return '';
+  var cls = platform_cmp(c.platform, PLATFORM_NEWEST) >= 0 ? 'badge-plat-new'
+          : platform_cmp(c.platform, '8.3') >= 0 ? 'badge-plat-cur' : 'badge-plat-old';
+  return '<span class="badge badge-plat ' + cls + '" title="Платформа 1С:Предприятие ' + c.platform
+    + ' (по последней версии)">' + c.platform + '</span>';
+}
 function level_badge(c) {
   return c.level ? '<span class="badge badge-level" title="Уровень поставки">' + LEVEL_LABEL[c.level] + '</span>' : '';
 }
@@ -1047,6 +1068,8 @@ function render_home() {
         </button>
       </div>
       <div id="home-matches" style="margin-top:14px"></div>
+      ${(() => { const n = CONFIGS.filter(c => c.isLatestEdition && c.platform === PLATFORM_NEWEST).length;
+        return n ? `<a class="plat-callout" href="#/catalog?plat=${PLATFORM_NEWEST}" onclick="navigate('/catalog?plat=${PLATFORM_NEWEST}')">Уже на платформе ${PLATFORM_NEWEST}: ${n} ${n % 10 === 1 && n % 100 !== 11 ? 'конфигурация' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'конфигурации' : 'конфигураций'} →</a>` : ''; })()}
     </div>
     <div id="home-chain-result"></div>
     <div class="stats-banner fade-up fade-up-2">
@@ -1185,7 +1208,7 @@ let CAT_SCROLL = null;   // { hash, y } — where the user left the catalog
 function catalog_state(params) {
   const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
   return {
-    q: params.q || '', lines: list('line'), levels: list('level'), regions: list('region'), types: list('type'),
+    q: params.q || '', lines: list('line'), levels: list('level'), platforms: list('plat'), regions: list('region'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
     vendorQuery: '', vendorsAll: false, panelOpen: false,
   };
@@ -1194,6 +1217,7 @@ function catalog_sync_url() {
   const parts = [];
   const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
   add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
+  add('plat', CAT.platforms.join(CAT_SEP));
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
@@ -1208,6 +1232,7 @@ function catalog_sync_url() {
 const CAT_FACETS = {
   lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
   levels:  (c, v) => v.includes(c.level),
+  platforms: (c, v) => v.includes(c.platform),
   regions: (c, v) => v.includes(c.region),
   types:   (c, v) => v.includes(c.type),
   vendors: (c, v) => v.includes(c.vendor),
@@ -1246,6 +1271,7 @@ function render_catalog() {
           <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
         </div>
         <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms"></div></div>
         <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
         <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
         <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types"></div></div>
@@ -1294,6 +1320,7 @@ function config_card_html(c) {
       <div class="config-card-badges">
         ${tag_chips(c)}
         ${level_badge(c)}
+        ${platform_badge(c)}
         ${type_badge(c.type)}
         ${c.status !== 'active' ? status_badge(c.status) : ''}
         <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
@@ -1355,6 +1382,14 @@ function render_facets() {
     .map(d => facet_opt('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
     .join('') || '<div class="filter-opt is-empty">нет</div>');
 
+  // Платформа — newest first; "неизвестна" is not offered (partner packages the
+  // ITS account can't read and without a releases.1c.ru project).
+  const platCnt = count_by(catalog_filter(base, 'platforms'), c => c.platform ? [c.platform] : []);
+  CAT.platforms.forEach(p => { if (!platCnt.has(p)) platCnt.set(p, 0); });
+  set('f-platforms', [...platCnt.keys()].sort((a, b) => platform_cmp(b, a))
+    .map(p => facet_opt('platforms', p, p === PLATFORM_NEWEST ? p + ' — новая' : p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + ' — по последней версии конфигурации'))
+    .join('') || '<div class="filter-opt is-empty">нет данных</div>');
+
   const lvlCnt = count_by(catalog_filter(base, 'levels'), c => c.level ? [c.level] : []);
   set('f-levels', ['base', 'prof', 'corp']
     .map(l => facet_opt('levels', l, LEVEL_LABEL[l], lvlCnt.get(l) || 0)).join(''));
@@ -1398,6 +1433,7 @@ function render_summary(found) {
   if (CAT.q.trim()) chip('q', '', '«' + CAT.q.trim() + '»');
   CAT.lines.forEach(v => chip('lines', v, v));
   CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
+  CAT.platforms.forEach(v => chip('platforms', v, 'Платформа ' + v));
   CAT.regions.forEach(v => chip('regions', v, region_label(v)));
   CAT.types.forEach(v => chip('types', v, type_label(v)));
   CAT.vendors.forEach(v => chip('vendors', v, v));
@@ -1405,7 +1441,7 @@ function render_summary(found) {
   const el = document.getElementById('catalog-summary');
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
-  const active = CAT.lines.length + CAT.levels.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+  const active = CAT.lines.length + CAT.levels.length + CAT.platforms.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -1502,7 +1538,7 @@ function render_config(id) {
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${cfg.vendor}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
-        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
+        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
           ${(function(gn){ if (!gn) return ''; var s = gn.replace(/Конфигурации проекта .*/i,'Партнёрская').replace(/Отраслевые решения/i,'Отраслевая'); if (s !== 'Партнёрская' && s !== 'Отраслевая') return ''; return '<span class="badge badge-gray" title="' + gn + '">' + s + '</span>'; })(cfg.groupName)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
@@ -1511,7 +1547,7 @@ function render_config(id) {
         <div class="config-meta-grid">
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
           <div><div class="meta-item-label">Дата выхода</div><div class="meta-item-value">${fmt_date(latest?.date)}</div></div>
-          <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || cfg.platform_min || '—'}</div></div>
+          <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || (cfg.platform_min !== '—' ? cfg.platform_min : '') || (cfg.platform ? cfg.platform + '.x' : '—')}</div></div>
           ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${cfg.nextReleaseVersion}${cfg.nextReleasePlannedDate ? ' <span style="font-weight:400;color:var(--text-muted)">·</span> ' + cfg.nextReleasePlannedDate : ''}${cfg.nextReleasePlanUpdated ? ' <span style="font-weight:400;font-size:11px;color:var(--text-muted)">обновлено ' + fmt_date(cfg.nextReleasePlanUpdated) + '</span>' : ''}</div></div>` : ''}
           ${cfg.avg_update_days ? `<div><div class="meta-item-label">Частота обновлений</div><div class="meta-item-value">~${cfg.avg_update_days} дн.</div></div>` : ''}
           <div><div class="meta-item-label">Всего версий</div><div class="meta-item-value">${cfg.versions.length || cfg.version_count || '—'}</div></div>
@@ -1698,6 +1734,12 @@ function render_stats() {
     <div class="stats-grid fade-up">
       <div class="stat-card"><div class="stat-card-val">${DB_META.total_configs}</div><div class="stat-card-lbl">Конфигураций в базе</div></div>
       <div class="stat-card"><div class="stat-card-val">${DB_META.total_editions}</div><div class="stat-card-lbl">Редакций всего (с предыдущими)</div></div>
+      ${(() => { const cur = CONFIGS.filter(c => c.isLatestEdition && c.platform);
+        const by = {}; cur.forEach(c => by[c.platform] = (by[c.platform] || 0) + 1);
+        const keys = Object.keys(by).sort((a, b) => platform_cmp(b, a));
+        return keys.length ? `<div class="stat-card"><div class="stat-card-val" style="font-size:18px;line-height:1.6">${keys.map(k =>
+          `<a href="#/catalog?plat=${k}" onclick="navigate('/catalog?plat=${k}')" style="color:inherit">${k}: <b>${by[k]}</b></a>`).join(' · ')}</div>
+          <div class="stat-card-lbl">Конфигураций по платформе (по последней версии)</div></div>` : ''; })()}
       <div class="stat-card"><div class="stat-card-val">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="stat-card-lbl">Версий в базе</div></div>
       <div class="stat-card"><div class="stat-card-val">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : '—'}</div><div class="stat-card-lbl">Последнее обновление базы</div></div>
     </div>

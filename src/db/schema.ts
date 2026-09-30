@@ -280,6 +280,22 @@ export const templateTags = pgTable(
   }),
 );
 
+/**
+ * 1C:Enterprise platform generation of an update package, from its manifest
+ * (tmplts/<dir>/1cv8.mft, line "AppVersion=8.3"). Keyed by the package folder
+ * ("1c/Accounting/3_0_206_19") — independent of how packages are grouped into
+ * applications. status: ok | denied (401/403 — partner packages the ITS
+ * account can't read) | missing (404) | error. denied/error are retried.
+ */
+export const packageManifests = pgTable("package_manifests", {
+  dir: text("dir").primaryKey(),
+  appVersion: text("app_version"),
+  status: text("status").notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
@@ -288,3 +304,4 @@ export type Patch = typeof patches.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
 export type ReleaseProject = typeof releaseProjects.$inferSelect;
 export type TemplateTag = typeof templateTags.$inferSelect;
+export type PackageManifest = typeof packageManifests.$inferSelect;

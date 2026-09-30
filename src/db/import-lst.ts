@@ -26,6 +26,16 @@ import { parseLstStream, type UpdateRecord } from "../parser/lst-parser-stream.j
 import { parseVersion, compareVersions } from "../parser/version.js";
 import { templateCodeFor } from "./template.js";
 import { refreshTags } from "./tags.js";
+import { syncManifests } from "./manifests.js";
+
+/** Platform generations of new packages; never fails the import. */
+async function syncManifestsSafe(log: (m: string) => void) {
+  try {
+    await syncManifests({ onLog: log });
+  } catch (e) {
+    log(`Манифесты платформы: ошибка — ${(e as Error).message}`);
+  }
+}
 import { resolveLst } from "./fetch-lst.js";
 
 function sha256(s: string): string {
@@ -83,6 +93,8 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
       finishedAt: new Date(),
     });
     log(`Файл не изменился (sha совпадает) — импорт пропущен`);
+    // Still fetch manifests: the first run after an upgrade has an unchanged file.
+    await syncManifestsSafe(log);
     return;
   }
 
@@ -276,6 +288,7 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
   // New templates / renames may change product-line tags.
   const tagStats = await refreshTags();
   log(`Теги линеек: своих=${tagStats.own}, «на базе»=${tagStats.based} (по версиям ${tagStats.byVersions})`);
+  await syncManifestsSafe(log);
 
   const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
   log(

@@ -597,6 +597,16 @@ export async function buildServer() {
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
         -- releases.1c.ru data when present, else the newest version the LST knows
         COALESCE(vm.version, mv.v) AS latest_version,
+        -- Platform generation (8.2 / 8.3 / 8.5 …): the official minimum from
+        -- releases.1c.ru for its newest version, unless the LST has a newer
+        -- package — then that package's manifest (tmplts/…/1cv8.mft AppVersion).
+        -- (Клиент ЭДО 2.10: manifest says 8.3, the release notes require 8.5.1.)
+        CASE
+          WHEN vp.gen IS NOT NULL
+               AND (pm.app_version IS NULL OR vp.ver_arr >= string_to_array(mv.v, '.')::bigint[])
+            THEN vp.gen
+          ELSE pm.app_version
+        END AS platform,
         vm.release_date  AS latest_date,
         vm.min_platform  AS latest_platform,
         COALESCE(vc.cnt, 0) AS version_count,
@@ -610,12 +620,28 @@ export async function buildServer() {
         LIMIT 1
       ) vm ON true
       LEFT JOIN LATERAL (
-        SELECT to_version AS v
+        SELECT to_version AS v, cfu_path
         FROM update_edges
         WHERE config_id = c.id
         ORDER BY string_to_array(to_version, '.')::bigint[] DESC
         LIMIT 1
       ) mv ON true
+      LEFT JOIN package_manifests pm
+        ON pm.status = 'ok'
+       AND pm.dir = regexp_replace(replace(mv.cfu_path, '\\', '/'), '/[^/]*$', '')
+      LEFT JOIN LATERAL (
+        -- newest releases version with a known minimum platform; several listed
+        -- ("8.3.27.1688, 8.5.1.1150") → the lowest generation is the requirement
+        SELECT CASE WHEN version ~ '^[0-9]+(\\.[0-9]+)*$'
+                    THEN string_to_array(version, '.')::bigint[] END AS ver_arr,
+               -- "8.3.27.1688" → "8.3": a generation starts a version, not a build number.
+               -- (\\. in this template literal = \. in SQL; a bare \. would be "any char".)
+               (SELECT min(m[2]) FROM regexp_matches(min_platform, '(^|[^0-9.])(8\\.[0-9]+)\\.[0-9]', 'g') AS m) AS gen
+        FROM version_meta
+        WHERE config_id = c.id AND min_platform IS NOT NULL
+        ORDER BY release_date DESC NULLS LAST
+        LIMIT 1
+      ) vp ON true
       LEFT JOIN LATERAL (
         SELECT count(DISTINCT to_version)::int AS cnt
         FROM update_edges WHERE config_id = c.id

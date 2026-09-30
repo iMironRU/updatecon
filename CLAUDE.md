@@ -26,6 +26,7 @@ src/db/
   schema.ts             Drizzle schema (configurations, update_edges, import_runs, release_projects, …)
   template.ts           application identity: template folder from cfu_path, nick↔template rule
   tags.ts               product-line tags dictionary + refresh (name rule, shared versions)
+  manifests.ts          platform generation (8.2/8.3/8.5) from tmplts/<pkg>/1cv8.mft
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
   fetch-lst.ts          ITS Basic-auth fetch OR local file (LST_FILE/argv)
   import-lst.ts         runImport(): two-level hash delta, fan-out to edges
@@ -84,6 +85,20 @@ drizzle/                generated migration SQL (committed)
   УНФ…, dictionary in `src/db/tags.ts`), kind own|based, source
   rule|versions|manual. Recomputed after every LST import and on worker
   start; manual rows are never touched (tag '' = "manually: no tags").
+- `package_manifests` (dir PK → app_version, status ok|denied|missing|error)
+  — `AppVersion` from each package's `1cv8.mft` (the LST has no platform
+  info; the manifest path is the cfu folder + lowercase `1cv8.mft`). Only
+  the newest package per edition is fetched, after every LST import.
+  Partner packages often answer 401 (denied, retried after 30 days). The
+  catalog's `platform` prefers releases.1c.ru's official minimum for its
+  newest version (manifests can lag: Клиент ЭДО 2.10 says 8.3, needs 8.5).
+
+## SQL inside sql`…` templates — escaping gotcha
+
+The drizzle `sql` tag receives *cooked* template strings, so TS escapes are
+applied before Postgres sees the text: `\.` in TS source reaches SQL as a
+bare `.` ("any char" in a regex). In TS source write `\\.` to get `\.` in
+SQL, and `'\\'` to get a single-backslash string `'\'`.
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on
