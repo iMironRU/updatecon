@@ -130,6 +130,12 @@ input, select, textarea { font-family: inherit; }
 .sol-val { font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
 .sol-val a { color: var(--accent); }
 .sol-src { font-size: 11px; color: var(--text-light); }
+.badge-trans { background: var(--purple-dim); color: var(--purple); }
+.trans-list { display: grid; gap: 6px; }
+.trans-item { font-size: 14px; }
+.trans-item a { color: var(--accent); font-weight: 600; }
+.trans-item .trans-meta { color: var(--text-muted); font-size: 12px; }
+.trans-note { font-size: 13px; color: var(--orange); }
 @media (max-width: 640px) { .sol-row { grid-template-columns: 1fr; gap: 2px; } }
 /* Platform generation: 8.5 is the news, 8.3 is the norm, 8.2 and older are legacy */
 .badge-plat { font-family: var(--mono); font-weight: 700; }
@@ -536,6 +542,7 @@ function adapt_config(row) {
       developers: row.sol_developers || [], base: row.sol_base || '', industries: row.sol_industries || [],
       tasks: row.sol_tasks || [], editions: row.sol_editions || [], phone: row.sol_phone || '', email: row.sol_email || '',
     },
+    transOut: row.trans_out || [],   // kinds of "переходы" from this edition: 'product' | 'edition'
     vendorName: clean_vendor((row.sol_developers || []).length ? row.sol_developers.join(', ') : row.vendor),
     nick,
     name: displayName,
@@ -755,6 +762,11 @@ var PLATFORM_NEWEST = '8.5';
 function platform_cmp(a, b) {   // '8.5' > '8.3' > '8.2' > '8.1'
   var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
   return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+}
+function trans_badge(c) {
+  if (!c.transOut.length) return '';
+  var what = c.transOut.map(function(k) { return k === 'edition' ? 'на новую редакцию' : 'на другой продукт'; }).join(' и ');
+  return '<span class="badge badge-trans" title="Можно перейти обновлением ' + what + '">⇢ переход</span>';
 }
 function platform_badge(c) {
   if (!c.platform) return '';
@@ -1254,7 +1266,7 @@ function catalog_state(params) {
   const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
   return {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
-    platforms: list('plat'), regions: list('region'), orgs: list('org'), types: list('type'),
+    platforms: list('plat'), trans: list('trans'), regions: list('region'), orgs: list('org'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
     vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
   };
@@ -1264,7 +1276,7 @@ function catalog_sync_url() {
   const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
   add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
   add('plat', CAT.platforms.join(CAT_SEP)); add('ind', CAT.industries.join(CAT_SEP));
-  add('task', CAT.tasks.join(CAT_SEP)); add('org', CAT.orgs.join(CAT_SEP));
+  add('task', CAT.tasks.join(CAT_SEP)); add('org', CAT.orgs.join(CAT_SEP)); add('trans', CAT.trans.join(CAT_SEP));
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
@@ -1280,6 +1292,7 @@ const CAT_FACETS = {
   lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
   levels:  (c, v) => v.includes(c.level),
   platforms: (c, v) => v.includes(c.platform),
+  trans:   (c, v) => c.transOut.some(k => v.includes(k)),
   regions: (c, v) => c.allRegions || c.regions.some(r => v.includes(r)),   // "Для всех стран" fits any region
   industries: (c, v) => c.sol.industries.some(x => v.includes(x)),
   tasks:   (c, v) => c.sol.tasks.some(x => v.includes(x)),
@@ -1328,6 +1341,7 @@ function render_catalog() {
         <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
         <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms"></div></div>
         <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Переход обновлением</div><div id="f-trans"></div></div>
         <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
         <div class="filter-group" id="g-orgs"><div class="filter-group-label">Для кого</div><div id="f-orgs"></div></div>
         <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types"></div></div>
@@ -1377,6 +1391,7 @@ function config_card_html(c) {
         ${tag_chips(c)}
         ${level_badge(c)}
         ${platform_badge(c)}
+        ${trans_badge(c)}
         ${type_badge(c.type)}
         ${c.status !== 'active' ? status_badge(c.status) : ''}
         <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
@@ -1446,6 +1461,13 @@ function render_facets() {
   set('f-platforms', [...platCnt.keys()].sort((a, b) => platform_cmp(b, a))
     .map(p => facet_opt('platforms', p, p === PLATFORM_NEWEST ? p + ' — новая' : p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + ' — по последней версии конфигурации'))
     .join('') || '<div class="filter-opt is-empty">нет данных</div>');
+
+  const trCnt = count_by(catalog_filter(base, 'trans'), c => c.transOut);
+  // "на новую редакцию" starts from older editions — hidden unless they are shown.
+  set('f-trans', [['product', 'на другой продукт'], ['edition', 'на новую редакцию']]
+    .filter(([k]) => trCnt.get(k) || CAT.trans.includes(k))
+    .map(([k, l]) => facet_opt('trans', k, l, trCnt.get(k) || 0, 'Есть пакет обновления, переводящий базу ' + l)).join('')
+    || '<div class="filter-opt is-empty">нет</div>');
 
   const lvlCnt = count_by(catalog_filter(base, 'levels'), c => c.level ? [c.level] : []);
   set('f-levels', ['base', 'prof', 'corp']
@@ -1521,6 +1543,7 @@ function render_summary(found) {
   CAT.tasks.forEach(v => chip('tasks', v, v));
   CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
   CAT.platforms.forEach(v => chip('platforms', v, 'Платформа ' + v));
+  CAT.trans.forEach(v => chip('trans', v, v === 'edition' ? 'Переход на новую редакцию' : 'Переход на другой продукт'));
   CAT.regions.forEach(v => chip('regions', v, v === 'all' ? 'Для всех стран' : region_label(v)));
   CAT.orgs.forEach(v => chip('orgs', v, v));
   CAT.types.forEach(v => chip('types', v, type_label(v)));
@@ -1530,7 +1553,7 @@ function render_summary(found) {
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
   const active = CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
-    + CAT.levels.length + CAT.platforms.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+    + CAT.levels.length + CAT.platforms.length + CAT.trans.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -1651,11 +1674,12 @@ function render_config(id) {
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${esc_html(cfg.vendorName)}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
-        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
+        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${trans_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
         ${editions_nav_html(cfg)}
         ${solutions_block_html(cfg)}
+        <div id="cfg-transitions"></div>
         ${cfg.description ? `<p style="font-size:14px;color:var(--text-muted);margin-top:12px;line-height:1.6">${cfg.description}</p>` : ''}
         <div class="config-meta-grid">
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
@@ -1712,7 +1736,39 @@ function render_config(id) {
     </div>
   </div>`;
 }
-function bind_config(id) { /* versions already loaded by route() */ }
+function bind_config(id) { load_transitions(id); }
+
+// "Переходы": update packages to/from other products or editions. Information
+// only — chains are still built inside one edition.
+async function load_transitions(id) {
+  const box = document.getElementById('cfg-transitions');
+  const cfg = CONFIGS.find(c => c.id === String(id));
+  if (!box || !cfg) return;
+  let data;
+  try { data = await apiFetch('/api/transitions', { config_id: id }); } catch (e) { return; }
+  const app = (cid, name, ed) => {
+    const c = cid != null ? CONFIGS.find(x => x.id === String(cid)) : null;
+    const label = c ? c.name + (c.edition ? ' · ред. ' + c.edition : '') : humanize_name(name) + (ed ? ' · ред. ' + ed : '');
+    return c ? `<a href="#/config/${c.id}" onclick="navigate('/config/${c.id}')">${esc_html(label)}</a>` : esc_html(label);
+  };
+  const kindText = k => k === 'edition' ? 'новая редакция' : 'другой продукт';
+  const out = data.out.map(t => `<div class="trans-item">→ ${app(t.to_config_id, '', t.to_edition)}
+      <span class="trans-meta">· ${kindText(t.kind)} · из версий ${esc_html(t.from_min)}${t.from_max !== t.from_min ? '…' + esc_html(t.from_max) : ''}</span></div>`);
+  const inc = data.in.map(t => `<div class="trans-item">← ${app(t.from_config_id, t.from_name, t.from_edition)}
+      <span class="trans-meta">· ${kindText(t.kind)} · в версии ${esc_html(t.to_min)}${t.to_max !== t.to_min ? '…' + esc_html(t.to_max) : ''}</span></div>`);
+  // An older edition with no update package to its newer one (Розница 2.3 → 3.0):
+  // say so — that move is a separate data migration, not an update.
+  const newer = CONFIGS.filter(c => c.templateKey === cfg.templateKey && (c.editionNum || 0) > (cfg.editionNum || 0));
+  const note = !cfg.isLatestEdition && newer.length && !data.out.some(t => t.kind === 'edition')
+    ? `<div class="trans-note">На ${newer.map(c => 'редакцию ' + (c.edition || c.editionNum)).join(', ')} обновлением не перейти — в каталоге обновлений 1С нет пакета перехода (переход выполняется отдельно, переносом данных).</div>` : '';
+  if (!out.length && !inc.length && !note) return;
+  box.innerHTML = `<div class="sol-info" style="margin-top:12px">
+    ${out.length ? `<div class="sol-row"><div class="meta-item-label">Можно перейти на</div><div class="trans-list">${out.join('')}</div></div>` : ''}
+    ${inc.length ? `<div class="sol-row"><div class="meta-item-label">Можно перейти с</div><div class="trans-list">${inc.join('')}</div></div>` : ''}
+    ${note}
+    <div class="sol-src">Переходы — пакеты обновления из каталога 1С (v8cscdsc.lst). Цепочка обновлений через них не строится.</div>
+  </div>`;
+}
 function toggle_version(bodyId) {
   const el = document.getElementById(bodyId); if (!el) return;
   el.classList.toggle('open');

@@ -71,6 +71,13 @@
       "when": 1790795515057,
       "tag": "0009_plain_excalibur",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790821381872,
+      "tag": "0010_spicy_toxin",
+      "breakpoints": true
     }
   ]
 }

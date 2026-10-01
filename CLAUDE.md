@@ -27,6 +27,7 @@ src/db/
   template.ts           application identity: template folder from cfu_path, nick↔template rule
   tags.ts               product-line tags dictionary + refresh (name rule, shared versions)
   manifests.ts          platform generation (8.2/8.3/8.5) from tmplts/<pkg>/1cv8.mft
+  transitions.ts        "переходы" between products/editions from LST package sources
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
@@ -106,6 +107,12 @@ owned by the application edition of its own package (template of `cfuPath`
 + first segment of `to`). API calls address editions by `config_id`
 (`config=<name>` is still accepted but ambiguous).
 
+- `transitions` — "переходы": LST packages whose sources are another
+  product (УТ базовая → УТ, УТ → КА → ERP, Розница → УНФ) or another
+  edition (БП 2.0 → 3.0). Extracted by `src/db/transitions.ts`, a separate
+  read-only pass over the LST text (the locked parsers drop source names).
+  **Information only** — the user decided transitions are shown ("можно
+  перейти"), not chained; locked decision 2 stands.
 - `solutions_info` (url PK) — solutions.1c.ru product card for linked
   projects: product kind, enterprise types, countries, developers, **base
   configuration** (official "на базе", outranks the version heuristic in

@@ -12,6 +12,7 @@
  *    are not unique — prefer config_id.)
  *   GET  /api/stats                        -> import/run summary
  *   GET  /api/tags                         -> product-line tag dictionary
+ *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
  *   GET  /*                                -> static UI (public/)
  *
  * Admin endpoints (cookie session auth via ADMIN_LOGIN / ADMIN_PASSWORD):
@@ -596,6 +597,9 @@ export async function buildServer() {
          WHERE t.template_key = c.template_key AND t.tag <> '') AS tags,
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
         rp.info_url, rp.bugs_url,
+        -- kinds of "переходы" available FROM this edition: product | edition
+        (SELECT coalesce(array_agg(DISTINCT t.kind), '{}') FROM transitions t
+          WHERE t.from_config_id = c.id) AS trans_out,
         -- solutions.1c.ru product card (industry/partner products only)
         si.product_kind AS sol_kind, si.enterprise_types AS sol_org_types, si.countries AS sol_countries,
         si.developers AS sol_developers, si.base_config AS sol_base, si.industries AS sol_industries,
@@ -829,6 +833,28 @@ export async function buildServer() {
       String(to),
     );
     return res;
+  });
+
+  // Information only: update packages moving a database to another product or
+  // edition (the chain calculator never crosses them — locked decision).
+  app.get("/api/transitions", async (req) => {
+    const cfg = await resolveConfig(req.query as Record<string, unknown>);
+    if (!cfg) return { out: [], in: [] };
+    const rows = await db.execute(sql`
+      SELECT t.kind, t.packages, t.from_min, t.from_max, t.to_min, t.to_max,
+             t.from_config_id, t.from_name, f.edition AS from_edition,
+             t.to_config_id, o.edition AS to_edition
+      FROM transitions t
+      LEFT JOIN configurations f ON f.id = t.from_config_id
+      JOIN configurations o ON o.id = t.to_config_id
+      WHERE t.from_config_id = ${cfg.id} OR t.to_config_id = ${cfg.id}
+      ORDER BY t.kind DESC, t.packages DESC
+    `);
+    const list = ((rows as any).rows ?? rows) as { from_config_id: number | null; to_config_id: number }[];
+    return {
+      out: list.filter((r) => Number(r.from_config_id) === cfg.id),
+      in: list.filter((r) => Number(r.to_config_id) === cfg.id),
+    };
   });
 
   app.get("/api/tags", async () =>

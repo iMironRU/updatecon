@@ -326,6 +326,36 @@ export const solutionsInfo = pgTable("solutions_info", {
     .defaultNow(),
 });
 
+/**
+ * "Переходы": update packages in the LST that move a database to ANOTHER
+ * application (УТ базовая → УТ, УТ → КА, Розница → УНФ) or to another edition
+ * of the same one (БП 2.0 → 3.0). Shown for information only — the chain
+ * calculator still stays within one edition (locked decision). Rebuilt from
+ * the LST on every import; aggregated per (source, target) application.
+ * kind: product | edition. from_config_id is NULL when the source product
+ * could not be resolved to an application (only its LST name is known).
+ */
+export const transitions = pgTable(
+  "transitions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    fromConfigId: integer("from_config_id").references(() => configurations.id, { onDelete: "cascade" }),
+    fromName: text("from_name").notNull(),
+    fromVendor: text("from_vendor").notNull().default(""),
+    toConfigId: integer("to_config_id").notNull().references(() => configurations.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    packages: integer("packages").notNull().default(0),
+    fromMin: text("from_min"),
+    fromMax: text("from_max"),
+    toMin: text("to_min"),
+    toMax: text("to_max"),
+  },
+  (t) => ({
+    fromIdx: index("transitions_from_idx").on(t.fromConfigId),
+    toIdx: index("transitions_to_idx").on(t.toConfigId),
+  }),
+);
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;
@@ -336,3 +366,4 @@ export type ReleaseProject = typeof releaseProjects.$inferSelect;
 export type TemplateTag = typeof templateTags.$inferSelect;
 export type PackageManifest = typeof packageManifests.$inferSelect;
 export type SolutionInfo = typeof solutionsInfo.$inferSelect;
+export type Transition = typeof transitions.$inferSelect;
