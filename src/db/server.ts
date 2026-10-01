@@ -858,7 +858,7 @@ export async function buildServer() {
   });
 
   app.get("/api/tags", async () =>
-    TAGS.map((t) => ({ tag: t.tag, title: t.title })));
+    TAGS.map((t) => ({ tag: t.tag, title: t.title, core: t.core })));
 
   app.get("/api/stats", async () => {
     const [cfgCount, appCount, edgeCount, verCount, lastRun] = await Promise.all([

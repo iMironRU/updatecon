@@ -125,6 +125,7 @@ input, select, textarea { font-family: inherit; }
 .badge-tag { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .3px; }
 .badge-tag-based { background: transparent; color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .badge-level { background: var(--surface3); color: var(--text); font-weight: 700; letter-spacing: .3px; }
+.meta-item-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .sol-info { margin-top: 14px; padding: 12px 14px; border-radius: var(--r-xs); background: var(--surface2); display: grid; gap: 8px; }
 .sol-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: baseline; }
 .sol-val { font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -132,6 +133,9 @@ input, select, textarea { font-family: inherit; }
 .sol-src { font-size: 11px; color: var(--text-light); }
 .badge-trans { background: var(--purple-dim); color: var(--purple); }
 .badge-lts { background: var(--yellow-dim); color: var(--yellow); font-weight: 700; }
+/* Clickable badges open the catalog filtered by what they say */
+.badge-link { cursor: pointer; transition: box-shadow .15s, filter .15s; }
+.badge-link:hover, .badge-link:focus-visible { box-shadow: inset 0 0 0 1.5px currentColor; filter: brightness(1.08); outline: none; }
 .badge-lts.ended { background: var(--surface3); color: var(--text-muted); font-weight: 600; }
 .lts-quick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -2px 0 12px; font-size: 13px; color: var(--text-muted); }
 .lts-quick button { background: none; border: 1px dashed var(--border-strong); border-radius: 99px; padding: 3px 10px;
@@ -774,27 +778,85 @@ function platform_cmp(a, b) {   // '8.5' > '8.3' > '8.2' > '8.1'
   var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
   return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
 }
+// The user's country (Settings): its products come first in the catalog.
+function pref_country() {
+  try { return localStorage.getItem('uc_country') || 'ru'; } catch (e) { return 'ru'; }
+}
+function in_pref_country(c) { return c.allRegions || c.regions.indexOf(pref_country()) >= 0; }
+
+// "AccountingCorpKz20" → "accounting": level, country and edition suffixes stripped.
+function template_stem(code) {
+  var t = String(code || '').split('/').pop().toLowerCase(), prev;
+  do {
+    prev = t;
+    t = t.replace(/\d+$/, '').replace(/(corp|prof|base|micro)$/, '')
+         .replace(/(kz|ky|az|uz|md|tj|ukr|tm|am|ge|est|bel|be|balt|cr)$/, '');
+  } while (t !== prev && t);
+  return t || prev;
+}
+// The line's original product (БП, not БНКО) — any level or country variant of it.
+function is_core_product(c) {
+  return c.tags.some(function(t) {
+    if (t.kind !== 'own') return false;
+    var d = TAG_DICT.filter(function(x) { return x.tag === t.tag; })[0];
+    return d && d.core && template_stem(c.templateCode) === template_stem(d.core);
+  });
+}
+var LEVEL_RANK = { prof: 0, corp: 1, base: 2 };
+
+// A badge that opens the catalog filtered by its meaning ("БУХ" → line=БУХ).
+// Inside the catalog it adds to the current filters instead of replacing them.
+function fattr(field, value, title) {
+  return ' role="link" tabindex="0" data-ff="' + field + '" data-fv="' + esc_html(value) + '"'
+    + ' title="' + esc_html(title) + '" onclick="return open_filter(event,this)"'
+    + ' onkeydown="if(event.key===\'Enter\')return open_filter(event,this)"';
+}
+var FILTER_FIELD = { line: 'lines', level: 'levels', plat: 'platforms', lts: 'lts', trans: 'trans', type: 'types',
+  region: 'regions', ind: 'industries', task: 'tasks', org: 'orgs' };
+function open_filter(e, el) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  const field = el.dataset.ff, value = el.dataset.fv;
+  if (ROUTE_PATH === '/catalog' && CAT) {
+    if (field === 'legacy') CAT.legacy = true;
+    else value.split(CAT_SEP).forEach(v => { const f = CAT[FILTER_FIELD[field]]; if (f.indexOf(v) < 0) f.push(v); });
+    apply_filters();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  } else {
+    navigate('/catalog?' + field + '=' + encodeURIComponent(field === 'legacy' ? '1' : value));
+  }
+  return false;
+}
+function region_badge(c, always) {
+  // On cards only foreign products are marked; the config page always says it.
+  if (c.allRegions) return always ? '<span class="badge badge-gray badge-link"' + fattr('region', 'all', 'Все продукты для всех стран') + '>Для всех стран</span>' : '';
+  if (!always && in_pref_country(c)) return '';
+  const r = c.regions[0];
+  return r ? '<span class="badge badge-gray badge-link"' + fattr('region', r, 'Все продукты: ' + region_label(r)) + '>' + region_label(r) + '</span>' : '';
+}
+
 function lts_ended(c) { return c.ltsUntil && new Date(c.ltsUntil) < new Date(new Date().toDateString()); }
 function lts_badge(c) {
   if (!c.ltsVersion) return '';
-  return '<span class="badge badge-lts' + (lts_ended(c) ? ' ended' : '') + '" title="Ветка длительной поддержки '
-    + esc_html(c.ltsLine) + '.x (сейчас ' + esc_html(c.ltsVersion) + ')' + (lts_ended(c) ? ' — поддержка завершена' : '') + '">ДП до '
-    + fmt_date(c.ltsUntil) + '</span>';
+  return '<span class="badge badge-lts badge-link' + (lts_ended(c) ? ' ended' : '') + '"' + fattr('lts', 'yes',
+    'Ветка длительной поддержки ' + c.ltsLine + '.x (сейчас ' + c.ltsVersion + ')' + (lts_ended(c) ? ' — поддержка завершена' : '')
+    + '. Показать все с ДП') + '>ДП до ' + fmt_date(c.ltsUntil) + '</span>';
 }
 function trans_badge(c) {
   if (!c.transOut.length) return '';
   var what = c.transOut.map(function(k) { return k === 'edition' ? 'на новую редакцию' : 'на другой продукт'; }).join(' и ');
-  return '<span class="badge badge-trans" title="Можно перейти обновлением ' + what + '">⇢ переход</span>';
+  return '<span class="badge badge-trans badge-link"' + fattr('trans', c.transOut.join(CAT_SEP),
+    'Можно перейти обновлением ' + what + '. Показать все такие') + '>⇢ переход</span>';
 }
 function platform_badge(c) {
   if (!c.platform) return '';
   var cls = platform_cmp(c.platform, PLATFORM_NEWEST) >= 0 ? 'badge-plat-new'
           : platform_cmp(c.platform, '8.3') >= 0 ? 'badge-plat-cur' : 'badge-plat-old';
-  return '<span class="badge badge-plat ' + cls + '" title="Платформа 1С:Предприятие ' + c.platform
-    + ' (по последней версии)">' + c.platform + '</span>';
+  return '<span class="badge badge-plat badge-link ' + cls + '"' + fattr('plat', c.platform,
+    'Платформа 1С:Предприятие ' + c.platform + ' (по последней версии). Показать все на ' + c.platform) + '>' + c.platform + '</span>';
 }
 function level_badge(c) {
-  return c.level ? '<span class="badge badge-level" title="Уровень поставки">' + LEVEL_LABEL[c.level] + '</span>' : '';
+  return c.level ? '<span class="badge badge-level badge-link"' + fattr('level', c.level,
+    'Уровень поставки. Показать все ' + LEVEL_LABEL[c.level]) + '>' + LEVEL_LABEL[c.level] + '</span>' : '';
 }
 
 // "Фирма ""1С"", ООО ""ЦентрПрограммСистем""" → "ЦентрПрограммСистем": legal forms
@@ -832,7 +894,7 @@ function type_label(t) {
 function type_badge(t) {
   const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green' }[t] || 'badge-gray';
   const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry() };
-  return `<span class="badge ${cls}">${icons[t]||''} ${type_label(t)}</span>`;
+  return `<span class="badge ${cls} badge-link"${fattr('type', t, 'Показать все: ' + type_label(t))}>${icons[t]||''} ${type_label(t)}</span>`;
 }
 // Where the releases.1c.ru "Общая информация о конфигурации" link points to.
 function info_link_label(url) {
@@ -848,13 +910,13 @@ function tag_title(tag) {
 function tag_chips(cfg) {
   return (cfg.tags || []).map(function(t) {
     return t.kind === 'based'
-      ? '<span class="badge badge-tag-based" title="Решение на базе: ' + tag_title(t.tag) + '">на базе ' + t.tag + '</span>'
-      : '<span class="badge badge-tag" title="' + tag_title(t.tag) + '">' + t.tag + '</span>';
+      ? '<span class="badge badge-tag-based badge-link"' + fattr('line', t.tag, 'Решение на базе: ' + tag_title(t.tag) + '. Показать линейку') + '>на базе ' + t.tag + '</span>'
+      : '<span class="badge badge-tag badge-link"' + fattr('line', t.tag, tag_title(t.tag) + '. Показать линейку и решения на её базе') + '>' + t.tag + '</span>';
   }).join(' ');
 }
 function status_badge(s) {
   if (s === 'discontinued') return `<span class="badge badge-red">${icn_x()} Поддержка прекращена</span>`;
-  if (s === 'legacy') return `<span class="badge badge-gray">Предыдущая редакция</span>`;
+  if (s === 'legacy') return `<span class="badge badge-gray badge-link"${fattr('legacy', '1', 'Показать предыдущие редакции')}>Предыдущая редакция</span>`;
   return `<span class="badge badge-green">${icn_check()} Поддерживается</span>`;
 }
 function avatar_cls(t) {
@@ -1122,7 +1184,7 @@ window.addEventListener('hashchange', () => route());
    HOME VIEW
    ================================================================ */
 function render_home() {
-  const latest = [...CONFIGS].filter(c => c.latestDate && c.isLatestEdition).sort((a,b) => new Date(b.latestDate) - new Date(a.latestDate)).slice(0,3);
+  const latest = [...CONFIGS].filter(c => c.latestDate && c.isLatestEdition && in_pref_country(c)).sort((a,b) => new Date(b.latestDate) - new Date(a.latestDate)).slice(0,3);
   return `<div class="wrap">
     <div class="page-head"><div></div></div>
     <div class="hero fade-up">
@@ -1285,7 +1347,7 @@ function catalog_state(params) {
   return {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
     platforms: list('plat'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
-    vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
+    vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'main',
     vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
   };
 }
@@ -1299,7 +1361,7 @@ function catalog_sync_url() {
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
-  if (CAT.sort !== 'date_desc') add('sort', CAT.sort);
+  if (CAT.sort !== 'main') add('sort', CAT.sort);
   CAT_HASH = '#/catalog' + (parts.length ? '?' + parts.join('&') : '');
   // replaceState: no hashchange → no re-render, the search box keeps focus.
   if (location.hash !== CAT_HASH) history.replaceState(null, '', CAT_HASH);
@@ -1384,7 +1446,7 @@ function render_catalog() {
                    value="${esc_html(CAT.q)}" oninput="CAT.q=this.value; apply_filters()">
           </div>
           <select class="select sort-select" id="catalog-sort" onchange="CAT.sort=this.value; apply_filters()">
-            ${[['date_desc','Дата обновления ↓'],['date_asc','Дата обновления ↑'],['name_asc','Название А→Я'],
+            ${[['main','Сначала основные'],['date_desc','Дата обновления ↓'],['date_asc','Дата обновления ↑'],['name_asc','Название А→Я'],
                ['name_desc','Название Я→А'],['freq_asc','Частота обновлений ↓']]
               .map(([v, l]) => `<option value="${v}"${CAT.sort === v ? ' selected' : ''}>${l}</option>`).join('')}
           </select>
@@ -1412,6 +1474,7 @@ function config_card_html(c) {
         ${tag_chips(c)}
         ${level_badge(c)}
         ${platform_badge(c)}
+        ${region_badge(c, false)}
         ${lts_badge(c)}
         ${trans_badge(c)}
         ${type_badge(c.type)}
@@ -1593,8 +1656,21 @@ function apply_filters() {
   // With a line filter on, the line's own products come before the ones built on it.
   const ownRank = c => CAT.lines.length && c.tags.some(t => t.kind === 'own' && CAT.lines.includes(t.tag)) ? 0 : 1;
   const sortVal = CAT.sort;
+  // "Сначала основные": my country first, then typical 1C lines (БП, ЗУП, УТ…),
+  // other typical products, then industry/partner solutions; newest first inside.
+  const mainRank = c => (in_pref_country(c) ? 0 : 10)
+    + (c.type === 'standard'
+        ? (is_core_product(c) ? 0 : c.tags.some(t => t.kind === 'own') ? 1 : 2)
+        : c.tags.length ? 3 : 4);
+  const levelRank = c => c.level in LEVEL_RANK ? LEVEL_RANK[c.level] : 3;
   list.sort((a,b) => {
     if (CAT.lines.length && ownRank(a) !== ownRank(b)) return ownRank(a) - ownRank(b);
+    // Fresh before stale (БП 3.0 over "Бухгалтерия для Крыма 2014"); siblings
+    // released the same day go ПРОФ → КОРП → Базовая.
+    if (sortVal==='main') return mainRank(a) - mainRank(b)
+      || new Date(b.latestDate||0) - new Date(a.latestDate||0)
+      || levelRank(a) - levelRank(b)
+      || (a.name||'').localeCompare(b.name||'','ru');
     if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
     if (sortVal==='date_asc')  return new Date(a.latestDate||0) - new Date(b.latestDate||0);
     if (sortVal==='name_asc')  return (a.name||'').localeCompare(b.name||'','ru');
@@ -1702,7 +1778,7 @@ function render_config(id) {
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${esc_html(cfg.vendorName)}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
         <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${lts_badge(cfg)} ${trans_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
-          ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
+          ${region_badge(cfg, false)}
         </div>
         ${editions_nav_html(cfg)}
         ${solutions_block_html(cfg)}
@@ -1712,8 +1788,8 @@ function render_config(id) {
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div></div>
           <div><div class="meta-item-label">Дата выхода</div><div class="meta-item-value">${fmt_date(latest?.date)}</div></div>
           <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || (cfg.platform_min !== '—' ? cfg.platform_min : '') || (cfg.platform ? cfg.platform + '.x' : '—')}</div></div>
-          ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${cfg.nextReleaseVersion}${cfg.nextReleasePlannedDate ? ' <span style="font-weight:400;color:var(--text-muted)">·</span> ' + cfg.nextReleasePlannedDate : ''}${cfg.nextReleasePlanUpdated ? ' <span style="font-weight:400;font-size:11px;color:var(--text-muted)">обновлено ' + fmt_date(cfg.nextReleasePlanUpdated) + '</span>' : ''}</div></div>` : ''}
-          ${cfg.ltsVersion ? `<div><div class="meta-item-label">Ветка ДП</div><div class="meta-item-value mono">${esc_html(cfg.ltsLine)}.x <span style="font-weight:400;color:var(--text-muted)">· до ${fmt_date(cfg.ltsUntil)}${lts_ended(cfg) ? ' (завершена)' : ''}</span></div></div>` : ''}
+          ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${esc_html(cfg.nextReleaseVersion)}</div>${cfg.nextReleasePlannedDate || cfg.nextReleasePlanUpdated ? `<div class="meta-item-sub">${esc_html(cfg.nextReleasePlannedDate || '')}${cfg.nextReleasePlannedDate && cfg.nextReleasePlanUpdated ? ' · ' : ''}${cfg.nextReleasePlanUpdated ? 'план от ' + fmt_date(cfg.nextReleasePlanUpdated) : ''}</div>` : ''}</div>` : ''}
+          ${cfg.ltsVersion ? `<div><div class="meta-item-label">Ветка ДП</div><div class="meta-item-value mono">${esc_html(cfg.ltsLine)}.x</div><div class="meta-item-sub">поддержка до ${fmt_date(cfg.ltsUntil)}${lts_ended(cfg) ? ' (завершена)' : ''}</div></div>` : ''}
           ${cfg.avg_update_days ? `<div><div class="meta-item-label">Частота обновлений</div><div class="meta-item-value">~${cfg.avg_update_days} дн.</div></div>` : ''}
           <div><div class="meta-item-label">Всего версий</div><div class="meta-item-value">${cfg.versions.length || cfg.version_count || '—'}</div></div>
         </div>
@@ -1989,8 +2065,19 @@ function render_stats() {
    ================================================================ */
 function render_settings() {
   const th = current_theme();
+  const pc = pref_country();
+  const regions = [...new Set(CONFIGS.flatMap(c => c.regions))]
+    .filter(r => r !== 'stdlib' && r !== 'intl')
+    .sort((a, b) => (b === 'ru') - (a === 'ru') || region_label(a).localeCompare(region_label(b), 'ru'));
   return `<div class="wrap" style="max-width:720px">
     <div class="page-head"><div class="page-title">Настройки</div></div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Моя страна</div>
+      <div class="settings-section-sub">Конфигурации этой страны идут первыми в каталоге (сортировка «Сначала основные») и в «Последних обновлениях»; у продуктов других стран на карточке виден бейдж страны.</div>
+      <select class="select" style="max-width:280px" onchange="set_country(this.value)">
+        ${regions.map(r => `<option value="${r}"${r === pc ? ' selected' : ''}>${region_label(r)}</option>`).join('')}
+      </select>
+    </div>
     <div class="settings-section fade-up">
       <div class="settings-section-title">Тема оформления</div>
       <div class="settings-section-sub">По умолчанию используется системная тема браузера</div>
@@ -2039,6 +2126,10 @@ function render_settings() {
   </div>`;
 }
 function bind_settings() {}
+function set_country(code) {
+  try { localStorage.setItem('uc_country', code); } catch (e) {}
+  toast('Моя страна: ' + region_label(code));
+}
 function save_its_form() {
   const login = document.getElementById('its-login')?.value.trim();
   const pw    = document.getElementById('its-pw')?.value;

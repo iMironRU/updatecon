@@ -20,21 +20,40 @@ PGPORT=55432
 PORT="${PORT:-3100}"
 export DATABASE_URL="postgres://upd:upd@localhost:${PGPORT}/upd"
 
+# Restarts overlap: the old instance stops the database on exit while the new
+# one starts it. So a new instance waits for the previous one to finish, and
+# only the instance that owns the pid file stops the database.
+PIDFILE=".dev-local.pid"
+OLD_PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "$$" ]; then
+  for _ in $(seq 1 40); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.5; done
+fi
+echo $$ > "$PIDFILE"
+
 SERVER_PID=""
 stop_all() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
-  docker stop "$PG" >/dev/null 2>&1 || true
+  if [ "$(cat "$PIDFILE" 2>/dev/null || true)" = "$$" ]; then
+    docker stop "$PG" >/dev/null 2>&1 || true
+    rm -f "$PIDFILE"
+  fi
 }
 trap stop_all EXIT INT TERM
 
 if docker inspect "$PG" >/dev/null 2>&1; then
-  docker start "$PG" >/dev/null
+  docker start "$PG" >/dev/null 2>&1 || true   # the wait loop below retries
 else
   docker run -d --name "$PG" -e POSTGRES_USER=upd -e POSTGRES_PASSWORD=upd -e POSTGRES_DB=upd \
     -p "${PGPORT}:5432" -v "${VOL}:/var/lib/postgresql/data" postgres:16-alpine >/dev/null
 fi
 echo "[dev-local] waiting for PostgreSQL…"
-until docker exec "$PG" pg_isready -U upd -q 2>/dev/null; do sleep 1; done
+for _ in $(seq 1 60); do
+  # (re)start if something stopped it meanwhile
+  [ "$(docker inspect -f '{{.State.Running}}' "$PG" 2>/dev/null)" = "true" ] || docker start "$PG" >/dev/null 2>&1 || true
+  docker exec "$PG" pg_isready -U upd -q 2>/dev/null && break
+  sleep 1
+done
+docker exec "$PG" pg_isready -U upd -q || { echo "[dev-local] PostgreSQL did not start" >&2; exit 1; }
 
 echo "[dev-local] building…"
 npm run build --silent

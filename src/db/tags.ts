@@ -30,33 +30,37 @@ export interface TagDef {
   pattern: RegExp;
   /** Matched against solutions.1c.ru "Базовая конфигурация" ("1С:Бухгалтерия 8"). */
   base: RegExp;
+  /** Template name of the line's original product ("Accounting" for БУХ): with
+   *  level/country suffixes stripped, it marks the flagship (БП ПРОФ/КОРП/базовая,
+   *  БП для Казахстана) as opposed to typical derivatives (БНКО, БАУ). */
+  core: string;
 }
 
 export const TAGS: TagDef[] = [
   { tag: "ЗКГУ",    title: "Зарплата и кадры государственного учреждения", pattern: /^(StateHRM|BudgetHRM)/i,
-    base: /Зарплата и кадры (государственного|бюджетного)/i },
+    base: /Зарплата и кадры (государственного|бюджетного)/i, core: "StateHRM" },
   { tag: "БГУ",     title: "Бухгалтерия государственного (автономного) учреждения", pattern: /^(StateAccounting|BudgetAccounting|AccountingAI)/i,
-    base: /Бухгалтерия (государственного|автономного|бюджетного)/i },
+    base: /Бухгалтерия (государственного|автономного|бюджетного)/i, core: "StateAccounting" },
   { tag: "БУХ",     title: "Бухгалтерия предприятия",            pattern: /^Accounting(?!G[CP])/i, // not AccountingGC «Гаражи» / GP «Садовод»
-    base: /Бухгалтери/i },
+    base: /Бухгалтери/i, core: "Accounting" },
   { tag: "ЗУП",     title: "Зарплата и управление персоналом",   pattern: /^HRM/i,
-    base: /Зарплата и управление персоналом/i },
+    base: /Зарплата и управление персоналом/i, core: "HRM" },
   { tag: "ERP",     title: "ERP Управление предприятием",        pattern: /^(Enterprise2|ERP)/i,
-    base: /ERP/i },
+    base: /ERP/i, core: "Enterprise20" },
   { tag: "УПП",     title: "Управление производственным предприятием", pattern: /^Enterprise/i,
-    base: /Управление производственным предприятием/i },
+    base: /Управление производственным предприятием/i, core: "Enterprise" },
   { tag: "КА",      title: "Комплексная автоматизация",          pattern: /^ARAutomation/i,
-    base: /Комплексная автоматизация/i },
+    base: /Комплексная автоматизация/i, core: "ARAutomation" },
   { tag: "УТ",      title: "Управление торговлей",               pattern: /^(Trade|TrCRM|TrCP)/i,
-    base: /Управление торговлей/i },
+    base: /Управление торговлей/i, core: "Trade" },
   { tag: "УНФ",     title: "Управление нашей фирмой / Управление компанией", pattern: /^(SmallBusiness|CompanyManage?ment)/i,
-    base: /Управление (нашей|небольшой) фирмой/i },
+    base: /Управление (нашей|небольшой) фирмой/i, core: "SmallBusiness" },
   { tag: "Розница", title: "Розница",                            pattern: /^Retail/i,
-    base: /Розница/i },
+    base: /Розница/i, core: "Retail" },
   { tag: "ДО",      title: "Документооборот",                    pattern: /^(DocMng|BudgetDocMng)/i,
-    base: /Документооборот/i },
+    base: /Документооборот/i, core: "DocMng" },
   { tag: "Касса",   title: "Касса",                              pattern: /^Cashbox/i,
-    base: /(^|[^а-яё])Касса/i },
+    base: /(^|[^а-яё])Касса/i, core: "Cashbox" },
 ];
 
 const MIN_SHARED = 40;

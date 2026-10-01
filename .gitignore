@@ -28,3 +28,6 @@ npm-debug.log*
 docker-compose.override.yml
 
 # Drizzle generated migrations are committed — don't ignore drizzle/
+
+# scripts/dev-local.sh instance lock
+.dev-local.pid
