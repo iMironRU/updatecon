@@ -134,6 +134,17 @@ input, select, textarea { font-family: inherit; }
 .badge-trans { background: var(--purple-dim); color: var(--purple); }
 .badge-lts { background: var(--yellow-dim); color: var(--yellow); font-weight: 700; }
 /* Clickable badges open the catalog filtered by what they say */
+.sort-seg { display: inline-flex; border: 1.5px solid var(--border); border-radius: var(--r-xs); overflow: hidden; flex-shrink: 0; }
+.sort-seg button { background: var(--surface); border: none; border-left: 1px solid var(--border); padding: 9px 14px;
+  font: inherit; font-size: 13px; color: var(--text-muted); cursor: pointer; white-space: nowrap; }
+.sort-seg button:first-child { border-left: none; }
+.sort-seg button:hover { color: var(--text); }
+.sort-seg button.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+.catalog-group-title { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; margin: 10px 0 -4px;
+  font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); }
+.catalog-group-title:first-child { margin-top: 0; }
+.catalog-group-title span { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-light); }
+@media (max-width: 640px) { .sort-seg { width: 100%; } .sort-seg button { flex: 1; padding: 8px 6px; } }
 .badge-link { cursor: pointer; transition: box-shadow .15s, filter .15s; }
 .badge-link:hover, .badge-link:focus-visible { box-shadow: inset 0 0 0 1.5px currentColor; filter: brightness(1.08); outline: none; }
 .badge-lts.ended { background: var(--surface3); color: var(--text-muted); font-weight: 600; }
@@ -603,6 +614,7 @@ async function initData() {
     TAG_DICT = tags || [];
     CONFIGS = rows.map(adapt_config);
     assign_levels(CONFIGS);
+    CONFIGS.forEach(c => { c.stale = is_stale(c); });
     CONFIGS_LOADED = true;
     DB_META = {
       last_updated: stats.last_updated || null,
@@ -804,6 +816,22 @@ function is_core_product(c) {
 }
 var LEVEL_RANK = { prof: 0, corp: 1, base: 2 };
 
+// "Устаревшая": platform 8.2 or older, or no new version for 1.5 years.
+// Hidden from the catalog by default (like previous editions); search finds it.
+var STALE_MONTHS = 18;
+function is_stale(c) {
+  if (c.platform && platform_cmp(c.platform, '8.3') < 0) return true;
+  if (!c.latestDate) return false;
+  var limit = new Date(); limit.setMonth(limit.getMonth() - STALE_MONTHS);
+  return new Date(c.latestDate) < limit;
+}
+function stale_badge(c) {
+  // 8.2 is already shown by the orange platform badge.
+  if (!c.stale || (c.platform && platform_cmp(c.platform, '8.3') < 0)) return '';
+  return '<span class="badge badge-gray badge-link"' + fattr('stale', '1', 'Нет новых версий с ' + fmt_date(c.latestDate)
+    + '. Показать все устаревшие') + '>не обновляется</span>';
+}
+
 // A badge that opens the catalog filtered by its meaning ("БУХ" → line=БУХ).
 // Inside the catalog it adds to the current filters instead of replacing them.
 function fattr(field, value, title) {
@@ -818,11 +846,12 @@ function open_filter(e, el) {
   const field = el.dataset.ff, value = el.dataset.fv;
   if (ROUTE_PATH === '/catalog' && CAT) {
     if (field === 'legacy') CAT.legacy = true;
+    else if (field === 'stale') CAT.stale = true;
     else value.split(CAT_SEP).forEach(v => { const f = CAT[FILTER_FIELD[field]]; if (f.indexOf(v) < 0) f.push(v); });
     apply_filters();
     window.scrollTo({ top: 0, behavior: 'instant' });
   } else {
-    navigate('/catalog?' + field + '=' + encodeURIComponent(field === 'legacy' ? '1' : value));
+    navigate('/catalog?' + field + '=' + encodeURIComponent(field === 'legacy' || field === 'stale' ? '1' : value));
   }
   return false;
 }
@@ -1347,7 +1376,7 @@ function catalog_state(params) {
   return {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
     platforms: list('plat'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
-    vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'main',
+    vendors: list('vendor'), legacy: params.legacy === '1', stale: params.stale === '1', sort: params.sort || 'main',
     vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
   };
 }
@@ -1361,6 +1390,7 @@ function catalog_sync_url() {
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
+  if (CAT.stale) parts.push('stale=1');
   if (CAT.sort !== 'main') add('sort', CAT.sort);
   CAT_HASH = '#/catalog' + (parts.length ? '?' + parts.join('&') : '');
   // replaceState: no hashchange → no re-render, the search box keeps focus.
@@ -1393,10 +1423,18 @@ function cfg_matches_search(c, q) {
     || c.tags.some(t => t.tag.toLowerCase() === q)
     || (c.level && LEVEL_LABEL[c.level].toLowerCase().startsWith(q) && q.length >= 3);
 }
-function catalog_base(legacy) {
+// What the list shows. Previous editions and stale products are hidden unless
+// their toggle is on — but a search finds them anyway (someone on БП 2.0 or
+// "Бухгалтерия для Крыма 2014" must find their configuration). mode
+// 'legacy' / 'stale' = what that toggle would add (for its count).
+function catalog_base(mode) {
   const q = CAT.q.trim().toLowerCase();
-  return CONFIGS.filter(c => (legacy ? !c.isLatestEdition : c.isLatestEdition || CAT.legacy)
-    && (!q || cfg_matches_search(c, q)));
+  return CONFIGS.filter(c => {
+    if (q && !cfg_matches_search(c, q)) return false;
+    if (mode === 'legacy') return !c.isLatestEdition;
+    if (mode === 'stale') return c.isLatestEdition && c.stale;
+    return !!q || ((c.isLatestEdition || CAT.legacy) && (!c.stale || CAT.stale));
+  });
 }
 function catalog_filter(base, except) {
   return base.filter(c => Object.keys(CAT_FACETS).every(f =>
@@ -1434,7 +1472,7 @@ function render_catalog() {
                  oninput="CAT.vendorQuery=this.value; render_facets()">
           <div id="f-vendors"></div>
         </div>
-        <div class="filter-group"><div class="filter-group-label">Редакции</div><div id="f-legacy"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Показывать</div><div id="f-legacy"></div></div>
         <button class="btn btn-primary filters-done" id="filters-done" onclick="toggle_filters_panel()">Показать</button>
       </aside>
       <div>
@@ -1445,11 +1483,7 @@ function render_catalog() {
             <input class="input search-input" id="catalog-search" placeholder="Название, разработчик, шаблон или линейка (бух, зуп…)"
                    value="${esc_html(CAT.q)}" oninput="CAT.q=this.value; apply_filters()">
           </div>
-          <select class="select sort-select" id="catalog-sort" onchange="CAT.sort=this.value; apply_filters()">
-            ${[['main','Сначала основные'],['date_desc','Дата обновления ↓'],['date_asc','Дата обновления ↑'],['name_asc','Название А→Я'],
-               ['name_desc','Название Я→А'],['freq_asc','Частота обновлений ↓']]
-              .map(([v, l]) => `<option value="${v}"${CAT.sort === v ? ' selected' : ''}>${l}</option>`).join('')}
-          </select>
+          <div class="sort-seg" id="catalog-sort" role="group" aria-label="Сортировка"></div>
         </div>
         <div class="catalog-summary" id="catalog-summary"></div>
         <div id="catalog-grid" class="catalog-grid"></div>
@@ -1474,6 +1508,7 @@ function config_card_html(c) {
         ${tag_chips(c)}
         ${level_badge(c)}
         ${platform_badge(c)}
+        ${stale_badge(c)}
         ${region_badge(c, false)}
         ${lts_badge(c)}
         ${trans_badge(c)}
@@ -1494,6 +1529,28 @@ function config_card_html(c) {
   </div>`;
 }
 function bind_catalog() { apply_filters(); }
+
+// Sort buttons; a second click on Новые / А–Я flips the direction.
+const SORTS = [
+  { key: 'main', modes: ['main'], label: () => 'Основные', title: 'Типовые вашей страны, затем отраслевые и партнёрские, затем другие страны' },
+  { key: 'date', modes: ['date_desc', 'date_asc'], label: m => m === 'date_asc' ? 'Старые' : 'Новые', title: 'По дате выхода последней версии' },
+  { key: 'name', modes: ['name_asc', 'name_desc'], label: m => m === 'name_desc' ? 'Я–А' : 'А–Я', title: 'По названию' },
+  { key: 'freq', modes: ['freq_asc'], label: () => 'Частые', title: 'Чаще всего выходят обновления' },
+];
+function render_sort() {
+  const el = document.getElementById('catalog-sort');
+  if (!el) return;
+  el.innerHTML = SORTS.map(s => {
+    const on = s.modes.includes(CAT.sort);
+    return `<button class="${on ? 'active' : ''}" title="${s.title}" onclick="set_sort('${s.key}')">${s.label(on ? CAT.sort : s.modes[0])}</button>`;
+  }).join('');
+}
+function set_sort(key) {
+  const s = SORTS.find(x => x.key === key);
+  const i = s.modes.indexOf(CAT.sort);
+  CAT.sort = i >= 0 ? s.modes[(i + 1) % s.modes.length] : s.modes[0];
+  apply_filters();
+}
 function toggle_filters_panel() {
   CAT.panelOpen = !CAT.panelOpen;
   const p = document.getElementById('filters-panel');
@@ -1510,6 +1567,7 @@ function toggle_facet(field, value) {
 function remove_filter(field, value) {
   if (field === 'q') { CAT.q = ''; const s = document.getElementById('catalog-search'); if (s) s.value = ''; }
   else if (field === 'legacy') CAT.legacy = false;
+  else if (field === 'stale') CAT.stale = false;
   else CAT[field] = CAT[field].filter(v => v !== value);
   apply_filters();
 }
@@ -1529,7 +1587,7 @@ function facet_opt(field, value, label, count, title) {
 }
 
 function render_facets() {
-  const base = catalog_base(false);
+  const base = catalog_base();
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
 
   // Линейка — dictionary order; hide lines with nothing in them (unless selected).
@@ -1615,10 +1673,14 @@ function render_facets() {
     + (hidden ? `<button class="filter-more" onclick="CAT.vendorsAll=true; render_facets()">Показать все (${hidden + LIMIT})</button>`
       : CAT.vendorsAll && !vq ? `<button class="filter-more" onclick="CAT.vendorsAll=false; render_facets()">Свернуть</button>` : ''));
 
-  const legacyCnt = catalog_filter(catalog_base(true), null).length;
+  const legacyCnt = catalog_filter(catalog_base('legacy'), null).length;
+  const staleCnt = catalog_filter(catalog_base('stale'), null).length;
   set('f-legacy', `<label class="filter-opt${legacyCnt === 0 && !CAT.legacy ? ' is-empty' : ''}"><input type="checkbox"${CAT.legacy ? ' checked' : ''}
-      onchange="CAT.legacy=this.checked; apply_filters()"> <span class="filter-opt-label">Показывать предыдущие</span>
-      <span class="filter-opt-count">${legacyCnt}</span></label>`);
+      onchange="CAT.legacy=this.checked; apply_filters()"> <span class="filter-opt-label">предыдущие редакции</span>
+      <span class="filter-opt-count">${legacyCnt}</span></label>
+    <label class="filter-opt${staleCnt === 0 && !CAT.stale ? ' is-empty' : ''}" title="Платформа 8.2 или нет новых версий больше 1,5 лет"><input type="checkbox"${CAT.stale ? ' checked' : ''}
+      onchange="CAT.stale=this.checked; apply_filters()"> <span class="filter-opt-label">устаревшие (8.2 / не обновляются)</span>
+      <span class="filter-opt-count">${staleCnt}</span></label>`);
 }
 
 function render_summary(found) {
@@ -1638,11 +1700,12 @@ function render_summary(found) {
   CAT.types.forEach(v => chip('types', v, type_label(v)));
   CAT.vendors.forEach(v => chip('vendors', v, (CONFIGS.find(c => c.vendorName.toLowerCase() === v) || { vendorName: v }).vendorName));
   if (CAT.legacy) chip('legacy', '', 'Предыдущие редакции');
+  if (CAT.stale) chip('stale', '', 'Устаревшие');
   const el = document.getElementById('catalog-summary');
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
   const active = CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
-    + CAT.levels.length + CAT.platforms.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+    + CAT.levels.length + CAT.platforms.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0) + (CAT.stale ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -1651,26 +1714,26 @@ function render_summary(found) {
 
 function apply_filters() {
   if (!CAT) return;
-  const list = catalog_filter(catalog_base(false), null);
+  const list = catalog_filter(catalog_base(), null);
 
   // With a line filter on, the line's own products come before the ones built on it.
   const ownRank = c => CAT.lines.length && c.tags.some(t => t.kind === 'own' && CAT.lines.includes(t.tag)) ? 0 : 1;
   const sortVal = CAT.sort;
-  // "Сначала основные": my country first, then typical 1C lines (БП, ЗУП, УТ…),
-  // other typical products, then industry/partner solutions; newest first inside.
-  const mainRank = c => (in_pref_country(c) ? 0 : 10)
-    + (c.type === 'standard'
-        ? (is_core_product(c) ? 0 : c.tags.some(t => t.kind === 'own') ? 1 : 2)
-        : c.tags.length ? 3 : 4);
+  // "Основные": groups in this order, each with a header —
+  //   1 typical 1C of my country · 2 industry/partner of my country ·
+  //   3 other countries · 4 previous editions · 5 stale (8.2 / not updated).
+  // Inside a group: the line's original product first (БП before БНКО), then
+  // freshest; siblings released the same day go ПРОФ → КОРП → Базовая.
+  const groupOf = c => !c.isLatestEdition ? 4 : c.stale ? 5 : !in_pref_country(c) ? 3 : c.type === 'standard' ? 1 : 2;
+  const subRank = c => c.type === 'standard' ? (is_core_product(c) ? 0 : c.tags.some(t => t.kind === 'own') ? 1 : 2) : 3;
   const levelRank = c => c.level in LEVEL_RANK ? LEVEL_RANK[c.level] : 3;
   list.sort((a,b) => {
-    if (CAT.lines.length && ownRank(a) !== ownRank(b)) return ownRank(a) - ownRank(b);
-    // Fresh before stale (БП 3.0 over "Бухгалтерия для Крыма 2014"); siblings
-    // released the same day go ПРОФ → КОРП → Базовая.
-    if (sortVal==='main') return mainRank(a) - mainRank(b)
+    if (sortVal==='main') return groupOf(a) - groupOf(b)
+      || subRank(a) - subRank(b)
       || new Date(b.latestDate||0) - new Date(a.latestDate||0)
       || levelRank(a) - levelRank(b)
       || (a.name||'').localeCompare(b.name||'','ru');
+    if (CAT.lines.length && ownRank(a) !== ownRank(b)) return ownRank(a) - ownRank(b);
     if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
     if (sortVal==='date_asc')  return new Date(a.latestDate||0) - new Date(b.latestDate||0);
     if (sortVal==='name_asc')  return (a.name||'').localeCompare(b.name||'','ru');
@@ -1680,9 +1743,25 @@ function apply_filters() {
   });
 
   const grid = document.getElementById('catalog-grid');
-  if (grid) grid.innerHTML = list.length
-    ? list.map(config_card_html).join('')
+  let html = '';
+  if (sortVal === 'main') {
+    const country = region_label(pref_country());
+    const titles = { 1: 'Типовые 1С · ' + country, 2: 'Отраслевые и партнёрские · ' + country, 3: 'Другие страны',
+      4: 'Предыдущие редакции', 5: 'Устаревшие — 8.2 или нет новых версий больше 1,5 лет' };
+    const counts = {};
+    list.forEach(c => { const g = groupOf(c); counts[g] = (counts[g] || 0) + 1; });
+    let prev = 0;
+    list.forEach(c => {
+      const g = groupOf(c);
+      if (g !== prev) { html += `<div class="catalog-group-title">${titles[g]} <span>${counts[g]}</span></div>`; prev = g; }
+      html += config_card_html(c);
+    });
+  } else {
+    html = list.map(config_card_html).join('');
+  }
+  if (grid) grid.innerHTML = list.length ? html
     : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте убрать часть фильтров</div></div>`;
+  render_sort();
   render_facets();
   render_summary(list.length);
   catalog_sync_url();
