@@ -3,9 +3,10 @@ name: Build & Push Docker image
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '0 2 * * *'   # каждую ночь в 2:00 UTC
   workflow_dispatch:       # ручной запуск из интерфейса GitHub
+  # Без schedule: ночная пересборка того же коммита ничего не давала, а из-за
+  # неё GitHub отключает workflow при долгой неактивности (disabled_inactivity)
+  # — и вместе с ним перестают работать сборки на push.
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
