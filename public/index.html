@@ -432,12 +432,13 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .cal-name { grid-area: name; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .cal-name b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-name span { flex: none; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-.cal-ver { grid-area: ver; font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; text-align: right; }
+/* every row's version box is as wide as the widest version, so names end on one line */
+.cal-ver { grid-area: ver; width: calc(var(--calv, 10) * 1ch); font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; text-align: right; }
 /* phone: two even lines — the name gets the full width, version and kind below */
 @media (max-width: 560px) {
   .cal-row { grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "date name name" "date ver kind"; row-gap: 3px; }
   .cal-date { align-self: start; padding-top: 2px; }
-  .cal-ver { text-align: left; }
+  .cal-ver { width: auto; text-align: left; }
   .cal-kind { justify-self: end; width: auto; padding: 1px 8px; }
 }
 .settings-section { background: var(--surface); border: 1px solid var(--border);
@@ -2517,6 +2518,7 @@ function calendar_card_html() {
   const all = calendar_events();
   const list = ST_OPEN.cal ? all : all.slice(0, 10);
   let month = '';
+  const verW = Math.max(1, ...list.map(e => e.ver.length + (e.kind === 'lts' ? 2 : 0)));
   const rows = list.map(e => {
     const mk = RU_MONTHS[e.d.getMonth()] + ' ' + e.d.getFullYear();
     const head = mk !== month ? `<div class="cal-month">${mk[0].toUpperCase() + mk.slice(1)}</div>` : '';
@@ -2537,7 +2539,7 @@ function calendar_card_html() {
       <div class="cal-name"><b>${esc_html(c.short)}</b>${e.list.length > 1 ? `<span>+${e.list.length - 1}</span>` : ''}</div>
       <div class="cal-ver">${esc_html(e.ver)}${e.kind === 'lts' ? '.x' : ''}</div></a>`;
   }).join('');
-  return `<div id="st-cal">${st_card('Ближайшие события', 'планы релизов и конец длительной поддержки',
+  return `<div id="st-cal" style="--calv:${verW}">${st_card('Ближайшие события', 'планы релизов и конец длительной поддержки',
     all.length ? rows + st_more_btn('cal', all.length, 10) : '<div class="st-empty">Запланированных релизов пока нет</div>')}</div>`;
 }
 
