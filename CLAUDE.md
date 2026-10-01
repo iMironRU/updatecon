@@ -37,7 +37,8 @@ src/releases/
   chain.ts              findChain(): recursive-CTE shortest path
   server.ts             Fastify API + serves public/
   worker.ts             migrate -> optional immediate import -> cron
-public/index.html       single-file UI (vanilla JS, no build)
+public/index.html       single-file UI (vanilla JS, no build); clean paths (/config/96) via the History API,
+                        server falls back to index.html; old /#/… links are rewritten on load
 drizzle/                generated migration SQL (committed)
 ```
 

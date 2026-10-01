@@ -910,9 +910,12 @@ export async function buildServer() {
   });
 
   // ── SPA fallback: any unmatched GET → index.html ─────────────────────────
-  // Handles hard refresh on client-side routes like /#/config/96 or
-  // /%23/config/96 (when a proxy encodes the hash fragment).
-  app.setNotFoundHandler((_req, reply) => {
+  // The UI routes by path (/config/96, /catalog?plat=8.5) through the History
+  // API, so a hard refresh or a shared link lands here. Old /#/… links and
+  // /%23/… (a proxy encoding the fragment) are rewritten by the page itself.
+  // Unknown API paths stay a JSON 404, not a page.
+  app.setNotFoundHandler((req, reply) => {
+    if (/^\/(admin\/)?api\//.test(req.url)) return reply.code(404).send({ error: "not found" });
     void reply.sendFile("index.html");
   });
 
