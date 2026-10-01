@@ -146,7 +146,7 @@ export interface MoreStats {
   chains: { id: number; from: string; from_date: string | null; to: string; steps: number }[];
   chainMedian: number | null;
   jumps: { median: number; max: number; id: number | null; version: string | null };
-  transitions: { from: number; to: number; packages: number }[];
+  transitions: { from: number; to: number; packages: number; from_min: string; from_max: string; to_min: string; to_max: string }[];
 }
 
 export async function moreStats(): Promise<MoreStats> {
@@ -166,7 +166,7 @@ export async function moreStats(): Promise<MoreStats> {
       WHERE release_date IS NOT NULL AND min_platform ~ '(^|[^0-9.])8\\.5\\.'
       GROUP BY 1`),
     db.execute(sql`
-      SELECT from_config_id AS "from", to_config_id AS "to", packages
+      SELECT from_config_id AS "from", to_config_id AS "to", packages, from_min, from_max, to_min, to_max
       FROM transitions WHERE kind = 'product' AND from_config_id IS NOT NULL
       ORDER BY packages DESC LIMIT 80`),
     db.execute(sql`
@@ -232,8 +232,8 @@ export async function moreStats(): Promise<MoreStats> {
     chainMedian: median(chains.map((c) => c.steps)),
     chains: chains.slice(0, 60),
     jumps: { median: median(fanIn) ?? 0, max: maxJump.n, id: maxJump.id, version: maxJump.version },
-    transitions: rowsOf<{ from: number; to: number; packages: number }>(transitions)
-      .map((r) => ({ from: Number(r.from), to: Number(r.to), packages: Number(r.packages) })),
+    transitions: rowsOf<MoreStats["transitions"][number]>(transitions)
+      .map((r) => ({ ...r, from: Number(r.from), to: Number(r.to), packages: Number(r.packages) })),
   };
   return moreCache;
 }

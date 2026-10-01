@@ -377,6 +377,28 @@ a.hrow:hover, a.hrow:focus-visible, a.lrow:hover, a.lrow:focus-visible { backgro
 .col-lbl { font-size: 12px; color: var(--text-muted); white-space: nowrap; text-align: center; line-height: 1.3; }
 .col-lbl small { display: block; font-size: 11px; color: var(--text-light); min-height: 14px; }
 @media (max-width: 480px) { .cols { gap: 4px; } .col-val { font-size: 10px; } .col-lbl { font-size: 11px; } }
+/* hover layer: the hovered mark lifts, its neighbours step back; one tooltip */
+.hrow[data-tip], .lrow[data-tip] { cursor: default; }
+.hrow[data-tip]:hover, .lrow[data-tip]:hover { background: var(--surface2); }
+.hrow:hover .st-bar, .lrow:hover .st-bar, .hrow:focus-visible .st-bar, .lrow:focus-visible .st-bar { filter: brightness(1.12) saturate(1.1); }
+.col { border-radius: 6px; padding: 4px 2px 2px; cursor: default; transition: background .12s; }
+.col:hover, .col:focus-visible { background: var(--surface2); outline: none; }
+.cols:hover .col:not(:hover) .col-bar { opacity: .45; }
+.cols:hover .col:not(:hover) .col-bar.part { opacity: .3; }
+.col-bar { transition: opacity .12s; }
+.st-tip { position: fixed; z-index: 1000; left: 0; top: 0; pointer-events: none; max-width: 320px; padding: 10px 12px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .16); font-size: 12px; line-height: 1.45;
+  opacity: 0; visibility: hidden; transition: opacity .1s; }
+.st-tip.on { opacity: 1; visibility: visible; }
+.st-tip-v { font-size: 15px; font-weight: 700; color: var(--text); }
+.st-tip-l { color: var(--text-muted); margin-top: 1px; }
+.st-tip-r { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--text); }
+.st-tip-r i { flex: none; width: 12px; height: 3px; border-radius: 2px; }
+.st-tip-s { color: var(--text-muted); margin-top: 4px; }
+.st-tip-l + .st-tip-s, .st-tip-v + .st-tip-s { margin-top: 6px; }
+.st-tip-h { color: var(--accent); margin-top: 8px; font-weight: 600; }
+@media (hover: none) { .st-tip-h { display: none; } }
 /* platform check */
 .pc-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
 .pc-form .input { width: 200px; }
@@ -2231,8 +2253,79 @@ function st_card(title, note, body, extra) {
   return `<div class="st-card"${extra || ''}><div class="st-head"><div class="st-title">${title}</div>${note ? `<div class="st-note">${note}</div>` : ''}</div>${body}</div>`;
 }
 function st_attrs(o) {
-  return (o.href ? ` href="#${o.href}" onclick="navigate('${o.href}'); return false"` : '')
-    + (o.title ? ` title="${esc_html(o.title)}"` : '');
+  return (o.href ? ` href="#${o.href}" onclick="navigate('${o.href}'); return false"` : '') + tip_attr(o.tip);
+}
+
+// ── Hover layer: one tooltip for the whole page ──
+// A mark carries data-tip = JSON {v: value (leads), l: label, r: [[color, text]]
+// series rows with a line key, s: [notes], h: action hint}. Filled with
+// textContent only — names come from the data. Same details on keyboard focus.
+function tip_attr(o) {
+  return o ? ` data-tip="${esc_html(JSON.stringify(o))}"` : '';
+}
+function st_examples(list, n) {
+  const names = list.slice().sort(main_cmp).slice(0, n || 3).map(c => c.short);
+  return names.length ? 'Например: ' + names.join(', ') + (list.length > names.length ? '…' : '') : '';
+}
+function tip_init() {
+  if (document.getElementById('st-tip')) return;
+  const box = document.createElement('div');
+  box.id = 'st-tip'; box.className = 'st-tip'; box.setAttribute('role', 'tooltip');
+  document.body.appendChild(box);
+  let cur = null;
+  const line = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; return d; };
+  const fill = el => {
+    let o;
+    try { o = JSON.parse(el.dataset.tip); } catch (e) { return false; }
+    box.replaceChildren();
+    if (o.v) box.appendChild(line('st-tip-v', o.v));
+    if (o.l) box.appendChild(line('st-tip-l', o.l));
+    (o.r || []).forEach(([color, text]) => {
+      const d = line('st-tip-r', text);
+      const k = document.createElement('i'); k.style.background = color; d.prepend(k);
+      box.appendChild(d);
+    });
+    (o.s || []).filter(Boolean).forEach(t => box.appendChild(line('st-tip-s', t)));
+    if (o.h) box.appendChild(line('st-tip-h', o.h));
+    return true;
+  };
+  const place = (x, y, below) => {
+    const w = box.offsetWidth, h = box.offsetHeight, vw = innerWidth, vh = innerHeight;
+    let left = x + 14, top = below != null ? below : y + 16;
+    if (left + w > vw - 8) left = Math.max(8, x - w - 14);
+    if (top + h > vh - 8) top = Math.max(8, y - h - 12);
+    box.style.left = left + 'px'; box.style.top = top + 'px';
+  };
+  const show = (el, x, y, below) => {
+    if (el !== cur) { cur = el; if (!fill(el)) { hide(); return; } }
+    box.classList.add('on');
+    place(x, y, below);
+  };
+  const hide = () => { cur = null; box.classList.remove('on'); };
+  document.addEventListener('pointermove', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) { if (cur) hide(); return; }
+    // A tap on a link navigates — no tooltip to get in the way.
+    if (e.pointerType === 'touch' && el.tagName === 'A') return;
+    show(el, e.clientX, e.clientY);
+  }, { passive: true });
+  document.addEventListener('pointerdown', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (e.pointerType === 'touch' && el && el.tagName !== 'A') {
+      const r = el.getBoundingClientRect();
+      show(el, r.left + r.width / 2, r.top, r.bottom + 8);
+    } else if (!el) hide();
+  });
+  document.addEventListener('mouseout', e => { if (!e.relatedTarget) hide(); });   // left the window
+  document.addEventListener('focusin', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el || !el.matches(':focus-visible')) return;
+    const r = el.getBoundingClientRect();
+    show(el, r.left + Math.min(r.width / 2, 120), r.top, r.bottom + 8);
+  });
+  document.addEventListener('focusout', hide);
+  addEventListener('scroll', hide, { passive: true });
+  addEventListener('hashchange', hide);
 }
 function st_track(o) {
   const segs = o.segs || [{ w: o.w, cls: o.cls }];
@@ -2248,10 +2341,11 @@ function st_lrow(o) {
   const t = o.href ? 'a' : 'div';
   return `<${t} class="lrow"${st_attrs(o)}><div class="lrow-top"><div class="lrow-name">${o.name}</div><div class="lrow-val">${o.val}</div></div>${st_track(o)}</${t}>`;
 }
-// [{lbl, sub, val, n, cls}] — heights relative to the largest
+// [{lbl, sub, val, n, cls, tip}] — heights relative to the largest; the whole
+// column (not just the painted bar) is the hover/focus target.
 function st_cols(items, height) {
   const max = Math.max(1, ...items.map(i => i.n));
-  return `<div class="cols">${items.map(i => `<div class="col"${i.title ? ` title="${esc_html(i.title)}"` : ''}>
+  return `<div class="cols">${items.map(i => `<div class="col"${i.tip ? tip_attr(i.tip) + ' tabindex="0"' : ''}>
       <div class="col-val${/emph/.test(i.cls || '') ? ' emph' : ''}">${i.val}</div>
       <div class="col-bar ${i.cls || ''}" style="height:${Math.max(3, Math.round(i.n / max * (height || 120)))}px"></div>
       <div class="col-lbl">${i.lbl}<small>${i.sub || ''}</small></div></div>`).join('')}</div>`;
@@ -2282,8 +2376,13 @@ function platform_card_html() {
       val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`, w: n / cur.length * 100,
       cls: isNew ? 'emph' : known ? '' : 'none',
       href: known ? '/catalog?plat=' + k + '&stale=1' : '',
-      title: known ? `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} на платформе ${k} — открыть в каталоге`
-                   : 'Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта (часто — партнёрские)',
+      tip: {
+        v: `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`,
+        l: known ? 'Платформа ' + k + (isNew ? ' — новая' : old ? ' — устаревшая' : '') : 'Платформа не определена',
+        s: known ? [st_examples(cur.filter(c => c.platform === k))]
+                 : ['Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта — чаще всего партнёрские продукты'],
+        h: known ? 'Нажмите — открыть в каталоге' : '',
+      },
     });
   };
   return st_card('Платформа 1С:Предприятие', `по последней версии, из ${nfmt(cur.length)} конфигураций`,
@@ -2295,19 +2394,21 @@ function freshness_card_html() {
   const cur = stats_current();
   const now = Date.now(), MONTH = 30.44 * 864e5;
   const B = [['до месяца', 1], ['1–3 месяца', 3], ['3–6 месяцев', 6], ['6–12 месяцев', 12], ['1–1,5 года', 18], ['больше 1,5 года', Infinity]];
-  const cnt = B.map(() => 0);
-  let none = 0;
+  const AGO = ['за последний месяц', '1–3 месяца назад', '3–6 месяцев назад', '6–12 месяцев назад', '1–1,5 года назад', 'больше 1,5 года назад'];
+  const bucket = B.map(() => []), none = [];
   cur.forEach(c => {
-    if (!c.latestDate) { none++; return; }
+    if (!c.latestDate) { none.push(c); return; }
     const m = (now - new Date(c.latestDate)) / MONTH;
-    cnt[B.findIndex(b => m < b[1])]++;
+    bucket[B.findIndex(b => m < b[1])].push(c);
   });
-  const rows = B.map((b, i) => st_hrow({
-    name: b[0], val: `${nfmt(cnt[i])} <span>· ${pct_text(cnt[i], cur.length)}</span>`,
-    w: cnt[i] / cur.length * 100, cls: i === 0 ? 'emph' : '',
-  })).join('') + (none ? st_hrow({
-    name: 'нет данных', val: `${nfmt(none)} <span>· ${pct_text(none, cur.length)}</span>`, w: none / cur.length * 100, cls: 'none',
-    title: 'Нет проекта на releases.1c.ru — дата выхода версий неизвестна',
+  const vtext = n => `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`;
+  const rows = B.map((b, i) => { const n = bucket[i].length; return st_hrow({
+    name: b[0], val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`,
+    w: n / cur.length * 100, cls: i === 0 ? 'emph' : '',
+    tip: { v: vtext(n), l: 'Последний релиз ' + AGO[i], s: [st_examples(bucket[i])] },
+  }); }).join('') + (none.length ? st_hrow({
+    name: 'нет данных', val: `${nfmt(none.length)} <span>· ${pct_text(none.length, cur.length)}</span>`, w: none.length / cur.length * 100, cls: 'none',
+    tip: { v: vtext(none.length), l: 'Дата выхода неизвестна', s: ['Нет проекта на releases.1c.ru'] },
   }) : '');
   return st_card('Когда выходил последний релиз', `из ${nfmt(cur.length)} конфигураций`, rows);
 }
@@ -2424,10 +2525,13 @@ function calendar_card_html() {
     const dd = d => String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
     // A plan for "Октябрь 2026" has no day yet: it is due by the end of that month.
     const date = e.exact ? dd(e.d) : 'до ' + dd(new Date(e.d.getFullYear(), e.d.getMonth() + 1, 0));
-    const tip = (e.kind === 'rel' ? `Релиз ${e.ver} ${e.exact ? 'запланирован на ' + dd(e.d) : 'запланирован на ' + mk}`
-                                  : `Конец длительной поддержки ветки ${e.ver}.x — ${dd(e.d)}.${e.d.getFullYear()}`)
-      + ':\n' + e.list.map(x => x.name).join('\n');
-    return `${head}<a class="cal-row" href="#/config/${c.id}" onclick="navigate('/config/${c.id}'); return false" title="${esc_html(tip)}">
+    const tip = {
+      v: e.kind === 'rel' ? 'Релиз ' + e.ver : 'Конец длительной поддержки ветки ' + e.ver + '.x',
+      l: e.exact ? (e.kind === 'rel' ? 'запланирован на ' : '') + dd(e.d) + '.' + e.d.getFullYear() : 'запланирован на ' + mk + ', без точной даты',
+      s: e.list.slice(0, 6).map(x => x.name).concat(e.list.length > 6 ? ['и ещё ' + (e.list.length - 6)] : []),
+      h: e.list.length > 1 ? 'Нажмите — открыть первую' : 'Нажмите — открыть конфигурацию',
+    };
+    return `${head}<a class="cal-row" href="#/config/${c.id}" onclick="navigate('/config/${c.id}'); return false"${tip_attr(tip)}>
       <div class="cal-date">${date}</div>
       <span class="cal-kind${e.kind === 'lts' ? ' lts' : ''}">${e.kind === 'lts' ? 'конец ДП' : 'релиз'}</span>
       <div class="cal-name"><b>${esc_html(c.short)}</b>${e.list.length > 1 ? `<span>+${e.list.length - 1}</span>` : ''}</div>
@@ -2451,7 +2555,9 @@ function lines_card_html() {
       val: `${r.own} <span>+ ${r.based}</span>`,
       segs: [{ w: r.own / max * 100, cls: 'emph' }, { w: r.based / max * 100 }],
       href: '/catalog?line=' + q_enc(r.t.tag),
-      title: `${r.t.title}: ${r.own} в линейке, ${r.based} на её базе — открыть в каталоге`,
+      tip: { v: `${r.own + r.based} ${ru_plural(r.own + r.based, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: r.t.title,
+             r: [['var(--accent)', `${r.own} — продукты линейки`], ['var(--bar-muted)', `${r.based} — решения на её базе`]],
+             h: 'Нажмите — открыть в каталоге' },
     })).join(''));
 }
 function vendors_card_html() {
@@ -2466,7 +2572,9 @@ function vendors_card_html() {
     `<div class="st-foot" style="margin:0 0 10px">Фирма 1С — <b>${own}</b> (${pct_text(own, live.length)}), партнёры — <b>${pTotal}</b> (${pct_text(pTotal, live.length)}).</div>`
     + shown.map(([v, n]) => st_lrow({
       name: esc_html(v), val: String(n), w: n / max * 100,
-      href: '/catalog?vendor=' + q_enc(v.toLowerCase()), title: v + ' — открыть в каталоге',
+      href: '/catalog?vendor=' + q_enc(v.toLowerCase()),
+      tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, live.length)}`, l: v,
+             s: [st_examples(live.filter(c => c.vendorName === v))], h: 'Нажмите — открыть в каталоге' },
     })).join('') + st_more_btn('ven', Math.min(40, partners.length), 8))}</div>`;
 }
 function industries_card_html() {
@@ -2477,7 +2585,9 @@ function industries_card_html() {
   const shown = ST_OPEN.ind ? top : top.slice(0, 8);
   return `<div id="st-ind">${st_card('Отрасли', `по 1С:Решениям, у ${withCard} ${ru_plural(withCard, 'конфигурации', 'конфигураций', 'конфигураций')}`,
     top.length ? shown.map(([x, n]) => st_lrow({
-      name: esc_html(x), val: String(n), w: n / max * 100, href: '/catalog?ind=' + q_enc(x), title: x + ' — открыть в каталоге',
+      name: esc_html(x), val: String(n), w: n / max * 100, href: '/catalog?ind=' + q_enc(x),
+      tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: x,
+             s: [st_examples(live.filter(c => c.sol.industries.includes(x)))], h: 'Нажмите — открыть в каталоге' },
     })).join('') + st_more_btn('ind', top.length, 8) : '<div class="st-empty">Нет данных 1С:Решений</div>')}</div>`;
 }
 function freq_card_html() {
@@ -2487,7 +2597,10 @@ function freq_card_html() {
   return `<div id="st-freq">${st_card('Чаще всего выходят релизы', 'средний интервал между релизами',
     list.length ? shown.map(c => st_lrow({
       name: esc_html(c.name), val: `~${c.avg_update_days} <span>дн.</span>`, w: best / c.avg_update_days * 100,
-      href: '/config/' + c.id, title: `Последний релиз ${fmt_date(c.latestDate)}`,
+      href: '/config/' + c.id,
+      tip: { v: `~${c.avg_update_days} ${ru_plural(c.avg_update_days, 'день', 'дня', 'дней')} между релизами`, l: c.name,
+             s: [`≈ ${Math.round(365 / c.avg_update_days)} релизов в год`, c.latestDate ? 'Последний релиз — ' + fmt_date(c.latestDate) : ''],
+             h: 'Нажмите — открыть конфигурацию' },
     })).join('') + st_more_btn('freq', Math.min(50, list.length), 8) : '<div class="st-empty">Нет данных</div>')}</div>`;
 }
 const ST_RENDER = { cal: calendar_card_html, ven: vendors_card_html, ind: industries_card_html, freq: freq_card_html,
@@ -2502,10 +2615,18 @@ function years_card_html(m) {
   const full = ys.filter(r => r.y < cy);
   const avg = full.length ? Math.round(full.reduce((s, r) => s + r.n, 0) / full.length) : 0;
   const now = new Date();
-  return st_card('Релизы по годам', 'все конфигурации на releases.1c.ru', !m ? st_loading : st_cols(ys.map(r => ({
-    lbl: r.y < cy ? String(r.y) : r.y + '*', val: nfmt(r.n), n: r.n, cls: r.y === cy ? 'part' : '',
-    title: `${r.y}: ${nfmt(r.n)} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')}`,
-  }))) + `<div class="st-foot">В среднем <b>${nfmt(avg)}</b> релизов в год. * ${cy} — по ${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.</div>`);
+  const prevOf = y => (m ? m.years.find(r => r.y === y - 1) : null);
+  const today = String(now.getDate()).padStart(2, '0') + '.' + String(now.getMonth() + 1).padStart(2, '0');
+  return st_card('Релизы по годам', 'все конфигурации на releases.1c.ru', !m ? st_loading : st_cols(ys.map(r => {
+    const p = prevOf(r.y);
+    const delta = p && p.n ? Math.round((r.n - p.n) / p.n * 100) : null;
+    return {
+      lbl: r.y < cy ? String(r.y) : r.y + '*', val: nfmt(r.n), n: r.n, cls: r.y === cy ? 'part' : '',
+      tip: { v: `${nfmt(r.n)} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')}`, l: r.y === cy ? `${r.y}, с 1 января по ${today}` : String(r.y),
+             s: [r.y === cy ? `в среднем ${nfmt(Math.round(r.n / Math.max(1, now.getMonth() + now.getDate() / 31)))} в месяц, в ${r.y - 1} — ${p ? nfmt(Math.round(p.n / 12)) : '—'}`
+                            : delta != null ? `${delta > 0 ? '+' : delta < 0 ? '−' : '±'}${Math.abs(delta)}% к ${r.y - 1}` : ''] },
+    };
+  })) + `<div class="st-foot">В среднем <b>${nfmt(avg)}</b> релизов в год. * ${cy} — по ${today}.</div>`);
 }
 function weekdays_card_html(m) {
   const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -2515,7 +2636,9 @@ function weekdays_card_html(m) {
   const weekend = m.weekdays[5] + m.weekdays[6];
   const full = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
   return st_card('День выхода релиза', 'за последние 3 года', st_cols(m.weekdays.map((n, i) => ({
-    lbl: names[i], val: pct_text(n, total), n, cls: i === top ? 'emph' : '', title: `${full[i]}: ${nfmt(n)} ${ru_plural(n, 'релиз', 'релиза', 'релизов')}`,
+    lbl: names[i], val: pct_text(n, total), n, cls: i === top ? 'emph' : '',
+    tip: { v: `${nfmt(n)} ${ru_plural(n, 'релиз', 'релиза', 'релизов')} · ${pct_text(n, total)}`, l: full[i][0].toUpperCase() + full[i].slice(1),
+           s: [`≈ ${nfmt(Math.round(n / 156))} в неделю`, 'за последние 3 года'] },
   }))) + `<div class="st-foot">Чаще всего — <b>${full[top]}</b>: ${pct_text(m.weekdays[top], total)} релизов. В выходные — ${pct_text(weekend, total)}.</div>`);
 }
 function plat85_card_html(m) {
@@ -2523,7 +2646,8 @@ function plat85_card_html(m) {
   const note = 'конфигурации с релизом под ' + PLATFORM_NEWEST + ', нарастающим итогом';
   if (!m) return st_card(title, note, st_loading);
   const cur = new Map(stats_current().map(c => [c.id, c]));
-  const firsts = m.plat85.filter(r => cur.has(String(r.id))).map(r => r.first.slice(0, 7)).sort();
+  const joined = m.plat85.filter(r => cur.has(String(r.id))).map(r => ({ c: cur.get(String(r.id)), mk: r.first.slice(0, 7) }));
+  const firsts = joined.map(j => j.mk).sort();
   if (!firsts.length) return st_card(title, note, '<div class="st-empty">Пока ни одной</div>');
   const now = new Date();
   const months = [];
@@ -2533,8 +2657,11 @@ function plat85_card_html(m) {
   const items = shown.map((mk, i) => {
     const n = firsts.filter(f => f <= mk).length;
     const mo = +mk.slice(5, 7) - 1;
+    const added = joined.filter(j => j.mk === mk).map(j => j.c).sort(main_cmp);
     return { lbl: RU_MON[mo], sub: i === 0 || mo === 0 ? mk.slice(0, 4) : '', val: String(n), n, cls: i === shown.length - 1 ? 'emph' : '',
-             title: `${RU_MONTHS[mo]} ${mk.slice(0, 4)}: ${n}` };
+             tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: `${RU_MONTHS[mo]} ${mk.slice(0, 4)}`,
+                    s: added.length ? [`+${added.length} за месяц:`].concat(added.slice(0, 5).map(c => c.name), added.length > 5 ? ['и ещё ' + (added.length - 5)] : [])
+                                    : ['новых за месяц нет'] } };
   });
   const last = items[items.length - 1].n;
   const first = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1);
@@ -2555,7 +2682,10 @@ function trans_card_html(m) {
   return `<div id="st-trans">${st_card(title, note, list.length ? shown.map(t => st_lrow({
     name: `${esc_html(t.a.short)} <small>→</small> ${esc_html(t.b.short)}`,
     val: `${t.packages} <span>${ru_plural(t.packages, 'пакет', 'пакета', 'пакетов')}</span>`, w: t.packages / max * 100,
-    href: '/config/' + t.a.id, title: `${t.a.name} → ${t.b.name}`,
+    href: '/config/' + t.a.id,
+    tip: { v: `${t.packages} ${ru_plural(t.packages, 'пакет', 'пакета', 'пакетов')} обновления`, l: `${t.a.name} → ${t.b.name}`,
+           s: [t.from_min ? `из версий ${t.from_min}${t.from_max !== t.from_min ? '…' + t.from_max : ''} в ${t.to_min}${t.to_max !== t.to_min ? '…' + t.to_max : ''}` : ''],
+           h: 'Нажмите — открыть исходный продукт' },
   })).join('') + st_more_btn('trans', Math.min(30, list.length), 8) : '<div class="st-empty">Нет данных</div>')}</div>`;
 }
 function chains_card_html(m) {
@@ -2572,7 +2702,9 @@ function chains_card_html(m) {
     return st_lrow({
       name: `${esc_html(c.short)} <small>· с ${esc_html(r.from)}${r.from_date ? ', ' + r.from_date.slice(0, 4) : ''}</small>`,
       val: `${r.steps} <span>${ru_plural(r.steps, 'шаг', 'шага', 'шагов')}</span>`, w: r.steps / max * 100,
-      href, title: `${c.name}: ${r.from} → ${r.to} — показать цепочку`,
+      href,
+      tip: { v: `${r.steps} ${ru_plural(r.steps, 'шаг', 'шага', 'шагов')} обновления`, l: c.name,
+             s: [`${r.from}${r.from_date ? ' (' + fmt_date(r.from_date) + ')' : ''} → ${r.to}`], h: 'Нажмите — показать цепочку' },
     });
   }).join('') + st_more_btn('chains', Math.min(30, list.length), 8)
     + `<div class="st-foot">Обычно цепочка — <b>${m.chainMedian}</b> ${ru_plural(m.chainMedian || 0, 'шаг', 'шага', 'шагов')}:
@@ -2580,6 +2712,7 @@ function chains_card_html(m) {
     : '<div class="st-empty">Нет данных</div>')}</div>`;
 }
 async function bind_stats() {
+  tip_init();
   if (!STATS_MORE) {
     try { STATS_MORE = await apiFetch('/api/stats/more'); } catch (e) { return; }
   }
