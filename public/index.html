@@ -14,7 +14,7 @@
   --surface: #FFFFFF; --surface2: #F5F7FC; --surface3: #EBEEf6;
   --border: #DDE3EF; --border-strong: #C8D0E4;
   --text: #171E33; --text-muted: #6472A0; --text-light: #9BA5C2;
-  --accent: #1355FF; --accent-h: #0D41D4; --accent-dim: #EEF2FF;
+  --accent: #1355FF; --accent-h: #0D41D4; --accent-dim: #EEF2FF; --bar-muted: #8590AE;
   --orange: #F97316; --orange-dim: #FFF4ED;
   --green: #059669; --green-dim: #ECFDF5;
   --red: #DC2626; --red-dim: #FEF2F2;
@@ -33,7 +33,7 @@
     --surface: #141B2D; --surface2: #1A2340; --surface3: #1F293A;
     --border: #263048; --border-strong: #354268;
     --text: #E4EAF8; --text-muted: #7C88B0; --text-light: #48566E;
-    --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545;
+    --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545; --bar-muted: #5D6987;
     --orange: #FB923C; --orange-dim: #251500;
     --green: #34D399; --green-dim: #022C1C;
     --red: #F87171; --red-dim: #2A0F0F;
@@ -48,7 +48,7 @@
   --surface: #141B2D; --surface2: #1A2340; --surface3: #1F293A;
   --border: #263048; --border-strong: #354268;
   --text: #E4EAF8; --text-muted: #7C88B0; --text-light: #48566E;
-  --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545;
+  --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545; --bar-muted: #5D6987;
   --orange: #FB923C; --orange-dim: #251500;
   --green: #34D399; --green-dim: #022C1C;
   --red: #F87171; --red-dim: #2A0F0F;
@@ -315,6 +315,33 @@ input, select, textarea { font-family: inherit; }
 .stats-banner-item .val { font-size: 28px; font-weight: 800; font-family: var(--mono); }
 .stats-banner-item .lbl { font-size: 12px; opacity: .75; text-transform: uppercase; letter-spacing: .4px; }
 .stats-banner-action { margin-left: auto; }
+/* KPI tiles: label · value (sans, proportional figures) · note — equal heights */
+.kpi-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.kpi-label { font-size: 13px; color: var(--text-muted); }
+.kpi-value { font-size: 34px; line-height: 1.1; font-weight: 600; color: var(--text); letter-spacing: -.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-sub { font-size: 12px; color: var(--text-light); margin-top: auto; }
+@media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Platform share: one row per generation; 8.5 in the accent, the rest muted */
+.plat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 24px; }
+.plat-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.plat-card-title { font-size: 15px; font-weight: 700; }
+.plat-card-note { font-size: 12px; color: var(--text-light); }
+.plat-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) 96px; align-items: center; gap: 14px;
+  padding: 7px 8px; margin: 0 -8px; border-radius: var(--r-xs); }
+a.plat-row { color: inherit; cursor: pointer; }
+a.plat-row:hover, a.plat-row:focus-visible { background: var(--surface2); outline: none; }
+.plat-name { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.plat-name small { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: 6px; }
+.plat-track { height: 8px; border-radius: 4px; background: var(--surface2); overflow: hidden; }
+.plat-bar { height: 100%; min-width: 4px; border-radius: 4px; background: var(--bar-muted); }
+.plat-bar.emph { background: var(--accent); }
+.plat-bar.none { background: var(--border-strong); }
+.plat-val { font-size: 14px; font-weight: 600; text-align: right; white-space: nowrap; }
+.plat-val span { font-weight: 400; color: var(--text-muted); }
+@media (max-width: 640px) { .plat-row { grid-template-columns: 96px minmax(0, 1fr) 84px; gap: 10px; } .plat-name small { display: none; } }
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
 .stat-card-val { font-size: 32px; font-weight: 800; color: var(--accent); font-family: var(--mono); }
@@ -844,14 +871,17 @@ var FILTER_FIELD = { line: 'lines', level: 'levels', plat: 'platforms', lts: 'lt
 function open_filter(e, el) {
   if (e) { e.stopPropagation(); e.preventDefault(); }
   const field = el.dataset.ff, value = el.dataset.fv;
+  // 8.2 and older are "stale" — hidden unless that toggle is on.
+  const needsStale = field === 'plat' && platform_cmp(value, '8.3') < 0;
   if (ROUTE_PATH === '/catalog' && CAT) {
+    if (needsStale) CAT.stale = true;
     if (field === 'legacy') CAT.legacy = true;
     else if (field === 'stale') CAT.stale = true;
     else value.split(CAT_SEP).forEach(v => { const f = CAT[FILTER_FIELD[field]]; if (f.indexOf(v) < 0) f.push(v); });
     apply_filters();
     window.scrollTo({ top: 0, behavior: 'instant' });
   } else {
-    navigate('/catalog?' + field + '=' + encodeURIComponent(field === 'legacy' || field === 'stale' ? '1' : value));
+    navigate('/catalog?' + field + '=' + encodeURIComponent(field === 'legacy' || field === 'stale' ? '1' : value) + (needsStale ? '&stale=1' : ''));
   }
   return false;
 }
@@ -2103,23 +2133,49 @@ async function bind_chain_page(params) {
 /* ================================================================
    STATS VIEW
    ================================================================ */
+// Platform generation of current editions: one row per generation, share of
+// all current editions. Emphasis on the newest (8.5) — that is the news; rows
+// open the catalog (8.2 and older are "stale" there, so that toggle comes along).
+function platform_card_html() {
+  const cur = CONFIGS.filter(c => c.isLatestEdition);
+  if (!cur.length) return '';
+  const by = {};
+  cur.forEach(c => { const k = c.platform || ''; by[k] = (by[k] || 0) + 1; });
+  const gens = Object.keys(by).filter(Boolean).sort((a, b) => platform_cmp(b, a));
+  const pct = n => n / cur.length * 100;
+  const pctText = n => { const p = pct(n); return (p < 1 ? p.toFixed(1) : String(Math.round(p))).replace('.', ',') + '%'; };
+  const row = (k, n) => {
+    const known = !!k;
+    const isNew = known && platform_cmp(k, PLATFORM_NEWEST) >= 0;
+    const old = known && platform_cmp(k, '8.3') < 0;
+    const href = '/catalog?plat=' + k + (old ? '&stale=1' : '');
+    const inner = `<div class="plat-name">${known ? k : 'не определена'}${isNew ? '<small>новая</small>' : old ? '<small>устаревшая</small>' : ''}</div>
+      <div class="plat-track"><div class="plat-bar${isNew ? ' emph' : known ? '' : ' none'}" style="width:${pct(n).toFixed(2)}%"></div></div>
+      <div class="plat-val">${n.toLocaleString('ru')} <span>· ${pctText(n)}</span></div>`;
+    return known
+      ? `<a class="plat-row" href="#${href}" onclick="navigate('${href}'); return false" title="${n} конфигураций (${pctText(n)}) на платформе ${k} — открыть в каталоге">${inner}</a>`
+      : `<div class="plat-row" title="Партнёрские пакеты, закрытые для ИТС-аккаунта, без данных на releases.1c.ru">${inner}</div>`;
+  };
+  return `<div class="plat-card fade-up fade-up-1">
+    <div class="plat-card-head"><div class="plat-card-title">Платформа 1С:Предприятие</div>
+      <div class="plat-card-note">по последней версии, из ${cur.length.toLocaleString('ru')} конфигураций</div></div>
+    ${gens.map(k => row(k, by[k])).join('')}
+    ${by[''] ? row('', by['']) : ''}
+  </div>`;
+}
+
 function render_stats() {
   const sorted_freq = [...CONFIGS].filter(c=>c.avg_update_days).sort((a,b)=>a.avg_update_days-b.avg_update_days).slice(0,50);
   const max_freq = Math.max(...sorted_freq.map(c=>c.avg_update_days), 1);
   return `<div class="wrap">
     <div class="page-head"><div class="page-title">Статистика</div></div>
-    <div class="stats-grid fade-up">
-      <div class="stat-card"><div class="stat-card-val">${DB_META.total_configs}</div><div class="stat-card-lbl">Конфигураций в базе</div></div>
-      <div class="stat-card"><div class="stat-card-val">${DB_META.total_editions}</div><div class="stat-card-lbl">Редакций всего (с предыдущими)</div></div>
-      ${(() => { const cur = CONFIGS.filter(c => c.isLatestEdition && c.platform);
-        const by = {}; cur.forEach(c => by[c.platform] = (by[c.platform] || 0) + 1);
-        const keys = Object.keys(by).sort((a, b) => platform_cmp(b, a));
-        return keys.length ? `<div class="stat-card"><div class="stat-card-val" style="font-size:18px;line-height:1.6">${keys.map(k =>
-          `<a href="#/catalog?plat=${k}" onclick="navigate('/catalog?plat=${k}')" style="color:inherit">${k}: <b>${by[k]}</b></a>`).join(' · ')}</div>
-          <div class="stat-card-lbl">Конфигураций по платформе (по последней версии)</div></div>` : ''; })()}
-      <div class="stat-card"><div class="stat-card-val">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="stat-card-lbl">Версий в базе</div></div>
-      <div class="stat-card"><div class="stat-card-val">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : '—'}</div><div class="stat-card-lbl">Последнее обновление базы</div></div>
+    <div class="kpi-row fade-up">
+      <div class="kpi"><div class="kpi-label">Конфигурации</div><div class="kpi-value">${DB_META.total_configs.toLocaleString('ru')}</div><div class="kpi-sub">актуальные редакции</div></div>
+      <div class="kpi"><div class="kpi-label">Редакции</div><div class="kpi-value">${DB_META.total_editions.toLocaleString('ru')}</div><div class="kpi-sub">вместе с предыдущими</div></div>
+      <div class="kpi"><div class="kpi-label">Версии</div><div class="kpi-value">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="kpi-sub">в цепочках обновлений</div></div>
+      <div class="kpi"><div class="kpi-label">Обновление базы</div><div class="kpi-value">${DB_META.last_updated ? days_ago(DB_META.last_updated) : '—'}</div><div class="kpi-sub">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : 'импортов ещё не было'}</div></div>
     </div>
+    ${platform_card_html()}
     ${sorted_freq.length ? `<div class="card fade-up fade-up-1" style="margin-bottom:24px">
       <div class="version-list-header"><div class="version-list-title">Частота обновлений (топ-50)</div></div>
       <div style="padding:8px 0">
