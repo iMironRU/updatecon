@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "server",
+      "name": "local",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["/tmp/start-updatcon.sh"],
-      "port": 3000
+      "runtimeArgs": ["scripts/dev-local.sh"],
+      "port": 3100
     }
   ]
 }
