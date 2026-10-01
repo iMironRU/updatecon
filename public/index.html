@@ -399,16 +399,25 @@ a.hrow:hover, a.hrow:focus-visible, a.lrow:hover, a.lrow:focus-visible { backgro
 /* calendar */
 .cal-month { font-size: 12px; font-weight: 700; color: var(--text-muted); margin: 14px 0 4px; }
 .cal-month:first-child { margin-top: 0; }
-.cal-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 6px 8px; margin: 0 -8px;
-  border-radius: var(--r-xs); color: inherit; font-size: 13px; line-height: 1.45; }
+/* one line per event: date · kind · name · version — every row the same height */
+.cal-row { display: grid; grid-template-columns: 64px 64px minmax(0, 1fr) auto; grid-template-areas: "date kind name ver";
+  align-items: center; gap: 10px; padding: 7px 8px; margin: 0 -8px; border-radius: var(--r-xs); color: inherit; font-size: 13px; }
 a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline: none; }
-.cal-date { font-family: var(--mono); font-size: 12px; color: var(--text-muted); padding-top: 1px; white-space: nowrap; }
-.cal-what { min-width: 0; }
-.cal-what b { font-weight: 600; }
-.cal-what .mono { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
-.cal-kind { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; margin-right: 6px;
-  background: var(--accent-dim); color: var(--accent); }
+.cal-date { grid-area: date; font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.cal-kind { grid-area: kind; justify-self: start; font-size: 11px; font-weight: 600; padding: 2px 0; width: 64px; text-align: center;
+  border-radius: 99px; background: var(--accent-dim); color: var(--accent); white-space: nowrap; }
 .cal-kind.lts { background: var(--surface2); color: var(--text-muted); }
+.cal-name { grid-area: name; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.cal-name b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-name span { flex: none; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.cal-ver { grid-area: ver; font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; text-align: right; }
+/* phone: two even lines — the name gets the full width, version and kind below */
+@media (max-width: 560px) {
+  .cal-row { grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "date name name" "date ver kind"; row-gap: 3px; }
+  .cal-date { align-self: start; padding-top: 2px; }
+  .cal-ver { text-align: left; }
+  .cal-kind { justify-self: end; width: auto; padding: 1px 8px; }
+}
 .settings-section { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); padding: 24px; margin-bottom: 20px; }
 .settings-section-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
@@ -2412,14 +2421,17 @@ function calendar_card_html() {
     const head = mk !== month ? `<div class="cal-month">${mk[0].toUpperCase() + mk.slice(1)}</div>` : '';
     month = mk;
     const c = e.list[0];
-    const names = e.list.slice(0, 2).map(x => esc_html(x.short)).join(', ') + (e.list.length > 2 ? ` и ещё ${e.list.length - 2}` : '');
-    const what = e.kind === 'rel'
-      ? `<span class="cal-kind">релиз</span><b>${names}</b> <span class="mono">${esc_html(e.ver)}</span>`
-      : `<span class="cal-kind lts">конец ДП</span><b>${names}</b> — ветка <span class="mono">${esc_html(e.ver)}</span>`;
-    // A plan for "Октябрь 2026" has no day yet.
-    const date = e.exact ? String(e.d.getDate()).padStart(2, '0') + '.' + String(e.d.getMonth() + 1).padStart(2, '0') : 'без даты';
-    return `${head}<a class="cal-row" href="#/config/${c.id}" onclick="navigate('/config/${c.id}'); return false"
-      title="${esc_html(e.list.map(x => x.name).join('\n'))}"><div class="cal-date">${date}</div><div class="cal-what">${what}</div></a>`;
+    const dd = d => String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+    // A plan for "Октябрь 2026" has no day yet: it is due by the end of that month.
+    const date = e.exact ? dd(e.d) : 'до ' + dd(new Date(e.d.getFullYear(), e.d.getMonth() + 1, 0));
+    const tip = (e.kind === 'rel' ? `Релиз ${e.ver} ${e.exact ? 'запланирован на ' + dd(e.d) : 'запланирован на ' + mk}`
+                                  : `Конец длительной поддержки ветки ${e.ver}.x — ${dd(e.d)}.${e.d.getFullYear()}`)
+      + ':\n' + e.list.map(x => x.name).join('\n');
+    return `${head}<a class="cal-row" href="#/config/${c.id}" onclick="navigate('/config/${c.id}'); return false" title="${esc_html(tip)}">
+      <div class="cal-date">${date}</div>
+      <span class="cal-kind${e.kind === 'lts' ? ' lts' : ''}">${e.kind === 'lts' ? 'конец ДП' : 'релиз'}</span>
+      <div class="cal-name"><b>${esc_html(c.short)}</b>${e.list.length > 1 ? `<span>+${e.list.length - 1}</span>` : ''}</div>
+      <div class="cal-ver">${esc_html(e.ver)}${e.kind === 'lts' ? '.x' : ''}</div></a>`;
   }).join('');
   return `<div id="st-cal">${st_card('Ближайшие события', 'планы релизов и конец длительной поддержки',
     all.length ? rows + st_more_btn('cal', all.length, 10) : '<div class="st-empty">Запланированных релизов пока нет</div>')}</div>`;
