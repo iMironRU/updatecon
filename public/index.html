@@ -399,6 +399,19 @@ a.hrow:hover, a.hrow:focus-visible, a.lrow:hover, a.lrow:focus-visible { backgro
 .st-tip-l + .st-tip-s, .st-tip-v + .st-tip-s { margin-top: 6px; }
 .st-tip-h { color: var(--accent); margin-top: 8px; font-weight: 600; }
 @media (hover: none) { .st-tip-h { display: none; } }
+a.kpi { color: inherit; transition: border-color .12s, background .12s; }
+a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
+.col.clickable { cursor: pointer; }
+.col.sel { background: var(--accent-dim); }
+.col.sel .col-bar { opacity: 1 !important; }
+.col.sel .col-lbl { color: var(--accent); font-weight: 600; }
+.st-drill { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.st-drill-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px;
+  font-size: 13px; font-weight: 700; }
+.st-drill-x { flex: none; width: 26px; height: 26px; border: none; border-radius: var(--r-xs); background: none;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; }
+.st-drill-x:hover { background: var(--surface2); color: var(--text); }
+.lrow.nobar .lrow-top { margin-bottom: 0; }
 /* platform check */
 .pc-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
 .pc-form .input { width: 200px; }
@@ -933,6 +946,23 @@ var LEVEL_RANK = { prof: 0, corp: 1, base: 2 };
 // "Устаревшая": platform 8.2 or older, or no new version for 1.5 years.
 // Hidden from the catalog by default (like previous editions); search finds it.
 var STALE_MONTHS = 18;
+// How long ago the newest release came out — buckets shared by the catalog
+// filter "Последний релиз" and the stats card.
+var RELEASE_AGES = [
+  { key: 'm1',   max: 1,        label: 'за месяц',        ago: 'за последний месяц' },
+  { key: 'm3',   max: 3,        label: '1–3 месяца',      ago: '1–3 месяца назад' },
+  { key: 'm6',   max: 6,        label: '3–6 месяцев',     ago: '3–6 месяцев назад' },
+  { key: 'm12',  max: 12,       label: '6–12 месяцев',    ago: '6–12 месяцев назад' },
+  { key: 'm18',  max: 18,       label: '1–1,5 года',      ago: '1–1,5 года назад' },
+  { key: 'old',  max: Infinity, label: 'больше 1,5 года', ago: 'больше 1,5 года назад' },
+  { key: 'none', max: null,     label: 'нет данных',      ago: 'дата неизвестна (нет проекта на releases.1c.ru)' },
+];
+function release_age(c) {
+  if (!c.latestDate) return 'none';
+  var m = (Date.now() - new Date(c.latestDate)) / (30.44 * 864e5);
+  for (var i = 0; i < RELEASE_AGES.length - 1; i++) if (m < RELEASE_AGES[i].max) return RELEASE_AGES[i].key;
+  return 'old';
+}
 function is_stale(c) {
   if (c.platform && platform_cmp(c.platform, '8.3') < 0) return true;
   if (!c.latestDate) return false;
@@ -953,7 +983,7 @@ function fattr(field, value, title) {
     + ' title="' + esc_html(title) + '" onclick="return open_filter(event,this)"'
     + ' onkeydown="if(event.key===\'Enter\')return open_filter(event,this)"';
 }
-var FILTER_FIELD = { line: 'lines', level: 'levels', plat: 'platforms', lts: 'lts', trans: 'trans', type: 'types',
+var FILTER_FIELD = { line: 'lines', level: 'levels', plat: 'platforms', age: 'ages', lts: 'lts', trans: 'trans', type: 'types',
   region: 'regions', ind: 'industries', task: 'tasks', org: 'orgs' };
 function open_filter(e, el) {
   if (e) { e.stopPropagation(); e.preventDefault(); }
@@ -1494,7 +1524,7 @@ function catalog_state(params) {
   const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
   return {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
-    platforms: list('plat'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
+    platforms: list('plat'), ages: list('age'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', stale: params.stale === '1', sort: params.sort || 'main',
     vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
   };
@@ -1503,7 +1533,7 @@ function catalog_sync_url() {
   const parts = [];
   const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
   add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
-  add('plat', CAT.platforms.join(CAT_SEP)); add('ind', CAT.industries.join(CAT_SEP));
+  add('plat', CAT.platforms.join(CAT_SEP)); add('age', CAT.ages.join(CAT_SEP)); add('ind', CAT.industries.join(CAT_SEP));
   add('task', CAT.tasks.join(CAT_SEP)); add('org', CAT.orgs.join(CAT_SEP)); add('trans', CAT.trans.join(CAT_SEP));
   add('lts', CAT.lts.join(CAT_SEP));
   add('region', CAT.regions.join(CAT_SEP));
@@ -1521,7 +1551,8 @@ function catalog_sync_url() {
 const CAT_FACETS = {
   lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
   levels:  (c, v) => v.includes(c.level),
-  platforms: (c, v) => v.includes(c.platform),
+  platforms: (c, v) => v.includes(c.platform || 'none'),   // 'none' = не определена
+  ages:    (c, v) => v.includes(release_age(c)),
   trans:   (c, v) => c.transOut.some(k => v.includes(k)),
   lts:     (c, v) => !!c.ltsVersion && !lts_ended(c) && v.includes('yes'),
   regions: (c, v) => c.allRegions || c.regions.some(r => v.includes(r)),   // "Для всех стран" fits any region
@@ -1579,6 +1610,7 @@ function render_catalog() {
         <div class="filter-group" id="g-industries"><div class="filter-group-label">Отрасль</div><div id="f-industries"></div></div>
         <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
         <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Последний релиз</div><div id="f-ages"></div></div>
         <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
         <div class="filter-group"><div class="filter-group-label">Длительная поддержка</div><div id="f-lts"></div></div>
         <div class="filter-group"><div class="filter-group-label">Переход обновлением</div><div id="f-trans"></div></div>
@@ -1716,13 +1748,23 @@ function render_facets() {
     .map(d => facet_opt('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
     .join('') || '<div class="filter-opt is-empty">нет</div>');
 
-  // Платформа — newest first; "неизвестна" is not offered (partner packages the
-  // ITS account can't read and without a releases.1c.ru project).
-  const platCnt = count_by(catalog_filter(base, 'platforms'), c => c.platform ? [c.platform] : []);
+  // Платформа — newest first; "не определена" last (partner packages the ITS
+  // account can't read and without a releases.1c.ru project).
+  const platCnt = count_by(catalog_filter(base, 'platforms'), c => [c.platform || 'none']);
   CAT.platforms.forEach(p => { if (!platCnt.has(p)) platCnt.set(p, 0); });
-  set('f-platforms', [...platCnt.keys()].sort((a, b) => platform_cmp(b, a))
-    .map(p => facet_opt('platforms', p, p === PLATFORM_NEWEST ? p + ' — новая' : p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + ' — по последней версии конфигурации'))
+  const plats = [...platCnt.keys()].filter(p => p !== 'none').sort((a, b) => platform_cmp(b, a));
+  if (platCnt.has('none')) plats.push('none');
+  set('f-platforms', plats
+    .map(p => p === 'none'
+      ? facet_opt('platforms', p, 'не определена', platCnt.get(p) || 0, 'Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта')
+      : facet_opt('platforms', p, p === PLATFORM_NEWEST ? p + ' — новая' : p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + ' — по последней версии конфигурации'))
     .join('') || '<div class="filter-opt is-empty">нет данных</div>');
+
+  // Последний релиз — fixed order, empty buckets hidden unless selected.
+  const ageCnt = count_by(catalog_filter(base, 'ages'), c => [release_age(c)]);
+  set('f-ages', RELEASE_AGES.filter(a => ageCnt.get(a.key) || CAT.ages.includes(a.key))
+    .map(a => facet_opt('ages', a.key, a.label, ageCnt.get(a.key) || 0, 'Последний релиз — ' + a.ago)).join('')
+    || '<div class="filter-opt is-empty">нет данных</div>');
 
   const ltsCnt = catalog_filter(base, 'lts').filter(c => c.ltsVersion && !lts_ended(c)).length;
   set('f-lts', facet_opt('lts', 'yes', 'есть ветка ДП', ltsCnt, 'Версия с длительной поддержкой (ДП) параллельно основной ветке'));
@@ -1811,7 +1853,8 @@ function render_summary(found) {
   CAT.industries.forEach(v => chip('industries', v, v));
   CAT.tasks.forEach(v => chip('tasks', v, v));
   CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
-  CAT.platforms.forEach(v => chip('platforms', v, 'Платформа ' + v));
+  CAT.platforms.forEach(v => chip('platforms', v, v === 'none' ? 'Платформа не определена' : 'Платформа ' + v));
+  CAT.ages.forEach(v => chip('ages', v, 'Релиз: ' + (RELEASE_AGES.find(a => a.key === v) || { label: v }).label));
   if (CAT.lts.length) chip('lts', 'yes', 'Ветка ДП');
   CAT.trans.forEach(v => chip('trans', v, v === 'edition' ? 'Переход на новую редакцию' : 'Переход на другой продукт'));
   CAT.regions.forEach(v => chip('regions', v, v === 'all' ? 'Для всех стран' : region_label(v)));
@@ -1824,7 +1867,7 @@ function render_summary(found) {
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
   const active = CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
-    + CAT.levels.length + CAT.platforms.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0) + (CAT.stale ? 1 : 0);
+    + CAT.levels.length + CAT.platforms.length + CAT.ages.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0) + (CAT.stale ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -2340,13 +2383,14 @@ function st_hrow(o) {
 }
 function st_lrow(o) {
   const t = o.href ? 'a' : 'div';
-  return `<${t} class="lrow"${st_attrs(o)}><div class="lrow-top"><div class="lrow-name">${o.name}</div><div class="lrow-val">${o.val}</div></div>${st_track(o)}</${t}>`;
+  const bar = o.w === undefined && !o.segs ? '' : st_track(o);
+  return `<${t} class="lrow${bar ? '' : ' nobar'}"${st_attrs(o)}><div class="lrow-top"><div class="lrow-name">${o.name}</div><div class="lrow-val">${o.val}</div></div>${bar}</${t}>`;
 }
 // [{lbl, sub, val, n, cls, tip}] — heights relative to the largest; the whole
 // column (not just the painted bar) is the hover/focus target.
 function st_cols(items, height) {
   const max = Math.max(1, ...items.map(i => i.n));
-  return `<div class="cols">${items.map(i => `<div class="col"${i.tip ? tip_attr(i.tip) + ' tabindex="0"' : ''}>
+  return `<div class="cols">${items.map(i => `<div class="col${i.sel ? ' sel' : ''}${i.click ? ' clickable' : ''}"${tip_attr(i.tip)}${i.click || ''}${i.tip || i.click ? ' tabindex="0"' : ''}>
       <div class="col-val${/emph/.test(i.cls || '') ? ' emph' : ''}">${i.val}</div>
       <div class="col-bar ${i.cls || ''}" style="height:${Math.max(3, Math.round(i.n / max * (height || 120)))}px"></div>
       <div class="col-lbl">${i.lbl}<small>${i.sub || ''}</small></div></div>`).join('')}</div>`;
@@ -2376,13 +2420,13 @@ function platform_card_html() {
       name: (known ? k : 'не определена') + (isNew ? '<small>новая</small>' : old ? '<small>устаревшая</small>' : ''),
       val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`, w: n / cur.length * 100,
       cls: isNew ? 'emph' : known ? '' : 'none',
-      href: known ? '/catalog?plat=' + k + '&stale=1' : '',
+      href: '/catalog?plat=' + (known ? k : 'none') + '&stale=1',
       tip: {
         v: `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`,
         l: known ? 'Платформа ' + k + (isNew ? ' — новая' : old ? ' — устаревшая' : '') : 'Платформа не определена',
         s: known ? [st_examples(cur.filter(c => c.platform === k))]
                  : ['Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта — чаще всего партнёрские продукты'],
-        h: known ? 'Нажмите — открыть в каталоге' : '',
+        h: 'Нажмите — открыть в каталоге',
       },
     });
   };
@@ -2390,27 +2434,23 @@ function platform_card_html() {
     gens.map(row).join('') + (by[''] ? row('') : ''));
 }
 
-// How long ago the newest release came out (current editions).
+// How long ago the newest release came out (current editions). Rows open the
+// catalog's "Последний релиз" filter with stale ones shown, so counts match.
 function freshness_card_html() {
   const cur = stats_current();
-  const now = Date.now(), MONTH = 30.44 * 864e5;
-  const B = [['до месяца', 1], ['1–3 месяца', 3], ['3–6 месяцев', 6], ['6–12 месяцев', 12], ['1–1,5 года', 18], ['больше 1,5 года', Infinity]];
-  const AGO = ['за последний месяц', '1–3 месяца назад', '3–6 месяцев назад', '6–12 месяцев назад', '1–1,5 года назад', 'больше 1,5 года назад'];
-  const bucket = B.map(() => []), none = [];
-  cur.forEach(c => {
-    if (!c.latestDate) { none.push(c); return; }
-    const m = (now - new Date(c.latestDate)) / MONTH;
-    bucket[B.findIndex(b => m < b[1])].push(c);
-  });
-  const vtext = n => `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`;
-  const rows = B.map((b, i) => { const n = bucket[i].length; return st_hrow({
-    name: b[0], val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`,
-    w: n / cur.length * 100, cls: i === 0 ? 'emph' : '',
-    tip: { v: vtext(n), l: 'Последний релиз ' + AGO[i], s: [st_examples(bucket[i])] },
-  }); }).join('') + (none.length ? st_hrow({
-    name: 'нет данных', val: `${nfmt(none.length)} <span>· ${pct_text(none.length, cur.length)}</span>`, w: none.length / cur.length * 100, cls: 'none',
-    tip: { v: vtext(none.length), l: 'Дата выхода неизвестна', s: ['Нет проекта на releases.1c.ru'] },
-  }) : '');
+  const by = {};
+  cur.forEach(c => { const k = release_age(c); (by[k] = by[k] || []).push(c); });
+  const rows = RELEASE_AGES.filter(a => a.key !== 'none' || by.none).map((a, i) => {
+    const list = by[a.key] || [], n = list.length;
+    return st_hrow({
+      name: a.label, val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`,
+      w: n / cur.length * 100, cls: a.key === 'none' ? 'none' : i === 0 ? 'emph' : '',
+      href: n ? '/catalog?age=' + a.key + '&stale=1' : '',
+      tip: { v: `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`,
+             l: a.key === 'none' ? 'Дата выхода неизвестна' : 'Последний релиз ' + a.ago,
+             s: [a.key === 'none' ? 'Нет проекта на releases.1c.ru' : st_examples(list)], h: n ? 'Нажмите — открыть в каталоге' : '' },
+    });
+  }).join('');
   return st_card('Когда выходил последний релиз', `из ${nfmt(cur.length)} конфигураций`, rows);
 }
 
@@ -2571,7 +2611,7 @@ function vendors_card_html() {
   const max = Math.max(1, ...partners.map(e => e[1]));
   const shown = ST_OPEN.ven ? partners.slice(0, 40) : partners.slice(0, 8);
   return `<div id="st-ven">${st_card('Разработчики', `${partners.length} ${ru_plural(partners.length, 'партнёр', 'партнёра', 'партнёров')} и 1С`,
-    `<div class="st-foot" style="margin:0 0 10px">Фирма 1С — <b>${own}</b> (${pct_text(own, live.length)}), партнёры — <b>${pTotal}</b> (${pct_text(pTotal, live.length)}).</div>`
+    `<div class="st-foot" style="margin:0 0 10px"><a href="#/catalog?vendor=1с" onclick="navigate('/catalog?vendor=' + encodeURIComponent('1с')); return false">Фирма 1С</a> — <b>${own}</b> (${pct_text(own, live.length)}), партнёры — <b>${pTotal}</b> (${pct_text(pTotal, live.length)}).</div>`
     + shown.map(([v, n]) => st_lrow({
       name: esc_html(v), val: String(n), w: n / max * 100,
       href: '/catalog?vendor=' + q_enc(v.toLowerCase()),
@@ -2611,6 +2651,50 @@ const ST_RENDER = { cal: calendar_card_html, ven: vendors_card_html, ind: indust
 // ── Cards over /api/stats/more (loaded after the page renders) ──
 let STATS_MORE = null;
 const st_loading = '<div class="st-empty">Загрузка…</div>';
+// ── Drill-down under a column chart: click a column → who is behind it ──
+const ST_DRILL = {};      // kind -> selected value (string)
+const DRILL_CACHE = {};   // 'years:2020' -> {total, top: [{id, n}]}
+const DRILL_HOST = { years: 'st-a-years', wd: 'st-a-wd', p85: 'st-a-85' };
+const DRILL_CARD = { years: m => years_card_html(m), wd: m => weekdays_card_html(m), p85: m => plat85_card_html(m) };
+function st_drill(kind, val) {
+  val = String(val);
+  ST_DRILL[kind] = ST_DRILL[kind] === val ? null : val;
+  const redraw = () => {
+    const host = document.getElementById(DRILL_HOST[kind]);
+    if (!host) return;
+    const hadFocus = host.contains(document.activeElement);
+    host.innerHTML = DRILL_CARD[kind](STATS_MORE);
+    if (hadFocus) { const col = host.querySelector(`.col[data-dv="${val}"]`); if (col) col.focus(); }
+  };
+  redraw();
+  const key = kind + ':' + val;
+  if (ST_DRILL[kind] && kind !== 'p85' && !DRILL_CACHE[key]) {
+    apiFetch('/api/stats/releases', kind === 'years' ? { year: val } : { dow: val })
+      .then(r => { DRILL_CACHE[key] = r; }, () => { DRILL_CACHE[key] = { error: true }; })
+      .then(() => { if (ST_DRILL[kind] === val) redraw(); });
+  }
+}
+function drill_attrs(kind, val) {
+  return ` data-dv="${val}" role="button" aria-pressed="${ST_DRILL[kind] === String(val)}"`
+    + ` onclick="st_drill('${kind}','${val}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();st_drill('${kind}','${val}')}"`;
+}
+function drill_panel(kind, head, body) {
+  return `<div class="st-drill"><div class="st-drill-head"><span>${head}</span>
+    <button class="st-drill-x" onclick="st_drill('${kind}','${ST_DRILL[kind]}')" aria-label="Закрыть" title="Закрыть">✕</button></div>${body}</div>`;
+}
+function releases_drill(kind, head) {
+  const d = DRILL_CACHE[kind + ':' + ST_DRILL[kind]];
+  if (!d) return drill_panel(kind, head, st_loading);
+  if (d.error) return drill_panel(kind, head, '<div class="st-empty">Не удалось загрузить</div>');
+  const byId = new Map(CONFIGS.map(c => [c.id, c]));
+  const top = d.top.map(r => ({ n: r.n, c: byId.get(String(r.id)) })).filter(r => r.c).slice(0, 8);
+  const max = Math.max(1, ...top.map(r => r.n));
+  return drill_panel(kind, head, top.map(r => st_lrow({
+    name: esc_html(r.c.name), val: String(r.n), w: r.n / max * 100, href: '/config/' + r.c.id,
+    tip: { v: `${r.n} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')} · ${pct_text(r.n, d.total)}`, l: r.c.name, h: 'Нажмите — открыть конфигурацию' },
+  })).join('') || '<div class="st-empty">Нет данных</div>');
+}
+
 function years_card_html(m) {
   const cy = new Date().getFullYear();
   const ys = m ? m.years.filter(r => r.y >= cy - 7) : [];
@@ -2619,16 +2703,20 @@ function years_card_html(m) {
   const now = new Date();
   const prevOf = y => (m ? m.years.find(r => r.y === y - 1) : null);
   const today = String(now.getDate()).padStart(2, '0') + '.' + String(now.getMonth() + 1).padStart(2, '0');
+  const sel = ST_DRILL.years;
   return st_card('Релизы по годам', 'все конфигурации на releases.1c.ru', !m ? st_loading : st_cols(ys.map(r => {
     const p = prevOf(r.y);
     const delta = p && p.n ? Math.round((r.n - p.n) / p.n * 100) : null;
     return {
       lbl: r.y < cy ? String(r.y) : r.y + '*', val: nfmt(r.n), n: r.n, cls: r.y === cy ? 'part' : '',
+      sel: sel === String(r.y), click: drill_attrs('years', r.y),
       tip: { v: `${nfmt(r.n)} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')}`, l: r.y === cy ? `${r.y}, с 1 января по ${today}` : String(r.y),
              s: [r.y === cy ? `в среднем ${nfmt(Math.round(r.n / Math.max(1, now.getMonth() + now.getDate() / 31)))} в месяц, в ${r.y - 1} — ${p ? nfmt(Math.round(p.n / 12)) : '—'}`
-                            : delta != null ? `${delta > 0 ? '+' : delta < 0 ? '−' : '±'}${Math.abs(delta)}% к ${r.y - 1}` : ''] },
+                            : delta != null ? `${delta > 0 ? '+' : delta < 0 ? '−' : '±'}${Math.abs(delta)}% к ${r.y - 1}` : ''],
+             h: sel === String(r.y) ? 'Нажмите — скрыть список' : 'Нажмите — кто выпустил больше всего' },
     };
-  })) + `<div class="st-foot">В среднем <b>${nfmt(avg)}</b> релизов в год. * ${cy} — по ${today}.</div>`);
+  })) + `<div class="st-foot">В среднем <b>${nfmt(avg)}</b> релизов в год. * ${cy} — по ${today}.</div>`
+    + (sel ? releases_drill('years', `${sel}: больше всего релизов`) : ''));
 }
 function weekdays_card_html(m) {
   const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -2637,11 +2725,16 @@ function weekdays_card_html(m) {
   const top = m.weekdays.indexOf(Math.max(...m.weekdays));
   const weekend = m.weekdays[5] + m.weekdays[6];
   const full = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+  const sel = ST_DRILL.wd;
   return st_card('День выхода релиза', 'за последние 3 года', st_cols(m.weekdays.map((n, i) => ({
     lbl: names[i], val: pct_text(n, total), n, cls: i === top ? 'emph' : '',
-    tip: { v: `${nfmt(n)} ${ru_plural(n, 'релиз', 'релиза', 'релизов')} · ${pct_text(n, total)}`, l: full[i][0].toUpperCase() + full[i].slice(1),
-           s: [`≈ ${nfmt(Math.round(n / 156))} в неделю`, 'за последние 3 года'] },
-  }))) + `<div class="st-foot">Чаще всего — <b>${full[top]}</b>: ${pct_text(m.weekdays[top], total)} релизов. В выходные — ${pct_text(weekend, total)}.</div>`);
+    sel: sel === String(i + 1), click: drill_attrs('wd', i + 1),
+    tip: { v: `${nfmt(n)} ${ru_plural(n, 'релиз', 'релиза', 'релизов')} · ${pct_text(n, total)}`, l: cap(full[i]),
+           s: [`≈ ${nfmt(Math.round(n / 156))} в неделю`, 'за последние 3 года'],
+           h: sel === String(i + 1) ? 'Нажмите — скрыть список' : 'Нажмите — кто выпускает чаще' },
+  }))) + `<div class="st-foot">Чаще всего — <b>${full[top]}</b>: ${pct_text(m.weekdays[top], total)} релизов. В выходные — ${pct_text(weekend, total)}.</div>`
+    + (sel ? releases_drill('wd', `${cap(full[+sel - 1])}: кто выпускает чаще всего`) : ''));
 }
 function plat85_card_html(m) {
   const title = 'Переход на платформу ' + PLATFORM_NEWEST;
@@ -2656,20 +2749,37 @@ function plat85_card_html(m) {
   for (let d = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1); d <= now; d.setMonth(d.getMonth() + 1))
     months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
   const shown = months.slice(-12);
+  const sel = ST_DRILL.p85;
+  const monthName = mk => `${RU_MONTHS[+mk.slice(5, 7) - 1]} ${mk.slice(0, 4)}`;
   const items = shown.map((mk, i) => {
     const n = firsts.filter(f => f <= mk).length;
     const mo = +mk.slice(5, 7) - 1;
     const added = joined.filter(j => j.mk === mk).map(j => j.c).sort(main_cmp);
     return { lbl: RU_MON[mo], sub: i === 0 || mo === 0 ? mk.slice(0, 4) : '', val: String(n), n, cls: i === shown.length - 1 ? 'emph' : '',
-             tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: `${RU_MONTHS[mo]} ${mk.slice(0, 4)}`,
+             sel: sel === mk, click: drill_attrs('p85', mk),
+             tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: monthName(mk),
                     s: added.length ? [`+${added.length} за месяц:`].concat(added.slice(0, 5).map(c => c.name), added.length > 5 ? ['и ещё ' + (added.length - 5)] : [])
-                                    : ['новых за месяц нет'] } };
+                                    : ['новых за месяц нет'],
+                    h: sel === mk ? 'Нажмите — скрыть список' : 'Нажмите — список конфигураций' } };
   });
   const last = items[items.length - 1].n;
   const first = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1);
+  let drill = '';
+  if (sel) {
+    // Everyone on 8.5 by the end of that month; that month's newcomers first.
+    const upto = joined.filter(j => j.mk <= sel)
+      .sort((a, b) => (b.mk === sel) - (a.mk === sel) || b.mk.localeCompare(a.mk) || main_cmp(a.c, b.c));
+    const added = upto.filter(j => j.mk === sel).length;
+    drill = drill_panel('p85', `${monthName(sel)[0].toUpperCase() + monthName(sel).slice(1)}: ${upto.length} на ${PLATFORM_NEWEST}${added ? `, из них ${added} — новые` : ''}`,
+      upto.map(j => st_lrow({
+        name: esc_html(j.c.name) + (j.mk === sel ? ' <small>· новая</small>' : ''),
+        val: `<span>с ${RU_MON[+j.mk.slice(5, 7) - 1]} ${j.mk.slice(0, 4)}</span>`, href: '/config/' + j.c.id,
+        tip: { v: j.c.name, l: `первый релиз под ${PLATFORM_NEWEST} — ${monthName(j.mk)}`, h: 'Нажмите — открыть конфигурацию' },
+      })).join(''));
+  }
   return st_card(title, note, st_cols(items, 110) + `<div class="st-foot">Первые релизы под ${PLATFORM_NEWEST} — ${RU_MONTHS[first.getMonth()]} ${first.getFullYear()}.
     Сейчас <b>${last}</b> — ${pct_text(last, cur.size)} актуальных редакций.
-    <a href="#/catalog?plat=${PLATFORM_NEWEST}" onclick="navigate('/catalog?plat=${PLATFORM_NEWEST}'); return false">Открыть в каталоге →</a></div>`);
+    <a href="#/catalog?plat=${PLATFORM_NEWEST}" onclick="navigate('/catalog?plat=${PLATFORM_NEWEST}'); return false">Открыть в каталоге →</a></div>` + drill);
 }
 function trans_card_html(m) {
   const title = 'Переходы между продуктами', note = 'по числу пакетов обновления с переходом';
@@ -2733,10 +2843,10 @@ function render_stats() {
   return `<div class="wrap">
     <div class="page-head"><div class="page-title">Статистика</div></div>
     <div class="kpi-row fade-up">
-      <div class="kpi"><div class="kpi-label">Конфигурации</div><div class="kpi-value">${DB_META.total_configs.toLocaleString('ru')}</div><div class="kpi-sub">актуальные редакции</div></div>
-      <div class="kpi"><div class="kpi-label">Редакции</div><div class="kpi-value">${DB_META.total_editions.toLocaleString('ru')}</div><div class="kpi-sub">вместе с предыдущими</div></div>
+      <a class="kpi" href="#/catalog?stale=1" onclick="navigate('/catalog?stale=1'); return false"${tip_attr({ v: DB_META.total_configs.toLocaleString('ru') + ' конфигураций', l: 'Актуальные редакции, вместе с устаревшими', h: 'Нажмите — открыть каталог' })}><div class="kpi-label">Конфигурации</div><div class="kpi-value">${DB_META.total_configs.toLocaleString('ru')}</div><div class="kpi-sub">актуальные редакции</div></a>
+      <a class="kpi" href="#/catalog?legacy=1&stale=1" onclick="navigate('/catalog?legacy=1&stale=1'); return false"${tip_attr({ v: DB_META.total_editions.toLocaleString('ru') + ' редакций', l: 'Все редакции, вместе с предыдущими', h: 'Нажмите — открыть каталог' })}><div class="kpi-label">Редакции</div><div class="kpi-value">${DB_META.total_editions.toLocaleString('ru')}</div><div class="kpi-sub">вместе с предыдущими</div></a>
       <div class="kpi"><div class="kpi-label">Версии</div><div class="kpi-value">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="kpi-sub">в цепочках обновлений</div></div>
-      <div class="kpi"><div class="kpi-label">Обновление базы</div><div class="kpi-value">${DB_META.last_updated ? days_ago(DB_META.last_updated) : '—'}</div><div class="kpi-sub">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : 'импортов ещё не было'}</div></div>
+      <a class="kpi" href="#/catalog?sort=date_desc" onclick="navigate('/catalog?sort=date_desc'); return false"${tip_attr({ v: 'Последние релизы', l: 'Каталог, отсортированный по дате выхода', h: 'Нажмите — открыть каталог' })}><div class="kpi-label">Обновление базы</div><div class="kpi-value">${DB_META.last_updated ? days_ago(DB_META.last_updated) : '—'}</div><div class="kpi-sub">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : 'импортов ещё не было'}</div></a>
     </div>
     <div class="fade-up fade-up-1">
       <div class="st-section">Платформа и актуальность</div>

@@ -13,6 +13,7 @@
  *   GET  /api/stats                        -> import/run summary
  *   GET  /api/stats/more                   -> release activity, 8.5 adoption, chains, transitions
  *   GET  /api/platform-check?p=8.3.24.1691 -> which latest releases this platform takes
+ *   GET  /api/stats/releases?year=|dow=    -> who released most in a year / on a weekday
  *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
  *   GET  /*                                -> static UI (public/)
@@ -47,7 +48,7 @@ import { configurations, updateEdges, importRuns, patches, settings, releaseProj
 import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus } from "./caddy.js";
 import { TAGS, refreshTags, setManualTags } from "./tags.js";
-import { moreStats, platformCheck } from "./stats.js";
+import { moreStats, platformCheck, releasesBy } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
@@ -861,6 +862,16 @@ export async function buildServer() {
   });
 
   app.get("/api/stats/more", async () => moreStats());
+
+  app.get("/api/stats/releases", async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const year = q.year !== undefined ? Number(q.year) : undefined;
+    const dow = q.dow !== undefined ? Number(q.dow) : undefined;
+    const ok = (year !== undefined && Number.isInteger(year) && year > 1990 && year < 2100)
+      || (dow !== undefined && Number.isInteger(dow) && dow >= 1 && dow <= 7);
+    const res = ok ? await releasesBy({ year, dow }) : null;
+    return res ?? reply.code(400).send({ error: "year=2024 or dow=1..7" });
+  });
 
   app.get("/api/platform-check", async (req, reply) => {
     const rows = await platformCheck(String((req.query as any).p ?? ""));

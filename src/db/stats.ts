@@ -237,3 +237,25 @@ export async function moreStats(): Promise<MoreStats> {
   };
   return moreCache;
 }
+
+/**
+ * Drill-down for the release-activity charts: who released the most in a
+ * given year, or on a given weekday (ISO 1 = Monday) over the last 3 years.
+ */
+export async function releasesBy(q: { year?: number; dow?: number }): Promise<{ total: number; top: { id: number; n: number }[] } | null> {
+  const where = q.year !== undefined
+    ? sql`extract(year FROM release_date) = ${q.year}`
+    : q.dow !== undefined
+      ? sql`release_date >= current_date - interval '3 years' AND extract(isodow FROM release_date) = ${q.dow}`
+      : null;
+  if (!where) return null;
+  const rows = rowsOf<{ id: number; n: number }>(await db.execute(sql`
+    SELECT config_id AS id, count(*)::int AS n
+    FROM version_meta WHERE release_date IS NOT NULL AND ${where}
+    GROUP BY 1 ORDER BY 2 DESC, 1
+  `));
+  return {
+    total: rows.reduce((s, r) => s + Number(r.n), 0),
+    top: rows.slice(0, 12).map((r) => ({ id: Number(r.id), n: Number(r.n) })),
+  };
+}
