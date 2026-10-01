@@ -470,7 +470,7 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .theme-opt:hover { border-color: var(--border-strong); color: var(--text); }
 .theme-opt.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .theme-opt svg { width: 16px; height: 16px; }
-.catalog-layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; align-items: start; }
+.catalog-layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }
 .filters-panel { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); padding: 18px; position: sticky; top: calc(var(--hdr) + 16px);
   /* sticky + taller than the window = unreachable bottom: scroll inside instead */
@@ -493,6 +493,25 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .filter-chip:hover { background: var(--accent); color: #fff; }
 .filters-toggle, .filters-done { display: none; }
 .filter-group { margin-bottom: 18px; }
+.fchips { display: flex; flex-wrap: wrap; gap: 5px; }
+.fchip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border);
+  border-radius: 99px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.35;
+  cursor: pointer; transition: border-color .12s, background .12s; }
+.fchip span { font-size: 11px; color: var(--text-light); }
+.fchip:hover { border-color: var(--border-strong); background: var(--surface2); }
+.fchip.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.fchip.on span { color: var(--accent); }
+.fchip.is-empty { opacity: .45; }
+.fchips-empty { font-size: 13px; color: var(--text-light); }
+.filters-more { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+.filters-more > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  cursor: pointer; font-size: 13px; font-weight: 700; color: var(--accent); user-select: none; }
+.filters-more > summary::-webkit-details-marker { display: none; }
+.filters-more > summary svg { width: 14px; height: 14px; transform: rotate(90deg); transition: transform .15s; }
+.filters-more[open] > summary { margin-bottom: 16px; }
+.filters-more[open] > summary svg { transform: rotate(-90deg); }
+.filters-more-count { color: var(--text-muted); font-weight: 600; }
+.filter-note { font-size: 12px; color: var(--text-light); line-height: 1.5; margin-top: -6px; }
 .filter-group-label { font-size: 12px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px; }
 .filter-opt { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer;
@@ -1552,7 +1571,7 @@ function catalog_state(params) {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
     platforms: list('plat'), ages: list('age'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', stale: params.stale === '1', sort: params.sort || 'main',
-    vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
+    vendorQuery: '', vendorsAll: false, industriesAll: false, regionsAll: false, panelOpen: false,
   };
 }
 function catalog_sync_url() {
@@ -1632,24 +1651,29 @@ function render_catalog() {
           <span>${icn_filter()} Фильтры</span>
           <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
         </div>
-        <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines"></div></div>
-        <div class="filter-group" id="g-industries"><div class="filter-group-label">Отрасль</div><div id="f-industries"></div></div>
-        <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Последний релиз</div><div id="f-ages"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Длительная поддержка</div><div id="f-lts"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Переход обновлением</div><div id="f-trans"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
-        <div class="filter-group" id="g-orgs"><div class="filter-group-label">Для кого</div><div id="f-orgs"></div></div>
-        <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types"></div></div>
+        <!-- What people pick most, as compact chips; the rest folds into "Ещё фильтры". -->
+        <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types" class="fchips"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines" class="fchips"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Страна</div><div id="f-regions"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms" class="fchips"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels" class="fchips"></div></div>
         <div class="filter-group">
           <div class="filter-group-label">Разработчик</div>
           <input class="input filter-search" id="f-vendor-q" placeholder="Найти разработчика…" autocomplete="off"
                  oninput="CAT.vendorQuery=this.value; render_facets()">
           <div id="f-vendors"></div>
         </div>
-        <div class="filter-group"><div class="filter-group-label">Показывать</div><div id="f-legacy"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Показывать также</div><div id="f-legacy" class="fchips"></div></div>
+        <details class="filters-more" id="filters-more"${filters_more_open() ? ' open' : ''}>
+          <summary onclick="setTimeout(() => filters_more_save(this.parentNode.open))">
+            <span>Ещё фильтры<span class="filters-more-count" id="f-more-count"></span></span>${icn_chevron_r()}</summary>
+          <div class="filter-group"><div class="filter-group-label">Последний релиз</div><div id="f-ages" class="fchips"></div></div>
+          <div class="filter-group"><div class="filter-group-label">Поддержка и переходы</div><div id="f-features" class="fchips"></div></div>
+          <div class="filter-group" id="g-industries"><div class="filter-group-label">Отрасль</div><div id="f-industries"></div></div>
+          <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
+          <div class="filter-group" id="g-orgs"><div class="filter-group-label">Для кого</div><div id="f-orgs"></div></div>
+          <div class="filter-note">Отрасль, задачи и «для кого» — из карточек 1С:Решений, они есть не у всех конфигураций.</div>
+        </details>
         <button class="btn btn-primary filters-done" id="filters-done" onclick="toggle_filters_panel()">Показать</button>
       </aside>
       <div>
@@ -1756,6 +1780,23 @@ function reset_filters() {
   apply_filters();
 }
 
+// Short enumerations as toggle chips: a whole group fits in a line or two.
+function facet_chip(field, value, label, count, title) {
+  const on = CAT[field].includes(value);
+  return `<button type="button" class="fchip${on ? ' on' : ''}${count === 0 && !on ? ' is-empty' : ''}" aria-pressed="${on}"`
+    + ` data-v="${esc_html(value)}" onclick="toggle_facet('${field}', this.dataset.v)"${title ? ` title="${esc_html(title)}"` : ''}>`
+    + `${esc_html(label)}<span>${count}</span></button>`;
+}
+// "Ещё фильтры": open when one of its filters is on (a link from the stats
+// page), otherwise as the visitor left it.
+const MORE_FIELDS = ['ages', 'lts', 'trans', 'industries', 'tasks', 'orgs'];
+function filters_more_active() { return MORE_FIELDS.reduce((n, f) => n + CAT[f].length, 0); }
+function filters_more_open() {
+  if (filters_more_active()) return true;
+  try { return localStorage.getItem('uc_more_filters') === '1'; } catch (e) { return false; }
+}
+function filters_more_save(open) { try { localStorage.setItem('uc_more_filters', open ? '1' : '0'); } catch (e) {} }
+
 function facet_opt(field, value, label, count, title) {
   const on = CAT[field].includes(value);
   return `<label class="filter-opt${count === 0 && !on ? ' is-empty' : ''}"${title ? ` title="${esc_html(title)}"` : ''}>`
@@ -1771,8 +1812,9 @@ function render_facets() {
   const lineCnt = count_by(catalog_filter(base, 'lines'), c => c.tags.map(t => t.tag));
   set('f-lines', TAG_DICT
     .filter(d => lineCnt.get(d.tag) || CAT.lines.includes(d.tag))
-    .map(d => facet_opt('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
-    .join('') || '<div class="filter-opt is-empty">нет</div>');
+    .sort((a, b) => (lineCnt.get(b.tag) || 0) - (lineCnt.get(a.tag) || 0))
+    .map(d => facet_chip('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
+    .join('') || '<span class="fchips-empty">нет</span>');
 
   // Платформа — newest first; "не определена" last (partner packages the ITS
   // account can't read and without a releases.1c.ru project).
@@ -1782,29 +1824,27 @@ function render_facets() {
   if (platCnt.has('none')) plats.push('none');
   set('f-platforms', plats
     .map(p => p === 'none'
-      ? facet_opt('platforms', p, 'не определена', platCnt.get(p) || 0, 'Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта')
-      : facet_opt('platforms', p, p === PLATFORM_NEWEST ? p + ' — новая' : p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + ' — по последней версии конфигурации'))
-    .join('') || '<div class="filter-opt is-empty">нет данных</div>');
+      ? facet_chip('platforms', p, 'не определена', platCnt.get(p) || 0, 'Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта')
+      : facet_chip('platforms', p, p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + (p === PLATFORM_NEWEST ? ' (новая)' : '') + ' — по последней версии конфигурации'))
+    .join('') || '<span class="fchips-empty">нет данных</span>');
 
   // Последний релиз — fixed order, empty buckets hidden unless selected.
   const ageCnt = count_by(catalog_filter(base, 'ages'), c => [release_age(c)]);
   set('f-ages', RELEASE_AGES.filter(a => ageCnt.get(a.key) || CAT.ages.includes(a.key))
-    .map(a => facet_opt('ages', a.key, a.label, ageCnt.get(a.key) || 0, 'Последний релиз — ' + a.ago)).join('')
-    || '<div class="filter-opt is-empty">нет данных</div>');
+    .map(a => facet_chip('ages', a.key, a.label, ageCnt.get(a.key) || 0, 'Последний релиз — ' + a.ago)).join('')
+    || '<span class="fchips-empty">нет данных</span>');
 
   const ltsCnt = catalog_filter(base, 'lts').filter(c => c.ltsVersion && !lts_ended(c)).length;
-  set('f-lts', facet_opt('lts', 'yes', 'есть ветка ДП', ltsCnt, 'Версия с длительной поддержкой (ДП) параллельно основной ветке'));
-
   const trCnt = count_by(catalog_filter(base, 'trans'), c => c.transOut);
   // "на новую редакцию" starts from older editions — hidden unless they are shown.
-  set('f-trans', [['product', 'на другой продукт'], ['edition', 'на новую редакцию']]
-    .filter(([k]) => trCnt.get(k) || CAT.trans.includes(k))
-    .map(([k, l]) => facet_opt('trans', k, l, trCnt.get(k) || 0, 'Есть пакет обновления, переводящий базу ' + l)).join('')
-    || '<div class="filter-opt is-empty">нет</div>');
+  set('f-features', facet_chip('lts', 'yes', 'ветка ДП', ltsCnt, 'Версия с длительной поддержкой (ДП) параллельно основной ветке')
+    + [['product', 'переход на другой продукт'], ['edition', 'переход на новую редакцию']]
+      .filter(([k]) => trCnt.get(k) || CAT.trans.includes(k))
+      .map(([k, l]) => facet_chip('trans', k, l, trCnt.get(k) || 0, 'Есть пакет обновления: ' + l)).join(''));
 
   const lvlCnt = count_by(catalog_filter(base, 'levels'), c => c.level ? [c.level] : []);
   set('f-levels', ['base', 'prof', 'corp']
-    .map(l => facet_opt('levels', l, LEVEL_LABEL[l], lvlCnt.get(l) || 0)).join(''));
+    .map(l => facet_chip('levels', l, LEVEL_LABEL[l], lvlCnt.get(l) || 0)).join(''));
 
   // Регион — Россия first, then by size. "Для всех стран" products count for every
   // region (that is what selecting one would show) and have an option of their own.
@@ -1812,10 +1852,17 @@ function render_facets() {
   const allCnt = regBase.filter(c => c.allRegions).length;
   const regCnt = count_by(regBase.filter(c => !c.allRegions), c => c.regions);
   CAT.regions.forEach(r => { if (r !== 'all' && !regCnt.has(r)) regCnt.set(r, 0); });
-  set('f-regions', [...regCnt.entries()]
-    .sort((a, b) => (b[0] === 'ru') - (a[0] === 'ru') || b[1] - a[1])
-    .map(([r, n]) => facet_opt('regions', r, region_label(r), n + allCnt)).join('')
-    + (allCnt || CAT.regions.includes('all') ? facet_opt('regions', 'all', 'Для всех стран', allCnt) : ''));
+  // My country first, then the selected ones, then by size; four + "все страны".
+  const mine = pref_country();
+  let regs = [...regCnt.entries()]
+    .sort((a, b) => (b[0] === mine) - (a[0] === mine) || CAT.regions.includes(b[0]) - CAT.regions.includes(a[0]) || b[1] - a[1]);
+  const REG_LIMIT = 4;
+  const regHidden = CAT.regionsAll ? 0 : Math.max(0, regs.length - REG_LIMIT);
+  if (regHidden) regs = regs.slice(0, REG_LIMIT);
+  set('f-regions', regs.map(([r, n]) => facet_opt('regions', r, region_label(r), n + allCnt)).join('')
+    + (allCnt || CAT.regions.includes('all') ? facet_opt('regions', 'all', 'Для всех стран', allCnt, 'Продукты без привязки к стране — они есть в каждой стране') : '')
+    + (regHidden ? `<button class="filter-more" onclick="CAT.regionsAll=true; render_facets()">Все страны (${regHidden + REG_LIMIT})</button>`
+      : CAT.regionsAll ? `<button class="filter-more" onclick="CAT.regionsAll=false; render_facets()">Свернуть</button>` : ''));
 
   // Отрасль / Задачи / Для кого — from 1С:Решения; groups hide when nobody has data.
   const facetList = (field, keysOf, opts) => {
@@ -1830,7 +1877,7 @@ function render_facets() {
         : limit && CAT[allFlag] ? `<button class="filter-more" onclick="CAT.${allFlag}=false; render_facets()">Свернуть</button>` : '') };
   };
   const showGroup = (id, r) => { const g = document.getElementById(id); if (g) g.style.display = r.total ? '' : 'none'; };
-  const ind = facetList('industries', c => c.sol.industries, { limit: 8, allFlag: 'industriesAll' });
+  const ind = facetList('industries', c => c.sol.industries, { limit: 6, allFlag: 'industriesAll' });
   set('f-industries', ind.html); showGroup('g-industries', ind);
   const tsk = facetList('tasks', c => c.sol.tasks);
   set('f-tasks', tsk.html); showGroup('g-tasks', tsk);
@@ -1838,8 +1885,9 @@ function render_facets() {
   set('f-orgs', org.html); showGroup('g-orgs', org);
 
   const typeCnt = count_by(catalog_filter(base, 'types'), c => [c.type]);
-  set('f-types', ['standard', 'partner', 'industry']
-    .map(t => facet_opt('types', t, type_label(t), typeCnt.get(t) || 0)).join(''));
+  set('f-types', ['standard', 'industry', 'partner']
+    .map(t => facet_chip('types', t, { standard: 'Типовые', industry: 'Отраслевые', partner: 'Партнёрские' }[t], typeCnt.get(t) || 0,
+      { standard: 'Типовые решения фирмы 1С', industry: 'Отраслевые решения (1С и партнёры)', partner: 'Конфигурации партнёров' }[t])).join(''));
 
   // Разработчик — ~300 of them: search box, top 8, "show all"; selected ones always visible.
   // Keyed by the cleaned name, case-insensitively ("1С-Рарус" = "1С-РАРУС").
@@ -1852,7 +1900,7 @@ function render_facets() {
   let vendors = [...venCnt.entries()]
     .filter(([v, n]) => (n > 0 || CAT.vendors.includes(v)) && (!vq || v.includes(vq)))
     .sort((a, b) => CAT.vendors.includes(b[0]) - CAT.vendors.includes(a[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
-  const LIMIT = 8;
+  const LIMIT = 4;
   const hidden = vq || CAT.vendorsAll ? 0 : Math.max(0, vendors.length - LIMIT);
   if (hidden) vendors = vendors.slice(0, LIMIT);
   set('f-vendors', (vendors.map(([v, n]) => facet_opt('vendors', v, venLabel.get(v) || v, n)).join('')
@@ -1860,14 +1908,17 @@ function render_facets() {
     + (hidden ? `<button class="filter-more" onclick="CAT.vendorsAll=true; render_facets()">Показать все (${hidden + LIMIT})</button>`
       : CAT.vendorsAll && !vq ? `<button class="filter-more" onclick="CAT.vendorsAll=false; render_facets()">Свернуть</button>` : ''));
 
+  const moreN = filters_more_active();
+  set('f-more-count', moreN ? ' · ' + moreN : '');
+  const more = document.getElementById('filters-more');
+  if (more && moreN && !more.open) more.open = true;
+
   const legacyCnt = catalog_filter(catalog_base('legacy'), null).length;
   const staleCnt = catalog_filter(catalog_base('stale'), null).length;
-  set('f-legacy', `<label class="filter-opt${legacyCnt === 0 && !CAT.legacy ? ' is-empty' : ''}"><input type="checkbox"${CAT.legacy ? ' checked' : ''}
-      onchange="CAT.legacy=this.checked; apply_filters()"> <span class="filter-opt-label">предыдущие редакции</span>
-      <span class="filter-opt-count">${legacyCnt}</span></label>
-    <label class="filter-opt${staleCnt === 0 && !CAT.stale ? ' is-empty' : ''}" title="Платформа 8.2 или нет новых версий больше 1,5 лет"><input type="checkbox"${CAT.stale ? ' checked' : ''}
-      onchange="CAT.stale=this.checked; apply_filters()"> <span class="filter-opt-label">устаревшие (8.2 / не обновляются)</span>
-      <span class="filter-opt-count">${staleCnt}</span></label>`);
+  const flag = (key, label, n, title) => `<button type="button" class="fchip${CAT[key] ? ' on' : ''}${n === 0 && !CAT[key] ? ' is-empty' : ''}"
+      aria-pressed="${CAT[key]}" onclick="CAT.${key}=!CAT.${key}; apply_filters()" title="${title}">${label}<span>${n}</span></button>`;
+  set('f-legacy', flag('legacy', 'предыдущие редакции', legacyCnt, 'Старые редакции продуктов (БП 2.0, УТ 10…) — скрыты по умолчанию')
+    + flag('stale', 'устаревшие', staleCnt, 'Платформа 8.2 или нет новых версий больше 1,5 лет — скрыты по умолчанию'));
 }
 
 function render_summary(found) {
