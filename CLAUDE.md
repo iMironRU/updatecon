@@ -28,6 +28,7 @@ src/db/
   tags.ts               product-line tags dictionary + refresh (name rule, shared versions)
   manifests.ts          platform generation (8.2/8.3/8.5) from tmplts/<pkg>/1cv8.mft
   transitions.ts        "переходы" between products/editions from LST package sources
+  stats.ts              stats page aggregates (/api/stats/more) + platform check (/api/platform-check)
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)

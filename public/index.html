@@ -324,36 +324,91 @@ input, select, textarea { font-family: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi-sub { font-size: 12px; color: var(--text-light); margin-top: auto; }
 @media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-/* Platform share: one row per generation; 8.5 in the accent, the rest muted */
-.plat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 24px; }
-.plat-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.plat-card-title { font-size: 15px; font-weight: 700; }
-.plat-card-note { font-size: 12px; color: var(--text-light); }
-.plat-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) 96px; align-items: center; gap: 14px;
-  padding: 7px 8px; margin: 0 -8px; border-radius: var(--r-xs); }
-a.plat-row { color: inherit; cursor: pointer; }
-a.plat-row:hover, a.plat-row:focus-visible { background: var(--surface2); outline: none; }
-.plat-name { font-size: 14px; font-weight: 600; white-space: nowrap; }
-.plat-name small { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: 6px; }
-.plat-track { height: 8px; border-radius: 4px; background: var(--surface2); overflow: hidden; }
-.plat-bar { height: 100%; min-width: 4px; border-radius: 4px; background: var(--bar-muted); }
-.plat-bar.emph { background: var(--accent); }
-.plat-bar.none { background: var(--border-strong); }
-.plat-val { font-size: 14px; font-weight: 600; text-align: right; white-space: nowrap; }
-.plat-val span { font-weight: 400; color: var(--text-muted); }
-@media (max-width: 640px) { .plat-row { grid-template-columns: 96px minmax(0, 1fr) 84px; gap: 10px; } .plat-name small { display: none; } }
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
-.stat-card-val { font-size: 32px; font-weight: 800; color: var(--accent); font-family: var(--mono); }
-.stat-card-lbl { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
-.freq-table { width: 100%; border-collapse: collapse; }
-.freq-table th { text-align: left; padding: 10px 12px; font-size: 12px; font-weight: 600;
-  color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px;
-  border-bottom: 1px solid var(--border); }
-.freq-table td { padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
-.freq-table tr:last-child td { border-bottom: none; }
-.freq-bar-wrap { display: flex; align-items: center; gap: 10px; }
-.freq-bar { height: 6px; border-radius: 3px; background: var(--accent); min-width: 4px; }
+/* Stats cards: one anatomy everywhere — title · note, then rows or columns */
+.st-section { font-size: 12px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--text-muted); margin: 28px 0 12px; }
+.st-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.st-grid > * { min-width: 0; }
+.st-grid > div > .st-card, .st-grid > .st-card { height: 100%; }
+@media (max-width: 900px) { .st-grid { grid-template-columns: minmax(0, 1fr); } }
+.st-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px;
+  min-width: 0; margin-bottom: 16px; }
+.st-grid .st-card { margin-bottom: 0; }
+.st-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.st-title { font-size: 15px; font-weight: 700; }
+.st-note { font-size: 12px; color: var(--text-light); }
+.st-foot { font-size: 13px; color: var(--text-muted); margin-top: 12px; line-height: 1.55; }
+.st-foot b { color: var(--text); font-weight: 600; }
+.st-foot a { color: var(--accent); font-weight: 600; }
+.st-empty { font-size: 13px; color: var(--text-muted); padding: 6px 0; line-height: 1.55; }
+.st-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-muted); }
+.st-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.st-more { background: none; border: none; padding: 0; margin-top: 10px; font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--accent); cursor: pointer; }
+.st-more:hover { text-decoration: underline; }
+/* label · bar · value */
+.hrow { display: grid; grid-template-columns: 130px minmax(0, 1fr) 96px; align-items: center; gap: 14px;
+  padding: 7px 8px; margin: 0 -8px; border-radius: var(--r-xs); color: inherit; }
+.hrow-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hrow-name small { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: 6px; }
+.hrow-val, .lrow-val { font-size: 14px; font-weight: 600; text-align: right; white-space: nowrap; }
+.hrow-val span, .lrow-val span { font-weight: 400; color: var(--text-muted); }
+@media (max-width: 640px) { .hrow { grid-template-columns: 96px minmax(0, 1fr) 84px; gap: 10px; } .hrow-name small { display: none; } }
+/* name … value, bar underneath — for long product names */
+.lrow { display: block; padding: 7px 8px; margin: 0 -8px; border-radius: var(--r-xs); color: inherit; }
+.lrow-top { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.lrow-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lrow-name small { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+a.hrow, a.lrow { cursor: pointer; }
+a.hrow:hover, a.hrow:focus-visible, a.lrow:hover, a.lrow:focus-visible { background: var(--surface2); outline: none; }
+.st-track { display: flex; gap: 2px; height: 8px; border-radius: 4px; background: var(--surface2); overflow: hidden; }
+.lrow .st-track { height: 6px; }
+.st-bar { flex: none; height: 100%; min-width: 4px; border-radius: 4px; background: var(--bar-muted); }
+.st-bar.emph { background: var(--accent); }
+.st-bar.none { background: var(--border-strong); }
+/* columns: value · bar · axis label */
+.cols { display: flex; align-items: flex-end; gap: 8px; padding-top: 4px; }
+.col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.col-val { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.col-val.emph { color: var(--text); }
+.col-bar { width: 100%; max-width: 44px; min-height: 3px; border-radius: 4px 4px 0 0; background: var(--bar-muted); }
+.col-bar.emph { background: var(--accent); }
+.col-bar.part { opacity: .45; }
+.col-lbl { font-size: 12px; color: var(--text-muted); white-space: nowrap; text-align: center; line-height: 1.3; }
+.col-lbl small { display: block; font-size: 11px; color: var(--text-light); min-height: 14px; }
+@media (max-width: 480px) { .cols { gap: 4px; } .col-val { font-size: 10px; } .col-lbl { font-size: 11px; } }
+/* platform check */
+.pc-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
+.pc-form .input { width: 200px; }
+.pc-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.pc-chip { border: 1px solid var(--border); background: var(--surface); border-radius: 99px; padding: 3px 10px;
+  font-family: var(--mono); font-size: 12px; color: var(--text); cursor: pointer; }
+.pc-chip:hover, .pc-chip.on { border-color: var(--accent); color: var(--accent); }
+.pc-sum { font-size: 14px; line-height: 1.6; margin-bottom: 10px; }
+.pc-sum b { font-weight: 700; }
+.st-table-wrap { overflow-x: auto; margin: 0 -10px; }
+.st-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.st-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--text-muted); padding: 8px 10px;
+  border-bottom: 1px solid var(--border); white-space: nowrap; }
+.st-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.st-table tr:last-child td { border-bottom: none; }
+.st-table td.mono { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.st-table td small { display: block; color: var(--text-light); font-family: inherit; font-size: 11px; margin-top: 2px; }
+.st-table a { color: var(--text); font-weight: 600; }
+.st-table a:hover { color: var(--accent); }
+/* calendar */
+.cal-month { font-size: 12px; font-weight: 700; color: var(--text-muted); margin: 14px 0 4px; }
+.cal-month:first-child { margin-top: 0; }
+.cal-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 6px 8px; margin: 0 -8px;
+  border-radius: var(--r-xs); color: inherit; font-size: 13px; line-height: 1.45; }
+a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline: none; }
+.cal-date { font-family: var(--mono); font-size: 12px; color: var(--text-muted); padding-top: 1px; white-space: nowrap; }
+.cal-what { min-width: 0; }
+.cal-what b { font-weight: 600; }
+.cal-what .mono { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+.cal-kind { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; margin-right: 6px;
+  background: var(--accent-dim); color: var(--accent); }
+.cal-kind.lts { background: var(--surface2); color: var(--text-muted); }
 .settings-section { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); padding: 24px; margin-bottom: 20px; }
 .settings-section-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
@@ -926,6 +981,8 @@ function clean_vendor(v) {
     return p.replace(/["«»“”]/g, ' ').replace(LEGAL_FORMS, '$1').replace(/\s+/g, ' ')
       .replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\(\)/g, '').replace(/^[\s.]+|[\s.,;]+$/g, '');
   }).filter(function(p) { return p && !/^(https?:\/\/|www\.)/i.test(p); });  // "…, www.appius.ru"
+  // "ООО Тиражные решения 1С-Рарус" is 1С-Рарус's own publishing arm — one developer for the user.
+  parts = parts.map(function(p) { return /^Тиражные решения 1[СC]-Рарус$/i.test(p) ? '1С-Рарус' : p; });
   var partners = parts.filter(function(p) { return !/^1[СC]$/i.test(p); });
   return (partners.length ? partners : parts).join(', ') || '1С';
 }
@@ -1228,7 +1285,7 @@ async function route() {
     el.innerHTML = render_chain_page_shell();
     await bind_chain_page(params);
   }
-  else if (path === '/stats') { el.innerHTML = render_stats(); }
+  else if (path === '/stats') { el.innerHTML = render_stats(); bind_stats(); }
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
   else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
   ROUTE_PATH = path;
@@ -1742,6 +1799,20 @@ function render_summary(found) {
   if (done) done.textContent = `Показать ${found}`;
 }
 
+// "Основные" order (catalog default, also used by the stats tables):
+// group 1 typical of my country, 2 industry/partner of my country, 3 other
+// countries, 4 previous editions, 5 stale. Inside a group: the line's original
+// product first (БП before БНКО), then newest release, then ПРОФ → КОРП → базовая.
+function main_group(c) { return !c.isLatestEdition ? 4 : c.stale ? 5 : !in_pref_country(c) ? 3 : c.type === 'standard' ? 1 : 2; }
+function main_cmp(a, b) {
+  const subRank = c => c.type === 'standard' ? (is_core_product(c) ? 0 : c.tags.some(t => t.kind === 'own') ? 1 : 2) : 3;
+  const levelRank = c => c.level in LEVEL_RANK ? LEVEL_RANK[c.level] : 3;
+  return main_group(a) - main_group(b)
+    || subRank(a) - subRank(b)
+    || new Date(b.latestDate||0) - new Date(a.latestDate||0)
+    || levelRank(a) - levelRank(b)
+    || (a.name||'').localeCompare(b.name||'','ru');
+}
 function apply_filters() {
   if (!CAT) return;
   const list = catalog_filter(catalog_base(), null);
@@ -1754,15 +1825,9 @@ function apply_filters() {
   //   3 other countries · 4 previous editions · 5 stale (8.2 / not updated).
   // Inside a group: the line's original product first (БП before БНКО), then
   // freshest; siblings released the same day go ПРОФ → КОРП → Базовая.
-  const groupOf = c => !c.isLatestEdition ? 4 : c.stale ? 5 : !in_pref_country(c) ? 3 : c.type === 'standard' ? 1 : 2;
-  const subRank = c => c.type === 'standard' ? (is_core_product(c) ? 0 : c.tags.some(t => t.kind === 'own') ? 1 : 2) : 3;
-  const levelRank = c => c.level in LEVEL_RANK ? LEVEL_RANK[c.level] : 3;
+  const groupOf = main_group;
   list.sort((a,b) => {
-    if (sortVal==='main') return groupOf(a) - groupOf(b)
-      || subRank(a) - subRank(b)
-      || new Date(b.latestDate||0) - new Date(a.latestDate||0)
-      || levelRank(a) - levelRank(b)
-      || (a.name||'').localeCompare(b.name||'','ru');
+    if (sortVal==='main') return main_cmp(a, b);
     if (CAT.lines.length && ownRank(a) !== ownRank(b)) return ownRank(a) - ownRank(b);
     if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
     if (sortVal==='date_asc')  return new Date(a.latestDate||0) - new Date(b.latestDate||0);
@@ -2133,40 +2198,391 @@ async function bind_chain_page(params) {
 /* ================================================================
    STATS VIEW
    ================================================================ */
-// Platform generation of current editions: one row per generation, share of
-// all current editions. Emphasis on the newest (8.5) — that is the news; rows
-// open the catalog (8.2 and older are "stale" there, so that toggle comes along).
+// ── Stats page ────────────────────────────────────────────────────────────
+// Two populations, said in every card note: "current editions" (what the
+// platform and freshness cards count — stale ones included, that is the
+// point there) and "live" ones (current, not stale — the catalog's default,
+// so a click on a row opens a catalog with the same count).
+function stats_current() { return CONFIGS.filter(c => c.isLatestEdition); }
+function stats_live() { return CONFIGS.filter(c => c.isLatestEdition && !c.stale); }
+function ru_plural(n, one, few, many) {
+  const a = n % 10, b = n % 100;
+  return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 10 || b >= 20) ? few : many;
+}
+function pct_text(n, total) {
+  const p = total ? n / total * 100 : 0;
+  return (p > 0 && p < 1 ? p.toFixed(1) : String(Math.round(p))).replace('.', ',') + '%';
+}
+const nfmt = n => Number(n).toLocaleString('ru');
+const q_enc = v => encodeURIComponent(v).replace(/'/g, '%27');
+const RU_MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+const RU_MON = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+function st_card(title, note, body, extra) {
+  return `<div class="st-card"${extra || ''}><div class="st-head"><div class="st-title">${title}</div>${note ? `<div class="st-note">${note}</div>` : ''}</div>${body}</div>`;
+}
+function st_attrs(o) {
+  return (o.href ? ` href="#${o.href}" onclick="navigate('${o.href}'); return false"` : '')
+    + (o.title ? ` title="${esc_html(o.title)}"` : '');
+}
+function st_track(o) {
+  const segs = o.segs || [{ w: o.w, cls: o.cls }];
+  return `<div class="st-track">${segs.filter(s => s.w > 0).map(s =>
+    `<div class="st-bar ${s.cls || ''}" style="width:${Math.min(100, s.w).toFixed(2)}%"></div>`).join('')}</div>`;
+}
+// {name, val, w | segs, cls, href, title}
+function st_hrow(o) {
+  const t = o.href ? 'a' : 'div';
+  return `<${t} class="hrow"${st_attrs(o)}><div class="hrow-name">${o.name}</div>${st_track(o)}<div class="hrow-val">${o.val}</div></${t}>`;
+}
+function st_lrow(o) {
+  const t = o.href ? 'a' : 'div';
+  return `<${t} class="lrow"${st_attrs(o)}><div class="lrow-top"><div class="lrow-name">${o.name}</div><div class="lrow-val">${o.val}</div></div>${st_track(o)}</${t}>`;
+}
+// [{lbl, sub, val, n, cls}] — heights relative to the largest
+function st_cols(items, height) {
+  const max = Math.max(1, ...items.map(i => i.n));
+  return `<div class="cols">${items.map(i => `<div class="col"${i.title ? ` title="${esc_html(i.title)}"` : ''}>
+      <div class="col-val${/emph/.test(i.cls || '') ? ' emph' : ''}">${i.val}</div>
+      <div class="col-bar ${i.cls || ''}" style="height:${Math.max(3, Math.round(i.n / max * (height || 120)))}px"></div>
+      <div class="col-lbl">${i.lbl}<small>${i.sub || ''}</small></div></div>`).join('')}</div>`;
+}
+// Cards with a "show all" toggle remember it here while the page is open.
+const ST_OPEN = {};
+function st_toggle(key) { ST_OPEN[key] = !ST_OPEN[key]; const el = document.getElementById('st-' + key); if (el) el.outerHTML = ST_RENDER[key](); }
+function st_more_btn(key, total, shown) {
+  return total > shown || ST_OPEN[key]
+    ? `<button class="st-more" onclick="st_toggle('${key}')">${ST_OPEN[key] ? 'Свернуть' : 'Показать все ' + total}</button>` : '';
+}
+
+// Platform generation of current editions: share of all current editions.
+// Emphasis on the newest (8.5) — that is the news. Rows open the catalog with
+// stale ones shown too, so the catalog count matches the row.
 function platform_card_html() {
-  const cur = CONFIGS.filter(c => c.isLatestEdition);
+  const cur = stats_current();
   if (!cur.length) return '';
   const by = {};
   cur.forEach(c => { const k = c.platform || ''; by[k] = (by[k] || 0) + 1; });
   const gens = Object.keys(by).filter(Boolean).sort((a, b) => platform_cmp(b, a));
-  const pct = n => n / cur.length * 100;
-  const pctText = n => { const p = pct(n); return (p < 1 ? p.toFixed(1) : String(Math.round(p))).replace('.', ',') + '%'; };
-  const row = (k, n) => {
-    const known = !!k;
+  const row = k => {
+    const n = by[k], known = !!k;
     const isNew = known && platform_cmp(k, PLATFORM_NEWEST) >= 0;
     const old = known && platform_cmp(k, '8.3') < 0;
-    const href = '/catalog?plat=' + k + (old ? '&stale=1' : '');
-    const inner = `<div class="plat-name">${known ? k : 'не определена'}${isNew ? '<small>новая</small>' : old ? '<small>устаревшая</small>' : ''}</div>
-      <div class="plat-track"><div class="plat-bar${isNew ? ' emph' : known ? '' : ' none'}" style="width:${pct(n).toFixed(2)}%"></div></div>
-      <div class="plat-val">${n.toLocaleString('ru')} <span>· ${pctText(n)}</span></div>`;
-    return known
-      ? `<a class="plat-row" href="#${href}" onclick="navigate('${href}'); return false" title="${n} конфигураций (${pctText(n)}) на платформе ${k} — открыть в каталоге">${inner}</a>`
-      : `<div class="plat-row" title="Партнёрские пакеты, закрытые для ИТС-аккаунта, без данных на releases.1c.ru">${inner}</div>`;
+    return st_hrow({
+      name: (known ? k : 'не определена') + (isNew ? '<small>новая</small>' : old ? '<small>устаревшая</small>' : ''),
+      val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`, w: n / cur.length * 100,
+      cls: isNew ? 'emph' : known ? '' : 'none',
+      href: known ? '/catalog?plat=' + k + '&stale=1' : '',
+      title: known ? `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} на платформе ${k} — открыть в каталоге`
+                   : 'Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта (часто — партнёрские)',
+    });
   };
-  return `<div class="plat-card fade-up fade-up-1">
-    <div class="plat-card-head"><div class="plat-card-title">Платформа 1С:Предприятие</div>
-      <div class="plat-card-note">по последней версии, из ${cur.length.toLocaleString('ru')} конфигураций</div></div>
-    ${gens.map(k => row(k, by[k])).join('')}
-    ${by[''] ? row('', by['']) : ''}
-  </div>`;
+  return st_card('Платформа 1С:Предприятие', `по последней версии, из ${nfmt(cur.length)} конфигураций`,
+    gens.map(row).join('') + (by[''] ? row('') : ''));
+}
+
+// How long ago the newest release came out (current editions).
+function freshness_card_html() {
+  const cur = stats_current();
+  const now = Date.now(), MONTH = 30.44 * 864e5;
+  const B = [['до месяца', 1], ['1–3 месяца', 3], ['3–6 месяцев', 6], ['6–12 месяцев', 12], ['1–1,5 года', 18], ['больше 1,5 года', Infinity]];
+  const cnt = B.map(() => 0);
+  let none = 0;
+  cur.forEach(c => {
+    if (!c.latestDate) { none++; return; }
+    const m = (now - new Date(c.latestDate)) / MONTH;
+    cnt[B.findIndex(b => m < b[1])]++;
+  });
+  const rows = B.map((b, i) => st_hrow({
+    name: b[0], val: `${nfmt(cnt[i])} <span>· ${pct_text(cnt[i], cur.length)}</span>`,
+    w: cnt[i] / cur.length * 100, cls: i === 0 ? 'emph' : '',
+  })).join('') + (none ? st_hrow({
+    name: 'нет данных', val: `${nfmt(none)} <span>· ${pct_text(none, cur.length)}</span>`, w: none / cur.length * 100, cls: 'none',
+    title: 'Нет проекта на releases.1c.ru — дата выхода версий неизвестна',
+  }) : '');
+  return st_card('Когда выходил последний релиз', `из ${nfmt(cur.length)} конфигураций`, rows);
+}
+
+// ── Platform check: "will my platform take the latest releases?" ──
+const PC_KEY = 'uc_platform';
+let PC_TIMER = null, PC_SEQ = 0, PC_LAST = null;
+function pc_saved() { try { return localStorage.getItem(PC_KEY) || ''; } catch (e) { return ''; } }
+const PC_HINT = '<div class="st-empty">Введите версию своей платформы — покажем, у каких конфигураций последний релиз на ней не встанет и до какой версии можно обновиться без смены платформы. Номер сборки можно не указывать: «8.3.24» — любая сборка этой линейки.</div>';
+function platform_check_html() {
+  // Quick picks: the lines the latest releases ask for most often.
+  const lines = new Map();
+  stats_live().forEach(c => (String(c.latestPlat || '').match(/\d+\.\d+\.\d+(?=\.\d+)/g) || [])
+    .forEach(l => lines.set(l, (lines.get(l) || 0) + 1)));
+  const picks = [...lines.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(e => e[0]).sort(platform_cmp_v);
+  const v = pc_saved();
+  return st_card('Встанет ли последний релиз на вашу платформу', 'по требованиям releases.1c.ru', `
+    <div class="pc-form">
+      <input id="pc-input" class="input input-mono" placeholder="8.3.24.1691" value="${esc_html(v)}" autocomplete="off"
+             inputmode="decimal" aria-label="Версия платформы" oninput="pc_input(this.value)">
+      ${picks.length ? `<div class="pc-chips">Частые: ${picks.map(l => `<button class="pc-chip${l === v ? ' on' : ''}" onclick="pc_set('${l}')">${l}</button>`).join('')}</div>` : ''}
+    </div>
+    <div id="pc-result">${PC_HINT}</div>`);
+}
+function pc_set(v) { const i = document.getElementById('pc-input'); if (i) i.value = v; pc_input(v, true); }
+function pc_input(v, now) { clearTimeout(PC_TIMER); PC_TIMER = setTimeout(() => pc_run(v.trim()), now ? 0 : 350); }
+async function pc_run(v) {
+  const box = document.getElementById('pc-result');
+  if (!box) return;
+  document.querySelectorAll('.pc-chip').forEach(b => b.classList.toggle('on', b.textContent === v));
+  const seq = ++PC_SEQ;
+  if (!v) { box.innerHTML = PC_HINT; try { localStorage.removeItem(PC_KEY); } catch (e) {} return; }
+  if (!/^\d+\.\d+\.\d+(\.\d+)?$/.test(v)) { box.innerHTML = '<div class="st-empty">Формат версии: 8.3.24.1691 или 8.3.24</div>'; return; }
+  let rows;
+  try { rows = await apiFetch('/api/platform-check', { p: v }); } catch (e) { box.innerHTML = '<div class="st-empty">Не удалось проверить — попробуйте ещё раз</div>'; return; }
+  if (seq !== PC_SEQ) return;
+  try { localStorage.setItem(PC_KEY, v); } catch (e) {}
+  PC_LAST = { v, rows };
+  box.innerHTML = pc_result_html();
+}
+function pc_result_html() {
+  const { v, rows } = PC_LAST;
+  const by = new Map(rows.map(r => [String(r.id), r]));
+  const live = stats_live().filter(c => by.has(c.id));
+  const st = s => live.filter(c => by.get(c.id).st === s);
+  const ok = st('ok'), no = st('no'), unk = st('unknown');
+  const gen = v.split('.').slice(0, 2).join('.');
+  const needs = no.map(c => by.get(c.id).need);
+  const inGen = needs.filter(n => n.startsWith(gen + '.')).sort(platform_cmp_v);
+  const otherGens = [...new Set(needs.filter(n => !n.startsWith(gen + '.')).map(n => n.split('.').slice(0, 2).join('.')))].sort(platform_cmp_v);
+  const otherCnt = needs.length - inGen.length;
+  let sum = `На платформе <b>${esc_html(v)}</b> последние релизы встанут у <b>${nfmt(ok.length)}</b> из ${nfmt(live.length)} конфигураций.`;
+  if (no.length) {
+    const parts = [];
+    if (inGen.length) parts.push(`${nfmt(inGen.length)} хватит <b>${inGen[inGen.length - 1]}</b>`);
+    if (otherCnt) parts.push(`${nfmt(otherCnt)} — только на ${otherGens.join(' / ')}`);
+    sum += ` Ещё ${nfmt(no.length)} ${ru_plural(no.length, 'требует', 'требуют', 'требуют')} платформу новее: ${parts.join(', ')}.`;
+  } else sum += ' Менять платформу не нужно.';
+  if (unk.length) sum += ` У ${nfmt(unk.length)} ваша версия в требованиях не упоминается — там указаны только более старые платформы.`;
+  no.sort(main_cmp);
+  const shown = ST_OPEN.pc ? no : no.slice(0, 12);
+  const table = no.length ? `<div class="st-table-wrap"><table class="st-table">
+      <thead><tr><th>Конфигурация</th><th>Можно обновиться до</th><th>Актуальная</th><th>Нужна платформа</th></tr></thead>
+      <tbody>${shown.map(c => { const r = by.get(c.id); return `<tr>
+        <td><a href="#/config/${c.id}" onclick="navigate('/config/${c.id}'); return false">${esc_html(c.name)}</a></td>
+        <td class="mono">${r.best ? esc_html(r.best) + (r.best_date ? `<small>${fmt_date(r.best_date)}</small>` : '') : '—'}</td>
+        <td class="mono">${esc_html(r.latest)}</td>
+        <td class="mono">${esc_html(r.need || '')}</td></tr>`; }).join('')}</tbody></table></div>
+      ${no.length > 12 ? `<button class="st-more" onclick="ST_OPEN.pc=!ST_OPEN.pc; document.getElementById('pc-result').innerHTML=pc_result_html()">${ST_OPEN.pc ? 'Свернуть' : 'Показать все ' + no.length}</button>` : ''}` : '';
+  return `<div class="pc-sum">${sum}</div>${table}`;
+}
+
+// ── Calendar: planned releases + end of long-term support ──
+function parse_plan_date(s) {
+  s = String(s || '').trim();
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+  if (m) return { d: new Date(m[3].length === 2 ? 2000 + +m[3] : +m[3], m[2] - 1, +m[1]), exact: true };
+  m = s.toLowerCase().match(/^([а-яё]+)\s+(\d{4})$/);
+  if (m && RU_MONTHS.indexOf(m[1]) >= 0) return { d: new Date(+m[2], RU_MONTHS.indexOf(m[1]), 1), exact: false };
+  return null;
+}
+function calendar_events() {
+  const today = new Date(new Date().toDateString());
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const ev = new Map();
+  const add = (d, exact, kind, ver, c) => {
+    const key = kind + '|' + ver + '|' + d.getTime() + '|' + exact;
+    const e = ev.get(key) || { d, exact, kind, ver, list: [] };
+    e.list.push(c);
+    ev.set(key, e);
+  };
+  stats_live().forEach(c => {
+    const p = c.nextReleaseVersion && parse_plan_date(c.nextReleasePlannedDate);
+    if (p && (p.exact ? p.d >= today : p.d >= monthStart)) add(p.d, p.exact, 'rel', c.nextReleaseVersion, c);
+    if (c.ltsVersion && c.ltsUntil) {
+      const [y, mo, d] = c.ltsUntil.split('-').map(Number);
+      const dt = new Date(y, mo - 1, d);
+      if (dt >= today) add(dt, true, 'lts', c.ltsLine, c);
+    }
+  });
+  // A month-only plan sorts after the dated events of that month.
+  const t = e => e.exact ? e.d.getTime() : new Date(e.d.getFullYear(), e.d.getMonth() + 1, 0).getTime() + 1;
+  return [...ev.values()].sort((a, b) => t(a) - t(b));
+}
+function calendar_card_html() {
+  const all = calendar_events();
+  const list = ST_OPEN.cal ? all : all.slice(0, 10);
+  let month = '';
+  const rows = list.map(e => {
+    const mk = RU_MONTHS[e.d.getMonth()] + ' ' + e.d.getFullYear();
+    const head = mk !== month ? `<div class="cal-month">${mk[0].toUpperCase() + mk.slice(1)}</div>` : '';
+    month = mk;
+    const c = e.list[0];
+    const names = e.list.slice(0, 2).map(x => esc_html(x.short)).join(', ') + (e.list.length > 2 ? ` и ещё ${e.list.length - 2}` : '');
+    const what = e.kind === 'rel'
+      ? `<span class="cal-kind">релиз</span><b>${names}</b> <span class="mono">${esc_html(e.ver)}</span>`
+      : `<span class="cal-kind lts">конец ДП</span><b>${names}</b> — ветка <span class="mono">${esc_html(e.ver)}</span>`;
+    // A plan for "Октябрь 2026" has no day yet.
+    const date = e.exact ? String(e.d.getDate()).padStart(2, '0') + '.' + String(e.d.getMonth() + 1).padStart(2, '0') : 'без даты';
+    return `${head}<a class="cal-row" href="#/config/${c.id}" onclick="navigate('/config/${c.id}'); return false"
+      title="${esc_html(e.list.map(x => x.name).join('\n'))}"><div class="cal-date">${date}</div><div class="cal-what">${what}</div></a>`;
+  }).join('');
+  return `<div id="st-cal">${st_card('Ближайшие события', 'планы релизов и конец длительной поддержки',
+    all.length ? rows + st_more_btn('cal', all.length, 10) : '<div class="st-empty">Запланированных релизов пока нет</div>')}</div>`;
+}
+
+// ── Ecosystem (live editions) ──
+function lines_card_html() {
+  const live = stats_live();
+  const rows = TAG_DICT.map(t => ({
+    t, own: live.filter(c => c.tags.some(x => x.tag === t.tag && x.kind === 'own')).length,
+    based: live.filter(c => c.tags.some(x => x.tag === t.tag && x.kind === 'based')).length,
+  })).filter(r => r.own + r.based > 0).sort((a, b) => (b.own + b.based) - (a.own + a.based));
+  const max = Math.max(1, ...rows.map(r => r.own + r.based));
+  return st_card('Линейки продуктов', `<span class="st-legend"><span><i style="background:var(--accent)"></i>продукты линейки</span><span><i style="background:var(--bar-muted)"></i>решения на их базе</span></span>`,
+    rows.map(r => st_lrow({
+      name: `${esc_html(r.t.tag)} <small>· ${esc_html(r.t.title)}</small>`,
+      val: `${r.own} <span>+ ${r.based}</span>`,
+      segs: [{ w: r.own / max * 100, cls: 'emph' }, { w: r.based / max * 100 }],
+      href: '/catalog?line=' + q_enc(r.t.tag),
+      title: `${r.t.title}: ${r.own} в линейке, ${r.based} на её базе — открыть в каталоге`,
+    })).join(''));
+}
+function vendors_card_html() {
+  const live = stats_live();
+  const by = count_by(live, c => [c.vendorName]);
+  const own = by.get('1С') || 0;
+  const partners = [...by.entries()].filter(e => e[0] !== '1С').sort((a, b) => b[1] - a[1]);
+  const pTotal = partners.reduce((s, e) => s + e[1], 0);
+  const max = Math.max(1, ...partners.map(e => e[1]));
+  const shown = ST_OPEN.ven ? partners.slice(0, 40) : partners.slice(0, 8);
+  return `<div id="st-ven">${st_card('Разработчики', `${partners.length} ${ru_plural(partners.length, 'партнёр', 'партнёра', 'партнёров')} и 1С`,
+    `<div class="st-foot" style="margin:0 0 10px">Фирма 1С — <b>${own}</b> (${pct_text(own, live.length)}), партнёры — <b>${pTotal}</b> (${pct_text(pTotal, live.length)}).</div>`
+    + shown.map(([v, n]) => st_lrow({
+      name: esc_html(v), val: String(n), w: n / max * 100,
+      href: '/catalog?vendor=' + q_enc(v.toLowerCase()), title: v + ' — открыть в каталоге',
+    })).join('') + st_more_btn('ven', Math.min(40, partners.length), 8))}</div>`;
+}
+function industries_card_html() {
+  const live = stats_live();
+  const withCard = live.filter(c => c.sol.industries.length).length;
+  const top = [...count_by(live, c => c.sol.industries).entries()].sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...top.map(e => e[1]));
+  const shown = ST_OPEN.ind ? top : top.slice(0, 8);
+  return `<div id="st-ind">${st_card('Отрасли', `по 1С:Решениям, у ${withCard} ${ru_plural(withCard, 'конфигурации', 'конфигураций', 'конфигураций')}`,
+    top.length ? shown.map(([x, n]) => st_lrow({
+      name: esc_html(x), val: String(n), w: n / max * 100, href: '/catalog?ind=' + q_enc(x), title: x + ' — открыть в каталоге',
+    })).join('') + st_more_btn('ind', top.length, 8) : '<div class="st-empty">Нет данных 1С:Решений</div>')}</div>`;
+}
+function freq_card_html() {
+  const list = stats_live().filter(c => c.avg_update_days).sort((a, b) => a.avg_update_days - b.avg_update_days);
+  const best = list.length ? list[0].avg_update_days : 1;
+  const shown = ST_OPEN.freq ? list.slice(0, 50) : list.slice(0, 8);
+  return `<div id="st-freq">${st_card('Чаще всего выходят релизы', 'средний интервал между релизами',
+    list.length ? shown.map(c => st_lrow({
+      name: esc_html(c.name), val: `~${c.avg_update_days} <span>дн.</span>`, w: best / c.avg_update_days * 100,
+      href: '/config/' + c.id, title: `Последний релиз ${fmt_date(c.latestDate)}`,
+    })).join('') + st_more_btn('freq', Math.min(50, list.length), 8) : '<div class="st-empty">Нет данных</div>')}</div>`;
+}
+const ST_RENDER = { cal: calendar_card_html, ven: vendors_card_html, ind: industries_card_html, freq: freq_card_html,
+  trans: () => trans_card_html(STATS_MORE), chains: () => chains_card_html(STATS_MORE) };
+
+// ── Cards over /api/stats/more (loaded after the page renders) ──
+let STATS_MORE = null;
+const st_loading = '<div class="st-empty">Загрузка…</div>';
+function years_card_html(m) {
+  const cy = new Date().getFullYear();
+  const ys = m ? m.years.filter(r => r.y >= cy - 7) : [];
+  const full = ys.filter(r => r.y < cy);
+  const avg = full.length ? Math.round(full.reduce((s, r) => s + r.n, 0) / full.length) : 0;
+  const now = new Date();
+  return st_card('Релизы по годам', 'все конфигурации на releases.1c.ru', !m ? st_loading : st_cols(ys.map(r => ({
+    lbl: r.y < cy ? String(r.y) : r.y + '*', val: nfmt(r.n), n: r.n, cls: r.y === cy ? 'part' : '',
+    title: `${r.y}: ${nfmt(r.n)} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')}`,
+  }))) + `<div class="st-foot">В среднем <b>${nfmt(avg)}</b> релизов в год. * ${cy} — по ${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.</div>`);
+}
+function weekdays_card_html(m) {
+  const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  if (!m) return st_card('День выхода релиза', 'за последние 3 года', st_loading);
+  const total = m.weekdays.reduce((s, n) => s + n, 0) || 1;
+  const top = m.weekdays.indexOf(Math.max(...m.weekdays));
+  const weekend = m.weekdays[5] + m.weekdays[6];
+  const full = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+  return st_card('День выхода релиза', 'за последние 3 года', st_cols(m.weekdays.map((n, i) => ({
+    lbl: names[i], val: pct_text(n, total), n, cls: i === top ? 'emph' : '', title: `${full[i]}: ${nfmt(n)} ${ru_plural(n, 'релиз', 'релиза', 'релизов')}`,
+  }))) + `<div class="st-foot">Чаще всего — <b>${full[top]}</b>: ${pct_text(m.weekdays[top], total)} релизов. В выходные — ${pct_text(weekend, total)}.</div>`);
+}
+function plat85_card_html(m) {
+  const title = 'Переход на платформу ' + PLATFORM_NEWEST;
+  const note = 'конфигурации с релизом под ' + PLATFORM_NEWEST + ', нарастающим итогом';
+  if (!m) return st_card(title, note, st_loading);
+  const cur = new Map(stats_current().map(c => [c.id, c]));
+  const firsts = m.plat85.filter(r => cur.has(String(r.id))).map(r => r.first.slice(0, 7)).sort();
+  if (!firsts.length) return st_card(title, note, '<div class="st-empty">Пока ни одной</div>');
+  const now = new Date();
+  const months = [];
+  for (let d = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1); d <= now; d.setMonth(d.getMonth() + 1))
+    months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  const shown = months.slice(-12);
+  const items = shown.map((mk, i) => {
+    const n = firsts.filter(f => f <= mk).length;
+    const mo = +mk.slice(5, 7) - 1;
+    return { lbl: RU_MON[mo], sub: i === 0 || mo === 0 ? mk.slice(0, 4) : '', val: String(n), n, cls: i === shown.length - 1 ? 'emph' : '',
+             title: `${RU_MONTHS[mo]} ${mk.slice(0, 4)}: ${n}` };
+  });
+  const last = items[items.length - 1].n;
+  const first = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1);
+  return st_card(title, note, st_cols(items, 110) + `<div class="st-foot">Первые релизы под ${PLATFORM_NEWEST} — ${RU_MONTHS[first.getMonth()]} ${first.getFullYear()}.
+    Сейчас <b>${last}</b> — ${pct_text(last, cur.size)} актуальных редакций.
+    <a href="#/catalog?plat=${PLATFORM_NEWEST}" onclick="navigate('/catalog?plat=${PLATFORM_NEWEST}'); return false">Открыть в каталоге →</a></div>`);
+}
+function trans_card_html(m) {
+  const title = 'Переходы между продуктами', note = 'по числу пакетов обновления с переходом';
+  if (!m) return `<div id="st-trans">${st_card(title, note, st_loading)}</div>`;
+  const byId = new Map(CONFIGS.map(c => [c.id, c]));
+  const seen = new Set();
+  const list = m.transitions.map(t => ({ ...t, a: byId.get(String(t.from)), b: byId.get(String(t.to)) }))
+    .filter(t => t.a && t.b && t.b.isLatestEdition && !t.b.stale)
+    .filter(t => { const k = t.a.short + '>' + t.b.short; if (seen.has(k)) return false; seen.add(k); return true; });
+  const max = Math.max(1, ...list.map(t => t.packages));
+  const shown = ST_OPEN.trans ? list.slice(0, 30) : list.slice(0, 8);
+  return `<div id="st-trans">${st_card(title, note, list.length ? shown.map(t => st_lrow({
+    name: `${esc_html(t.a.short)} <small>→</small> ${esc_html(t.b.short)}`,
+    val: `${t.packages} <span>${ru_plural(t.packages, 'пакет', 'пакета', 'пакетов')}</span>`, w: t.packages / max * 100,
+    href: '/config/' + t.a.id, title: `${t.a.name} → ${t.b.name}`,
+  })).join('') + st_more_btn('trans', Math.min(30, list.length), 8) : '<div class="st-empty">Нет данных</div>')}</div>`;
+}
+function chains_card_html(m) {
+  const title = 'Самые длинные цепочки', note = 'от самой старой версии до актуальной';
+  if (!m) return `<div id="st-chains">${st_card(title, note, st_loading)}</div>`;
+  const byId = new Map(stats_live().map(c => [c.id, c]));
+  const list = m.chains.filter(r => byId.has(String(r.id)));
+  const max = Math.max(1, ...list.map(r => r.steps));
+  const shown = ST_OPEN.chains ? list.slice(0, 30) : list.slice(0, 8);
+  const jc = m.jumps.id != null ? CONFIGS.find(c => c.id === String(m.jumps.id)) : null;
+  return `<div id="st-chains">${st_card(title, note, list.length ? shown.map(r => {
+    const c = byId.get(String(r.id));
+    const href = '/chain?config=' + c.id + '&from=' + r.from + '&to=' + r.to;
+    return st_lrow({
+      name: `${esc_html(c.short)} <small>· с ${esc_html(r.from)}${r.from_date ? ', ' + r.from_date.slice(0, 4) : ''}</small>`,
+      val: `${r.steps} <span>${ru_plural(r.steps, 'шаг', 'шага', 'шагов')}</span>`, w: r.steps / max * 100,
+      href, title: `${c.name}: ${r.from} → ${r.to} — показать цепочку`,
+    });
+  }).join('') + st_more_btn('chains', Math.min(30, list.length), 8)
+    + `<div class="st-foot">Обычно цепочка — <b>${m.chainMedian}</b> ${ru_plural(m.chainMedian || 0, 'шаг', 'шага', 'шагов')}:
+       один пакет принимает ${m.jumps.median} ${ru_plural(m.jumps.median, 'исходную версию', 'исходные версии', 'исходных версий')}, рекорд — <b>${m.jumps.max}</b>${jc ? ` (${esc_html(jc.short)} ${esc_html(m.jumps.version)})` : ''}.</div>`
+    : '<div class="st-empty">Нет данных</div>')}</div>`;
+}
+async function bind_stats() {
+  if (!STATS_MORE) {
+    try { STATS_MORE = await apiFetch('/api/stats/more'); } catch (e) { return; }
+  }
+  const m = STATS_MORE;
+  const put = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  put('st-a-years', years_card_html(m));
+  put('st-a-wd', weekdays_card_html(m));
+  put('st-a-85', plat85_card_html(m));
+  const t = document.getElementById('st-trans'); if (t) t.outerHTML = trans_card_html(m);
+  const ch = document.getElementById('st-chains'); if (ch) ch.outerHTML = chains_card_html(m);
+  const v = pc_saved();
+  if (v) pc_run(v);
 }
 
 function render_stats() {
-  const sorted_freq = [...CONFIGS].filter(c=>c.avg_update_days).sort((a,b)=>a.avg_update_days-b.avg_update_days).slice(0,50);
-  const max_freq = Math.max(...sorted_freq.map(c=>c.avg_update_days), 1);
   return `<div class="wrap">
     <div class="page-head"><div class="page-title">Статистика</div></div>
     <div class="kpi-row fade-up">
@@ -2175,23 +2591,20 @@ function render_stats() {
       <div class="kpi"><div class="kpi-label">Версии</div><div class="kpi-value">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="kpi-sub">в цепочках обновлений</div></div>
       <div class="kpi"><div class="kpi-label">Обновление базы</div><div class="kpi-value">${DB_META.last_updated ? days_ago(DB_META.last_updated) : '—'}</div><div class="kpi-sub">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : 'импортов ещё не было'}</div></div>
     </div>
-    ${platform_card_html()}
-    ${sorted_freq.length ? `<div class="card fade-up fade-up-1" style="margin-bottom:24px">
-      <div class="version-list-header"><div class="version-list-title">Частота обновлений (топ-50)</div></div>
-      <div style="padding:8px 0">
-        <table class="freq-table">
-          <thead><tr>
-            <th>Конфигурация</th><th>Частота</th><th style="min-width:180px">График</th><th>Последнее</th>
-          </tr></thead>
-          <tbody>${sorted_freq.map(c => `<tr>
-            <td style="font-weight:600"><a href="#/config/${c.id}" onclick="navigate('/config/${c.id}')" style="color:var(--accent)">${c.name}</a></td>
-            <td style="font-family:var(--mono);font-size:13px">~${c.avg_update_days} дн.</td>
-            <td><div class="freq-bar-wrap"><div class="freq-bar" style="width:${Math.round(c.avg_update_days/max_freq*140)}px;${c.avg_update_days<=40?'background:var(--green)':c.avg_update_days<=80?'background:var(--yellow)':'background:var(--text-light)'}"></div></div></td>
-            <td style="font-size:13px;color:var(--text-muted)">${fmt_date(c.latestDate)}</td>
-          </tr>`).join('')}</tbody>
-        </table>
-      </div>
-    </div>` : ''}
+    <div class="fade-up fade-up-1">
+      <div class="st-section">Платформа и актуальность</div>
+      <div class="st-grid">${platform_card_html()}${freshness_card_html()}</div>
+      ${platform_check_html()}
+      <div class="st-section">Что впереди</div>
+      <div class="st-grid">${calendar_card_html()}<div id="st-a-85">${plat85_card_html(STATS_MORE)}</div></div>
+      <div class="st-section">Динамика релизов</div>
+      <div class="st-grid"><div id="st-a-years">${years_card_html(STATS_MORE)}</div><div id="st-a-wd">${weekdays_card_html(STATS_MORE)}</div></div>
+      <div class="st-section">Экосистема</div>
+      <div class="st-grid">${lines_card_html()}${vendors_card_html()}</div>
+      <div class="st-grid">${industries_card_html()}${trans_card_html(STATS_MORE)}</div>
+      <div class="st-section">Цепочки и частота</div>
+      <div class="st-grid">${chains_card_html(STATS_MORE)}${freq_card_html()}</div>
+    </div>
   </div>`;
 }
 

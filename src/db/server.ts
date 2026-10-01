@@ -11,6 +11,8 @@
  *   (config=<metadata name> is still accepted on the calls above, but names
  *    are not unique — prefer config_id.)
  *   GET  /api/stats                        -> import/run summary
+ *   GET  /api/stats/more                   -> release activity, 8.5 adoption, chains, transitions
+ *   GET  /api/platform-check?p=8.3.24.1691 -> which latest releases this platform takes
  *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
  *   GET  /*                                -> static UI (public/)
@@ -45,6 +47,7 @@ import { configurations, updateEdges, importRuns, patches, settings, releaseProj
 import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus } from "./caddy.js";
 import { TAGS, refreshTags, setManualTags } from "./tags.js";
+import { moreStats, platformCheck } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
@@ -855,6 +858,14 @@ export async function buildServer() {
       out: list.filter((r) => Number(r.from_config_id) === cfg.id),
       in: list.filter((r) => Number(r.to_config_id) === cfg.id),
     };
+  });
+
+  app.get("/api/stats/more", async () => moreStats());
+
+  app.get("/api/platform-check", async (req, reply) => {
+    const rows = await platformCheck(String((req.query as any).p ?? ""));
+    if (!rows) return reply.code(400).send({ error: "platform: 8.3.24 or 8.3.24.1691" });
+    return rows;
   });
 
   app.get("/api/tags", async () =>
