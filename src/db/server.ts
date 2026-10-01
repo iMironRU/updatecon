@@ -596,7 +596,7 @@ export async function buildServer() {
          FROM template_tags t
          WHERE t.template_key = c.template_key AND t.tag <> '') AS tags,
         c.group_name, c.region, c.next_release_version, c.next_release_planned_date, c.next_release_plan_updated,
-        rp.info_url, rp.bugs_url,
+        rp.info_url, rp.bugs_url, rp.lts_version, rp.lts_until,
         -- kinds of "переходы" available FROM this edition: product | edition
         (SELECT coalesce(array_agg(DISTINCT t.kind), '{}') FROM transitions t
           WHERE t.from_config_id = c.id) AS trans_out,

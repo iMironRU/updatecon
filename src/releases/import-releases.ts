@@ -374,6 +374,8 @@ export async function runReleasesImport(
       nextReleaseVersion: p.nextReleaseVersion ?? null,
       nextReleasePlannedDate: p.nextReleasePlannedDate ?? null,
       nextReleasePlanUpdated: p.nextReleasePlanUpdated ?? null,
+      ltsVersion: p.ltsVersion ?? null,
+      ltsUntil: p.ltsUntil ?? null,
       lastSeenAt: seenAt,
     };
     await db.insert(releaseProjects)

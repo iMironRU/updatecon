@@ -12,6 +12,8 @@ export interface ReleasesConfig {
   nextReleaseVersion?: string;    // "3.0.209"
   nextReleasePlannedDate?: string; // "Ноябрь 2026"
   nextReleasePlanUpdated?: string; // "2026-04-01"
+  ltsVersion?: string;            // "11.5.27.93" — current build of the long-term support branch
+  ltsUntil?: string;              // "2027-04-30" — end of long-term support
 }
 
 export interface VersionRow {
@@ -85,9 +87,21 @@ export function parseTotalPage(html: string): ReleasesConfig[] {
     const displayName = hrefMatch[2].trim();
     const groupName = groupMap.get(groupId) ?? "";
 
-    // Latest version (link to version_files)
-    const latestVerMatch = row.match(/version_files\?nick=[^&]+&ver=([^"]+)/);
-    const latestVersion = latestVerMatch?.[1] ?? "";
+    // Current versions: the "actual" cell may list several — a long-term
+    // support build marked <abbr title="Длительная поддержка до 30.04.27">ДП</abbr>
+    // next to the main one (УТ: 11.5.27.93 ДП + 11.6.1.64). Latest = the highest.
+    const actualCell = row.match(/class="versionColumn actualVersionColumn"[^>]*>([\s\S]*?)<\/td>/);
+    const actual: string[] = [];
+    let ltsVersion: string | undefined, ltsUntil: string | undefined;
+    for (const m of (actualCell?.[1] ?? "").matchAll(
+      /ver=([0-9.]+)"[^>]*>[^<]*<\/a>\s*(?:<sup>[\s\S]*?title="Длительная поддержка до ([0-9.]+)")?/g)) {
+      actual.push(m[1]);
+      if (m[2]) { ltsVersion = m[1]; ltsUntil = parseDate(m[2]) ?? undefined; }
+    }
+    const fallback = row.match(/version_files\?nick=[^&]+&ver=([^"]+)/)?.[1];
+    const latestVersion = actual.length
+      ? actual.reduce((a, b) => (cmpLoose(b, a) > 0 ? b : a))
+      : fallback ?? "";
 
     // Latest release date (first releaseDate cell)
     const relDateMatch = row.match(/class="releaseDate[^"]*"[^>]*>\s*([0-9]{1,2}\.[0-9]{2}\.[0-9]{2,4})/);
@@ -131,6 +145,8 @@ export function parseTotalPage(html: string): ReleasesConfig[] {
       nextReleaseVersion,
       nextReleasePlannedDate,
       nextReleasePlanUpdated,
+      ltsVersion,
+      ltsUntil,
     });
   }
 

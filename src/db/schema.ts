@@ -99,6 +99,10 @@ export const releaseProjects = pgTable(
     infoUrl: text("info_url"),
     // "Каталог ошибок продукта" — bugboard.v8.1c.ru/project/<code>.html
     bugsUrl: text("bugs_url"),
+    // Long-term support ("ДП") branch from /total: the current ДП build
+    // ("11.5.27.93"; the branch is its first three segments) and its end date.
+    ltsVersion: text("lts_version"),
+    ltsUntil: date("lts_until"),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

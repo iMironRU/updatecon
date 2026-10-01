@@ -131,6 +131,12 @@ input, select, textarea { font-family: inherit; }
 .sol-val a { color: var(--accent); }
 .sol-src { font-size: 11px; color: var(--text-light); }
 .badge-trans { background: var(--purple-dim); color: var(--purple); }
+.badge-lts { background: var(--yellow-dim); color: var(--yellow); font-weight: 700; }
+.badge-lts.ended { background: var(--surface3); color: var(--text-muted); font-weight: 600; }
+.lts-quick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -2px 0 12px; font-size: 13px; color: var(--text-muted); }
+.lts-quick button { background: none; border: 1px dashed var(--border-strong); border-radius: 99px; padding: 3px 10px;
+  font: inherit; font-size: 12px; color: var(--text); cursor: pointer; }
+.lts-quick button:hover { border-color: var(--accent); color: var(--accent); }
 .trans-list { display: grid; gap: 6px; }
 .trans-item { font-size: 14px; }
 .trans-item a { color: var(--accent); font-weight: 600; }
@@ -543,6 +549,10 @@ function adapt_config(row) {
       tasks: row.sol_tasks || [], editions: row.sol_editions || [], phone: row.sol_phone || '', email: row.sol_email || '',
     },
     transOut: row.trans_out || [],   // kinds of "переходы" from this edition: 'product' | 'edition'
+    // Long-term support ("ДП") branch: its current build, line (first 3 segments), end date.
+    ltsVersion: row.lts_version || '',
+    ltsLine: row.lts_version ? row.lts_version.split('.').slice(0, 3).join('.') : '',
+    ltsUntil: row.lts_until || '',
     vendorName: clean_vendor((row.sol_developers || []).length ? row.sol_developers.join(', ') : row.vendor),
     nick,
     name: displayName,
@@ -622,7 +632,8 @@ async function loadVersionsForConfig(cfgId) {
       const cfuPath = cfg._cfu[v] || '';
       const dlIts = cfuPath ? 'https://downloads.v8.1c.ru/tmplts/' + cfuPath : '';
       const sizeBytes = m.file_size_bytes || 0;
-      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: null, dl, dlIts };
+      const lts = !!(cfg.ltsLine && (v === cfg.ltsLine || v.startsWith(cfg.ltsLine + '.')));
+      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: null, dl, dlIts, lts };
     });
     if (cfg.versions.length && !cfg.latestV) {
       cfg.latestV = cfg.versions[0].v;
@@ -762,6 +773,13 @@ var PLATFORM_NEWEST = '8.5';
 function platform_cmp(a, b) {   // '8.5' > '8.3' > '8.2' > '8.1'
   var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
   return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+}
+function lts_ended(c) { return c.ltsUntil && new Date(c.ltsUntil) < new Date(new Date().toDateString()); }
+function lts_badge(c) {
+  if (!c.ltsVersion) return '';
+  return '<span class="badge badge-lts' + (lts_ended(c) ? ' ended' : '') + '" title="Ветка длительной поддержки '
+    + esc_html(c.ltsLine) + '.x (сейчас ' + esc_html(c.ltsVersion) + ')' + (lts_ended(c) ? ' — поддержка завершена' : '') + '">ДП до '
+    + fmt_date(c.ltsUntil) + '</span>';
 }
 function trans_badge(c) {
   if (!c.transOut.length) return '';
@@ -1266,7 +1284,7 @@ function catalog_state(params) {
   const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
   return {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
-    platforms: list('plat'), trans: list('trans'), regions: list('region'), orgs: list('org'), types: list('type'),
+    platforms: list('plat'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
     vendors: list('vendor'), legacy: params.legacy === '1', sort: params.sort || 'date_desc',
     vendorQuery: '', vendorsAll: false, industriesAll: false, panelOpen: false,
   };
@@ -1277,6 +1295,7 @@ function catalog_sync_url() {
   add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
   add('plat', CAT.platforms.join(CAT_SEP)); add('ind', CAT.industries.join(CAT_SEP));
   add('task', CAT.tasks.join(CAT_SEP)); add('org', CAT.orgs.join(CAT_SEP)); add('trans', CAT.trans.join(CAT_SEP));
+  add('lts', CAT.lts.join(CAT_SEP));
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
@@ -1293,6 +1312,7 @@ const CAT_FACETS = {
   levels:  (c, v) => v.includes(c.level),
   platforms: (c, v) => v.includes(c.platform),
   trans:   (c, v) => c.transOut.some(k => v.includes(k)),
+  lts:     (c, v) => !!c.ltsVersion && !lts_ended(c) && v.includes('yes'),
   regions: (c, v) => c.allRegions || c.regions.some(r => v.includes(r)),   // "Для всех стран" fits any region
   industries: (c, v) => c.sol.industries.some(x => v.includes(x)),
   tasks:   (c, v) => c.sol.tasks.some(x => v.includes(x)),
@@ -1341,6 +1361,7 @@ function render_catalog() {
         <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
         <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms"></div></div>
         <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Длительная поддержка</div><div id="f-lts"></div></div>
         <div class="filter-group"><div class="filter-group-label">Переход обновлением</div><div id="f-trans"></div></div>
         <div class="filter-group"><div class="filter-group-label">Регион</div><div id="f-regions"></div></div>
         <div class="filter-group" id="g-orgs"><div class="filter-group-label">Для кого</div><div id="f-orgs"></div></div>
@@ -1391,6 +1412,7 @@ function config_card_html(c) {
         ${tag_chips(c)}
         ${level_badge(c)}
         ${platform_badge(c)}
+        ${lts_badge(c)}
         ${trans_badge(c)}
         ${type_badge(c.type)}
         ${c.status !== 'active' ? status_badge(c.status) : ''}
@@ -1461,6 +1483,9 @@ function render_facets() {
   set('f-platforms', [...platCnt.keys()].sort((a, b) => platform_cmp(b, a))
     .map(p => facet_opt('platforms', p, p === PLATFORM_NEWEST ? p + ' — новая' : p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + ' — по последней версии конфигурации'))
     .join('') || '<div class="filter-opt is-empty">нет данных</div>');
+
+  const ltsCnt = catalog_filter(base, 'lts').filter(c => c.ltsVersion && !lts_ended(c)).length;
+  set('f-lts', facet_opt('lts', 'yes', 'есть ветка ДП', ltsCnt, 'Версия с длительной поддержкой (ДП) параллельно основной ветке'));
 
   const trCnt = count_by(catalog_filter(base, 'trans'), c => c.transOut);
   // "на новую редакцию" starts from older editions — hidden unless they are shown.
@@ -1543,6 +1568,7 @@ function render_summary(found) {
   CAT.tasks.forEach(v => chip('tasks', v, v));
   CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
   CAT.platforms.forEach(v => chip('platforms', v, 'Платформа ' + v));
+  if (CAT.lts.length) chip('lts', 'yes', 'Ветка ДП');
   CAT.trans.forEach(v => chip('trans', v, v === 'edition' ? 'Переход на новую редакцию' : 'Переход на другой продукт'));
   CAT.regions.forEach(v => chip('regions', v, v === 'all' ? 'Для всех стран' : region_label(v)));
   CAT.orgs.forEach(v => chip('orgs', v, v));
@@ -1553,7 +1579,7 @@ function render_summary(found) {
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
   const active = CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
-    + CAT.levels.length + CAT.platforms.length + CAT.trans.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
+    + CAT.levels.length + CAT.platforms.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
   const done = document.getElementById('filters-done');
@@ -1642,6 +1668,7 @@ function render_config(id) {
         <span class="version-date">${ver.date ? fmt_date(ver.date) : '—'}</span>
         <div class="version-tags">
           ${ver.req ? `<span class="badge badge-orange">Обязательный</span>` : ''}
+          ${ver.lts ? `<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>` : ''}
         </div>
         ${ver.plat ? `<span class="version-size" style="margin-left:auto;font-family:var(--mono);font-size:11px">≥ ${ver.plat}</span>` : ''}
       </div>
@@ -1674,7 +1701,7 @@ function render_config(id) {
       <div class="config-detail-info">
         <div class="config-detail-name">${cfg.name}</div>
         <div class="config-detail-sub">${esc_html(cfg.vendorName)}${cfg.edition ? ' · Редакция ' + cfg.edition : ''}</div>
-        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${trans_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
+        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${lts_badge(cfg)} ${trans_badge(cfg)} ${type_badge(cfg.type)} ${status_badge(cfg.status)}
           ${cfg.region && cfg.region !== 'ru' ? '<span class="badge badge-gray">' + region_label(cfg.region) + '</span>' : ''}
         </div>
         ${editions_nav_html(cfg)}
@@ -1686,6 +1713,7 @@ function render_config(id) {
           <div><div class="meta-item-label">Дата выхода</div><div class="meta-item-value">${fmt_date(latest?.date)}</div></div>
           <div><div class="meta-item-label">Мин. платформа</div><div class="meta-item-value mono">${latest?.plat || (cfg.platform_min !== '—' ? cfg.platform_min : '') || (cfg.platform ? cfg.platform + '.x' : '—')}</div></div>
           ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${cfg.nextReleaseVersion}${cfg.nextReleasePlannedDate ? ' <span style="font-weight:400;color:var(--text-muted)">·</span> ' + cfg.nextReleasePlannedDate : ''}${cfg.nextReleasePlanUpdated ? ' <span style="font-weight:400;font-size:11px;color:var(--text-muted)">обновлено ' + fmt_date(cfg.nextReleasePlanUpdated) + '</span>' : ''}</div></div>` : ''}
+          ${cfg.ltsVersion ? `<div><div class="meta-item-label">Ветка ДП</div><div class="meta-item-value mono">${esc_html(cfg.ltsLine)}.x <span style="font-weight:400;color:var(--text-muted)">· до ${fmt_date(cfg.ltsUntil)}${lts_ended(cfg) ? ' (завершена)' : ''}</span></div></div>` : ''}
           ${cfg.avg_update_days ? `<div><div class="meta-item-label">Частота обновлений</div><div class="meta-item-value">~${cfg.avg_update_days} дн.</div></div>` : ''}
           <div><div class="meta-item-label">Всего версий</div><div class="meta-item-value">${cfg.versions.length || cfg.version_count || '—'}</div></div>
         </div>
@@ -1709,16 +1737,17 @@ function render_config(id) {
           <div class="field" style="margin:0">
             <label class="label">Из версии</label>
             <select class="select input-mono" id="cfg-from-ver">
-              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===cfg.versions.length-1?' selected':''}>${v.v}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
+              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===cfg.versions.length-1?' selected':''}>${v.v}${v.lts ? ' · ДП' : ''}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
             </select>
           </div>
           <div class="field" style="margin:0">
             <label class="label">До версии</label>
             <select class="select input-mono" id="cfg-to-ver">
-              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===0?' selected':''}>${v.v}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
+              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===0?' selected':''}>${v.v}${v.lts ? ' · ДП' : ''}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
             </select>
           </div>
         </div>
+        ${lts_quick_html(cfg, id)}
         <button class="btn btn-primary" onclick="cfg_do_chain('${id}')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
           Построить цепочку
@@ -1824,6 +1853,28 @@ function render_patches(cfgId, verIdx, patchList) {
 function show_more_versions() {
   document.querySelectorAll('.hidden-version').forEach(el => el.classList.remove('hidden-version'));
   document.getElementById('ver-show-more')?.remove();
+}
+// Two targets when the edition has a long-term support branch: stay on it, or
+// move to the main line. Both are ordinary chains inside one edition.
+function lts_quick_html(cfg, id) {
+  if (!cfg.ltsLine || !cfg.versions.length) return '';
+  const ltsLast = cfg.versions.find(v => v.lts);           // versions are newest first
+  const mainLast = cfg.versions.find(v => !v.lts && platform_cmp_v(v.v, cfg.ltsLine) > 0);
+  if (!ltsLast) return '';
+  return `<div class="lts-quick">Целевая версия:
+    <button onclick="cfg_pick_target('${id}','${ltsLast.v}')" title="Остаться на ветке длительной поддержки ${esc_html(cfg.ltsLine)}">до последней ДП ${ltsLast.v}</button>
+    ${mainLast ? `<button onclick="cfg_pick_target('${id}','${mainLast.v}')" title="Перейти на основную ветку">до последней основной ${mainLast.v}</button>` : ''}
+  </div>`;
+}
+function platform_cmp_v(a, b) {   // numeric compare of dotted versions
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
+}
+function cfg_pick_target(id, v) {
+  const toEl = document.getElementById('cfg-to-ver');
+  if (toEl) toEl.value = v;
+  cfg_do_chain(id);
 }
 function cfg_build_from_ver(cfgId, fromV) {
   const fromEl = document.getElementById('cfg-from-ver');
