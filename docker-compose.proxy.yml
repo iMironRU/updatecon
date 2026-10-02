@@ -1,3 +1,10 @@
+# Апдейкон за внешним обратным прокси (Nginx Proxy Manager, nginx, Traefik…):
+# своего Caddy нет, порты 80/443 остаются прокси. Выбирается в deploy.sh
+# (вариант 2), который пишет в .env:
+#   COMPOSE_FILE=docker-compose.proxy.yml   — docker compose сам берёт этот файл
+#   PROXY_NETWORK=<сеть прокси>             — прокси в Docker: веб в его сети как updatecon:3000
+#   WEB_PORT=3000                           — прокси на хосте: http://127.0.0.1:3000
+# HTTPS и домен настраиваются в прокси; админка это знает (CADDY_API=off).
 services:
   db:
     image: postgres:16-alpine
@@ -13,22 +20,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - web
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    # Admin API on :2019 is intentionally NOT exposed to the host —
-    # only the web container calls it over the internal Docker network.
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
   web:
     image: ghcr.io/imironru/updatecon:latest
@@ -44,14 +36,17 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
       ITS_LOGIN: ${ITS_LOGIN:-}
       ITS_PASSWORD: ${ITS_PASSWORD:-}
-      # Internal Caddy Admin API (resolved over Docker compose network)
-      CADDY_API: ${CADDY_API:-http://caddy:2019}
-      # 1 = deploy.sh installed the nightly app update (shown in the admin UI)
+      CADDY_API: "off"
       AUTO_UPDATE: ${AUTO_UPDATE:-0}
-    # No host port exposed — all traffic goes through Caddy on :80/:443.
-    # For direct access without Caddy (dev/debug), add to docker-compose.override.yml:
-    #   ports: ["3000:3000"]
+    # Only for a proxy on this host; not reachable from outside.
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    networks:
+      default: {}
+      proxy:
+        aliases: [updatecon]
     command: ["node", "dist/db/server.js"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
   worker:
     image: ghcr.io/imironru/updatecon:latest
@@ -64,17 +59,18 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-upd}:${POSTGRES_PASSWORD:-upd}@db:5432/${POSTGRES_DB:-upd}
       ITS_LOGIN: ${ITS_LOGIN:-}
       ITS_PASSWORD: ${ITS_PASSWORD:-}
-      # Optional dev replay instead of ITS:
       LST_FILE: ${LST_FILE:-}
-      # Import schedule (cron). Default: every day at 04:00.
       IMPORT_CRON: ${IMPORT_CRON:-0 4 * * *}
-      # Run one import immediately on container start (1 = yes).
       IMPORT_ON_START: ${IMPORT_ON_START:-1}
     volumes:
       - ${LST_HOST_DIR:-./data}:/data:ro
     command: ["node", "dist/db/worker.js"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-updatecon-proxy}

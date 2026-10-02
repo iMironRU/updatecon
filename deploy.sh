@@ -3,6 +3,13 @@
 #
 #   bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/deploy.sh)
 #
+# Два варианта:
+#   1) отдельный сервер — свой Caddy на 80/443 сам получает HTTPS (docker-compose.yml);
+#   2) за уже работающим прокси (Nginx Proxy Manager, nginx, Traefik) — без Caddy,
+#      веб в Docker-сети прокси и на 127.0.0.1 (docker-compose.proxy.yml, COMPOSE_FILE в .env).
+# По желанию — ночное автообновление приложения (/etc/cron.d/updatecon → update.sh).
+# Без учётки ИТС база берётся из готового снимка на GitHub (воркер, src/db/snapshot.ts).
+#
 # Повторный запуск безопасен: .env и данные не трогаются.
 
 set -euo pipefail
@@ -93,20 +100,54 @@ echo -e "${CYAN}  ────────────────────�
 echo
 
 if $IS_FRESH; then
-  # Внешний порт
+  # Как сайт будет открываться снаружи
+  DEFAULT_MODE=1
+  { port_free 80 && port_free 443; } || DEFAULT_MODE=2
+  echo -e "  ${BOLD}Как сайт будет открываться снаружи?${NC}"
+  echo    "    1) Апдейкон сам получит HTTPS — свой Caddy на портах 80/443 (отдельный сервер)"
+  echo    "    2) За уже работающим прокси — Nginx Proxy Manager, nginx, Traefik (80/443 заняты им)"
+  [ "$DEFAULT_MODE" = 2 ] && warn "  Порты 80/443 уже заняты — подходит вариант 2."
   while true; do
-    read -rp "  Внешний порт сайта [80]: " WEB_PORT_INPUT
-    WEB_PORT_INPUT="${WEB_PORT_INPUT:-80}"
-    if ! [[ "$WEB_PORT_INPUT" =~ ^[0-9]+$ ]] || [ "$WEB_PORT_INPUT" -lt 1 ] || [ "$WEB_PORT_INPUT" -gt 65535 ]; then
-      warn "  Некорректный порт, введите число от 1 до 65535."
-      continue
-    fi
-    if ! port_free "$WEB_PORT_INPUT"; then
-      warn "  Порт $WEB_PORT_INPUT занят. Выберите другой."
-      continue
-    fi
-    break
+    read -rp "  Вариант [$DEFAULT_MODE]: " MODE_INPUT
+    MODE_INPUT="${MODE_INPUT:-$DEFAULT_MODE}"
+    case "$MODE_INPUT" in
+      1) if port_free 80 && port_free 443; then PROXY_MODE=caddy; break; fi
+         warn "  Порты 80/443 заняты — Caddy их не получит. Выберите 2 или освободите порты." ;;
+      2) PROXY_MODE=proxy; break ;;
+      *) warn "  Введите 1 или 2." ;;
+    esac
   done
+
+  if [ "$PROXY_MODE" = caddy ]; then
+    WEB_PORT_INPUT=80          # Caddy: 80/443, домен и сертификат — в админке
+  else
+    # Прокси в Docker (NPM, Traefik): веб подключится к его сети как updatecon:3000.
+    PROXY_NET_DEFAULT="updatecon-proxy"
+    if command -v docker >/dev/null 2>&1; then
+      PC="$(docker ps --filter publish=443 --format '{{.Names}}' 2>/dev/null | head -1 || true)"
+      if [ -n "$PC" ]; then
+        PN="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$PC" 2>/dev/null \
+              | tr ' ' '\n' | grep -vE '^(bridge|host|none)?$' | head -1 || true)"
+        [ -n "$PN" ] && { PROXY_NET_DEFAULT="$PN"; echo "  Найден прокси в Docker: ${BOLD}$PC${NC}, сеть ${BOLD}$PN${NC}"; }
+      fi
+    fi
+    while true; do
+      read -rp "  Docker-сеть прокси [$PROXY_NET_DEFAULT]: " PROXY_NET
+      PROXY_NET="${PROXY_NET:-$PROXY_NET_DEFAULT}"
+      [[ "$PROXY_NET" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] && break
+      warn "  Имя сети: латиница, цифры, _ . -"
+    done
+    # Прокси на самом хосте (nginx, apache): http://127.0.0.1:<порт>
+    while true; do
+      read -rp "  Локальный порт для прокси на этом сервере (127.0.0.1) [3000]: " WEB_PORT_INPUT
+      WEB_PORT_INPUT="${WEB_PORT_INPUT:-3000}"
+      if ! [[ "$WEB_PORT_INPUT" =~ ^[0-9]+$ ]] || [ "$WEB_PORT_INPUT" -lt 1 ] || [ "$WEB_PORT_INPUT" -gt 65535 ]; then
+        warn "  Некорректный порт, введите число от 1 до 65535."; continue
+      fi
+      port_free "$WEB_PORT_INPUT" || { warn "  Порт $WEB_PORT_INPUT занят. Выберите другой."; continue; }
+      break
+    done
+  fi
 
   # Логин администратора
   read -rp "  Логин администратора [admin]: " ADMIN_LOGIN
@@ -121,26 +162,38 @@ if $IS_FRESH; then
 
   # ИТС (необязательно)
   echo
-  echo -e "  ${YELLOW}ИТС-кредиты${NC} нужны для авто-синхронизации с 1С (необязательно)."
-  echo   "  Оставьте пустыми — можно задать позже в .env."
+  echo -e "  ${YELLOW}Учётка ИТС${NC} нужна, чтобы сервер сам собирал данные с сайтов 1С (необязательно)."
+  echo   "  Без неё база берётся из готового снимка на GitHub и обновляется каждую ночь."
+  echo   "  Учётку можно задать позже в админке: Настройки → Доступ к ИТС."
   read -rp "  Логин ИТС (Enter — пропустить): " ITS_LOGIN_INPUT
   ITS_PW_INPUT=""
   if [ -n "$ITS_LOGIN_INPUT" ]; then
     read -rsp "  Пароль ИТС: " ITS_PW_INPUT; echo
   fi
 
+  # Ночное автообновление приложения
+  echo
+  read -rp "  Обновлять Апдейкон автоматически каждую ночь (в 3:30)? [Y/n]: " AUTO_UP
+  AUTO_UP="${AUTO_UP:-Y}"
+
   # Восстановить дамп?
   RESTORE_SEED="n"
   if [ -f "$SEED_FILE" ]; then
     echo
-    read -rp "  Восстановить начальный дамп данных (603 конфигурации 1С)? [Y/n]: " RESTORE_SEED
+    read -rp "  Сразу загрузить начальный дамп данных (дальше — свежий снимок с GitHub)? [Y/n]: " RESTORE_SEED
     RESTORE_SEED="${RESTORE_SEED:-Y}"
   fi
 
   # Сводка
   echo
   echo -e "${CYAN}  ┌─ Параметры установки ─────────────────${NC}"
-  echo -e "  │  Внешний порт:  ${BOLD}$WEB_PORT_INPUT${NC}"
+  if [ "$PROXY_MODE" = caddy ]; then
+    echo -e "  │  Режим:         ${BOLD}свой Caddy (80/443)${NC}"
+  else
+    echo -e "  │  Режим:         ${BOLD}за прокси, сеть $PROXY_NET${NC}"
+    echo -e "  │  Локальный порт:${BOLD} 127.0.0.1:$WEB_PORT_INPUT${NC}"
+  fi
+  echo -e "  │  Автообновление:${BOLD} $( [[ "$AUTO_UP" =~ ^[Yy] ]] && echo "да, каждую ночь" || echo "нет" )${NC}"
   echo -e "  │  Логин admin:   ${BOLD}$ADMIN_LOGIN${NC}"
   echo -e "  │  Логин ИТС:     ${BOLD}${ITS_LOGIN_INPUT:-не задан}${NC}"
   echo -e "  │  Восст. дамп:   ${BOLD}$( [[ "$RESTORE_SEED" =~ ^[Yy] ]] && echo "да" || echo "нет" )${NC}"
@@ -151,6 +204,8 @@ if $IS_FRESH; then
 else
   warn ".env уже существует — конфигурация не изменяется."
   WEB_PORT_INPUT="$(grep -E '^WEB_PORT=' .env | cut -d= -f2 || echo 3000)"
+  PROXY_NET="$(grep -E '^PROXY_NETWORK=' .env | cut -d= -f2 || true)"
+  grep -qE '^COMPOSE_FILE=docker-compose.proxy.yml' .env && PROXY_MODE=proxy || PROXY_MODE=caddy
   echo
 fi
 
@@ -186,7 +241,37 @@ if $IS_FRESH; then
     sed -i "s/^ITS_LOGIN=.*/ITS_LOGIN=${ITS_LOGIN_INPUT}/"       .env
     sed -i "s/^ITS_PASSWORD=.*/ITS_PASSWORD=${ITS_PW_INPUT}/"    .env
   }
+  if [ "$PROXY_MODE" = proxy ]; then
+    sed -i "s|^CADDY_API=.*|CADDY_API=off|" .env
+    { echo; echo "# ── Режим «за внешним прокси» (deploy.sh) ──"
+      echo "COMPOSE_FILE=docker-compose.proxy.yml"
+      echo "PROXY_NETWORK=${PROXY_NET}"; } >> .env
+  fi
+  [[ "${AUTO_UP:-n}" =~ ^[Yy] ]] && echo "AUTO_UPDATE=1" >> .env
   log ".env создан"
+fi
+
+# Прокси в Docker видит веб через общую сеть; если её ещё нет — создаём
+# (прокси на хосте её не использует, ему хватает 127.0.0.1:WEB_PORT).
+if [ "${PROXY_MODE:-caddy}" = proxy ] && [ -n "${PROXY_NET:-}" ]; then
+  docker network inspect "$PROXY_NET" >/dev/null 2>&1 \
+    || { docker network create "$PROXY_NET" >> "$LOG_FILE" 2>&1 && log "Создана Docker-сеть $PROXY_NET — подключите к ней прокси"; }
+fi
+
+# Ночное автообновление: свежий update.sh из репозитория, затем образ и compose.
+if $IS_FRESH && [[ "${AUTO_UP:-n}" =~ ^[Yy] ]]; then
+  if [ -w /etc/cron.d ]; then
+    cat > /etc/cron.d/updatecon <<CRON
+# Апдейкон: ночное обновление приложения (deploy.sh). Удалите файл, чтобы отключить.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 3 * * * root curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/update.sh -o /tmp/updatecon-update.sh && UPDATECON_DIR="$(pwd)" bash /tmp/updatecon-update.sh >> /var/log/updatecon-update.log 2>&1
+CRON
+    chmod 644 /etc/cron.d/updatecon
+    log "Автообновление включено: каждую ночь в 3:30 (/etc/cron.d/updatecon)"
+  else
+    warn "Нет прав на /etc/cron.d — автообновление не включено (запустите установку от root)"
+  fi
 fi
 
 mkdir -p data
@@ -270,8 +355,15 @@ PORT_SUFFIX="$( [ "$PORT" = "80" ] && echo "" || echo ":$PORT" )"
 echo
 echo -e "${GREEN}${BOLD}  ✓  Апдейкон успешно запущен!${NC}"
 echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
-echo -e "  ${BOLD}Сайт:${NC}     ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/${NC}"
-echo -e "  ${BOLD}Админка:${NC}  ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/admin${NC}"
+if [ "${PROXY_MODE:-caddy}" = proxy ]; then
+  echo -e "  ${BOLD}Добавьте в прокси хост${NC} (свой домен → Апдейкон):"
+  echo -e "    прокси в Docker-сети ${BOLD}${PROXY_NET}${NC}:  ${GREEN}http://updatecon:3000${NC}"
+  echo -e "    прокси на этом сервере:           ${GREEN}http://127.0.0.1:${PORT}${NC}"
+  echo -e "  HTTPS-сертификат выпускает прокси. Затем: ${GREEN}https://<домен>/admin${NC}"
+else
+  echo -e "  ${BOLD}Сайт:${NC}     ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/${NC}"
+  echo -e "  ${BOLD}Админка:${NC}  ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/admin${NC}  (домен и HTTPS — в Настройках)"
+fi
 echo -e "  ${BOLD}Логин:${NC}    ${YELLOW}${ADMIN_SHOW}${NC}"
 echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
 echo -e "  ${BOLD}Команды управления:${NC}"

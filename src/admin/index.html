@@ -402,13 +402,31 @@ tr.run-all td { background: rgba(88,166,255,.05); }
   <!-- SETTINGS -->
   <div id="page-settings" class="page">
 
+    <!-- ── App version vs the repository ─────────────────────────────────── -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><span class="card-title">Версия приложения</span><span class="src-badge" id="ver-badge"></span></div>
+      <div class="card-body" id="ver-body" style="font-size:13px;line-height:1.7;color:var(--muted)">Проверяем…</div>
+    </div>
+
     <!-- ── HTTPS / Domain ─────────────────────────────────────────────────── -->
     <div class="card" style="margin-bottom:20px">
       <div class="card-header">
         <span class="card-title">Домен и HTTPS</span>
         <span id="ssl-status-badge" style="margin-left:auto;font-size:12px"></span>
       </div>
-      <div class="card-body">
+      <!-- Installed behind an external proxy (deploy.sh option 2): no Caddy here. -->
+      <div class="card-body" id="ssl-external" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:12px">
+          Апдейкон установлен за внешним обратным прокси (Nginx Proxy Manager, nginx, Traefik):
+          домен и HTTPS-сертификат настраиваются в нём, своего Caddy здесь нет.
+        </div>
+        <div style="font-size:13px;line-height:1.8">
+          Сейчас вы открыли админку как <b id="ssl-seen" style="font-family:var(--mono)">—</b><br>
+          Адрес Апдейкона для прокси: <span style="font-family:var(--mono)">http://updatecon:3000</span> (в Docker-сети прокси)
+          или <span style="font-family:var(--mono)">http://127.0.0.1:&lt;WEB_PORT&gt;</span> (прокси на этом сервере).
+        </div>
+      </div>
+      <div class="card-body" id="ssl-caddy">
         <div class="alert alert-info" style="margin-bottom:18px">
           Введите домен — Caddy автоматически получит сертификат Let's Encrypt и настроит редирект HTTP → HTTPS.
           Домен должен уже указывать на этот сервер (DNS A-запись).
@@ -528,7 +546,7 @@ function show(page) {
   if (page === 'import') loadSnapshotInfo();
   if (page === 'match') loadMatch();
   if (page === 'tags') loadTags();
-  if (page === 'settings') { loadSettings(); loadSslStatus(); }
+  if (page === 'settings') { loadSettings(); loadSslStatus(); loadVersion(); }
 }
 
 function logout() {
@@ -1141,10 +1159,45 @@ async function refreshTagsNow() {
   }
 }
 
+// ── App version ──────────────────────────────────────────────────────────────
+function plural(n, one, few, many) { var a = n % 10, b = n % 100; return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 10 || b >= 20) ? few : many; }
+async function loadVersion() {
+  var body = document.getElementById('ver-body'), badge = document.getElementById('ver-badge');
+  try {
+    var v = await apiFetch('/admin/api/version');
+    var r = v.running || {}, l = v.latest;
+    var isSha = /^[0-9a-f]{7,}$/.test(r.commit || '');
+    var html = 'Установлена: <b style="color:var(--text);font-family:var(--mono)">' + esc(r.commit || 'dev') + '</b>' +
+      (r.date && !isNaN(Date.parse(r.date)) ? ' от ' + fmtDate(r.date) : isSha ? '' : ' (локальная сборка)') + '<br>';
+    var state = !l ? 'unknown' : l.behind === 0 ? 'latest' : l.behind > 0 ? 'behind' : 'unknown';
+    if (!l) html += 'Не удалось проверить репозиторий на GitHub.<br>';
+    else if (state === 'latest') { html += '<span style="color:var(--green)">✓ Это последняя версия.</span><br>'; }
+    else if (state === 'unknown') {
+      html += 'Последняя в репозитории: <b style="color:var(--text);font-family:var(--mono)">' + esc(l.sha) + '</b> от ' + fmtDate(l.date) +
+        ' — сравнить с установленной не удалось.<br>';
+    } else {
+      html += 'В репозитории новее' + (l.behind ? ' на ' + l.behind + ' ' + plural(l.behind, 'коммит', 'коммита', 'коммитов') : '') +
+        ': <b style="color:var(--text);font-family:var(--mono)">' + esc(l.sha) + '</b> от ' + fmtDate(l.date) + ' — ' + esc(l.message) + '<br>';
+    }
+    html += v.autoUpdate
+      ? 'Автообновление включено: каждую ночь в 3:30 подтягивается новая версия, затем воркер берёт свежую базу.'
+      : 'Автообновление выключено. Обновить: <span style="font-family:var(--mono)">bash update.sh</span> в папке установки ' +
+        '(или включите его, переустановив через deploy.sh).';
+    body.innerHTML = html;
+    badge.className = 'src-badge ' + (state === 'behind' ? 'none' : state === 'latest' ? 'admin' : 'env');
+    badge.textContent = { latest: 'актуальна', behind: 'есть обновление', unknown: '' }[state];
+  } catch (e) { body.textContent = 'Не удалось получить версию.'; }
+}
+
 // ── SSL / Domain ─────────────────────────────────────────────────────────────
 async function loadSslStatus() {
   try {
     var data = await apiFetch('/admin/api/ssl');
+    var ext = data.mode === 'external';
+    document.getElementById('ssl-external').style.display = ext ? '' : 'none';
+    document.getElementById('ssl-caddy').style.display = ext ? 'none' : '';
+    document.getElementById('ssl-status-badge').innerHTML = ext ? '<span class="src-badge env">внешний прокси</span>' : '';
+    if (ext) { document.getElementById('ssl-seen').textContent = data.seenAs || '—'; return; }
     var inp = document.getElementById('ssl-domain');
     if (inp && data.domain) inp.value = data.domain;
 

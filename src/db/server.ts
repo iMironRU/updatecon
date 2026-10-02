@@ -54,7 +54,7 @@ import { sql, eq, desc, getTableColumns } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns, patches, settings, releaseProjects } from "./schema.js";
 import { findChain } from "./chain.js";
-import { setCaddyDomain, getCaddyStatus } from "./caddy.js";
+import { setCaddyDomain, getCaddyStatus, CADDY_DISABLED } from "./caddy.js";
 import { TAGS, refreshTags, setManualTags } from "./tags.js";
 import { moreStats, platformCheck, releasesBy, platformInfo } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
@@ -391,6 +391,32 @@ export async function buildServer() {
     },
   );
 
+  // ── Admin API: app version vs the repository ──────────────────────────────
+  let latestCache: { at: number; data: { sha: string; date: string; message: string; behind: number | null } | null } | null = null;
+  app.get("/admin/api/version", async () => {
+    let running: { commit?: string; date?: string } = {};
+    try { running = JSON.parse(readFileSync(join(__dirname, "..", "..", "public", "version.json"), "utf8")); } catch { /* dev build */ }
+    if (!latestCache || Date.now() - latestCache.at > 15 * 60_000) {
+      let data = null;
+      try {
+        const gh = (p: string) => fetch(`https://api.github.com/repos/iMironRU/updatecon/${p}`, {
+          headers: { Accept: "application/vnd.github+json", "User-Agent": "updatecon" }, signal: AbortSignal.timeout(8000) });
+        const r = await gh("commits/main");
+        if (r.ok) {
+          const c = await r.json() as any;
+          let behind: number | null = null;
+          if (running.commit && !c.sha.startsWith(running.commit)) {
+            const cmp = await gh(`compare/${running.commit}...main`);
+            if (cmp.ok) behind = ((await cmp.json()) as any).ahead_by ?? null;
+          } else if (running.commit) behind = 0;
+          data = { sha: String(c.sha).slice(0, 7), date: c.commit?.committer?.date ?? "", message: String(c.commit?.message ?? "").split("\n")[0], behind };
+        }
+      } catch { /* offline */ }
+      latestCache = { at: Date.now(), data };
+    }
+    return { running, latest: latestCache.data, autoUpdate: process.env.AUTO_UPDATE === "1" };
+  });
+
   app.get("/admin/api/snapshot", async () => {
     let remote = null, error: string | null = null;
     try { remote = await remoteMeta(); } catch (e) { error = (e as Error).message; }
@@ -432,17 +458,22 @@ export async function buildServer() {
   });
 
   // ── Admin API: SSL / Caddy domain management ─────────────────────────────
-  app.get("/admin/api/ssl", async () => {
+  app.get("/admin/api/ssl", async (req) => {
     const [row] = await db
       .select()
       .from(settings)
       .where(eq(settings.key, "domain"));
     const domain = row?.value ?? null;
     const caddy = await getCaddyStatus();
-    return { domain, caddy };
+    // Behind an external proxy: how the visitor reached us is the useful fact.
+    const h = req.headers;
+    const host = String(h["x-forwarded-host"] ?? h.host ?? "").split(",")[0].trim();
+    const proto = String(h["x-forwarded-proto"] ?? (req.protocol || "http")).split(",")[0].trim();
+    return { mode: CADDY_DISABLED ? "external" : "caddy", domain, caddy, seenAs: host ? `${proto}://${host}` : null };
   });
 
   app.post("/admin/api/ssl", async (req, reply) => {
+    if (CADDY_DISABLED) return reply.status(409).send({ error: "Домен и HTTPS настраиваются во внешнем прокси (Nginx Proxy Manager, nginx…)" });
     const { domain } = (req.body as any) ?? {};
     const cleaned = typeof domain === "string" ? domain.trim().toLowerCase() : "";
 
@@ -1021,6 +1052,7 @@ export async function buildServer() {
 
 /** On startup: if a domain is stored in DB, re-apply it to Caddy. */
 async function syncCaddyOnStart() {
+  if (CADDY_DISABLED) return;   // an external proxy owns the domain
   try {
     const [row] = await db.select().from(settings).where(eq(settings.key, "domain"));
     const domain = row?.value ?? null;

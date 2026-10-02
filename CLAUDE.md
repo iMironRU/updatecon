@@ -182,8 +182,18 @@ npm run build         # tsc -> dist/, then runtime uses node dist/db/*.js
 ```
 
 Deploy on a clean Ubuntu VM: `./deploy.sh` (installs Docker, writes `.env`,
-`docker compose up -d`). Web on `:3000`. Worker reads ITS creds from `.env`
-or replays `LST_FILE` from `./data`.
+`docker compose up -d`). Two modes: (1) own Caddy on 80/443 — `docker-compose.yml`,
+domain/HTTPS from the admin UI; (2) behind an existing reverse proxy (Nginx Proxy
+Manager, nginx, Traefik) — `.env` gets `COMPOSE_FILE=docker-compose.proxy.yml`,
+`PROXY_NETWORK`, `CADDY_API=off`; web joins the proxy's Docker network as
+`updatecon:3000` and listens on 127.0.0.1:WEB_PORT; the admin UI shows «внешний
+прокси» instead of the Caddy form. Optional nightly app update:
+`/etc/cron.d/updatecon` (03:30) runs the newest update.sh with UPDATECON_DIR;
+`AUTO_UPDATE=1` tells the admin UI. update.sh / manage.sh / uninstall.sh work in
+both modes (docker compose reads COMPOSE_FILE from .env — never pass `-f`).
+Worker reads the ITS account (admin UI or `.env`); without one it applies the
+published snapshot. The production install (upd.send2me.ru) predates this and
+has its own /opt/updatcon/compose.yml — see the memory note, not update.sh.
 
 ## Module resolution gotcha — IMPORTANT
 

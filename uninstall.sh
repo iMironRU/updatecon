@@ -80,6 +80,8 @@ step "Удаление начато"
 
 if [ -n "$DC" ] && [ -f "$PROJECT_DIR/docker-compose.yml" ]; then
   cd "$PROJECT_DIR"
+  # The nightly auto-update (deploy.sh) goes with the install.
+  [ -f /etc/cron.d/updatecon ] && rm -f /etc/cron.d/updatecon && echo "  ✓  Автообновление отключено"
 
   if [[ "$DEL_DATA" =~ ^[Yy] ]]; then
     printf "  Останавливаем контейнеры и удаляем volumes..."

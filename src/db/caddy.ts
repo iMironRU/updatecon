@@ -11,7 +11,12 @@
  *   getCaddyStatus()        — is Caddy reachable? what domain is active?
  */
 
-const CADDY_API = process.env.CADDY_API ?? "http://caddy:2019";
+// CADDY_API "" / "off": no Caddy of our own — the install sits behind an
+// external reverse proxy (Nginx Proxy Manager, nginx, Traefik) that does
+// the domain and HTTPS (docker-compose.proxy.yml, deploy.sh option 2).
+const RAW_API = process.env.CADDY_API;
+export const CADDY_DISABLED = RAW_API !== undefined && /^\s*(|off|none|false|0)\s*$/i.test(RAW_API);
+const CADDY_API = CADDY_DISABLED ? "" : (RAW_API ?? "http://caddy:2019");
 const CADDY_TIMEOUT_MS = 5000;
 
 function buildCaddyfile(domain: string | null | undefined): string {
@@ -53,6 +58,7 @@ function adminOrigin(): string {
 
 /** Apply a new domain to Caddy. Passing null/empty reverts to plain HTTP. */
 export async function setCaddyDomain(domain: string | null | undefined): Promise<void> {
+  if (CADDY_DISABLED) throw new Error("Caddy не используется — домен и HTTPS настраиваются во внешнем прокси");
   const body = buildCaddyfile(domain);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CADDY_TIMEOUT_MS);
@@ -83,6 +89,7 @@ export interface CaddyStatus {
 
 /** Returns whether Caddy is reachable and what domain it is currently serving. */
 export async function getCaddyStatus(): Promise<CaddyStatus> {
+  if (CADDY_DISABLED) return { reachable: false, domain: null };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CADDY_TIMEOUT_MS);
   try {

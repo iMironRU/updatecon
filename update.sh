@@ -5,7 +5,10 @@
 #   bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/update.sh)
 #
 # Скачивает готовый Docker-образ из ghcr.io и перезапускает сервисы.
-# .env и данные PostgreSQL не трогаются.
+# .env и данные PostgreSQL не трогаются. Работает в обоих режимах установки:
+# свой Caddy (docker-compose.yml) и за внешним прокси (COMPOSE_FILE в .env).
+# Ночное автообновление (deploy.sh → /etc/cron.d/updatecon) запускает его с
+# UPDATECON_DIR=<папка установки>.
 
 set -euo pipefail
 
@@ -20,6 +23,11 @@ LOG_FILE="/tmp/updatecon-update-$(date +%Y%m%d-%H%M%S).log"
 
 run_spin() {
   local msg="$1"; shift
+  # Not a terminal (cron): no spinner, plain lines for the log.
+  if [ ! -t 1 ]; then
+    "$@" >> "$LOG_FILE" 2>&1 || { echo "  ✗ $msg — ошибка:"; tail -n 20 "$LOG_FILE"; exit 1; }
+    echo "  ✓ $msg"; return 0
+  fi
   printf "  ${CYAN}⠋${NC}  %s..." "$msg"
   "$@" >> "$LOG_FILE" 2>&1 &
   local pid=$!
@@ -40,6 +48,7 @@ run_spin() {
 
 # ── Находим директорию проекта ────────────────────────────────────────────────
 _find_project_dir() {
+  if [ -n "${UPDATECON_DIR:-}" ] && [ -f "${UPDATECON_DIR}/docker-compose.yml" ]; then echo "$UPDATECON_DIR"; return; fi
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd 2>/dev/null || true)"
   if [ -f "${script_dir}/docker-compose.yml" ]; then echo "$script_dir"; return; fi
@@ -64,6 +73,7 @@ else
   err "Docker Compose не найден."; exit 1
 fi
 
+[ -t 1 ] || echo "── $(date '+%F %T') ──"
 echo
 echo -e "${CYAN}${BOLD}  ▶  Обновление Апдейкон${NC}"
 echo -e "${CYAN}  ──────────────────────────────────────────${NC}"
@@ -93,6 +103,12 @@ if _fetch_file "docker-compose.yml"; then
   log "docker-compose.yml обновлён"
 else
   warn "Не удалось обновить docker-compose.yml — продолжаем с текущим"
+fi
+
+# Режим «за внешним прокси» (deploy.sh, вариант 2)
+if grep -qE '^COMPOSE_FILE=docker-compose.proxy.yml' .env 2>/dev/null; then
+  _fetch_file "docker-compose.proxy.yml" && log "docker-compose.proxy.yml обновлён" \
+    || warn "Не удалось обновить docker-compose.proxy.yml — продолжаем с текущим"
 fi
 
 if _fetch_file "Caddyfile"; then

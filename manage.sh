@@ -118,7 +118,8 @@ main_menu() {
     local dir; dir="$(_find_project_dir)"
     local dc; dc="$(_detect_dc)" 2>/dev/null || true
     if [ -n "$dc" ] && [ -n "$dir" ]; then
-      ver_info="$($dc -f "${dir}/docker-compose.yml" exec -T web \
+      # cd, not -f: docker compose then honours COMPOSE_FILE from .env (proxy mode)
+      ver_info="$(cd "$dir" && $dc exec -T web \
         sh -c 'cat /app/public/version.json 2>/dev/null' 2>/dev/null \
         | grep -o '"date":"[^"]*"' | cut -d'"' -f4 | cut -c1-10 || true)"
     fi
@@ -206,161 +207,13 @@ main_menu() {
 
 # ── Установка ─────────────────────────────────────────────────────────────────
 do_install() {
-  echo
-  echo -e "${CYAN}${BOLD}  ▶  Установка Апдейкон${NC}"
-  echo -e "${CYAN}  ──────────────────────────────────────────${NC}"
-  echo
-
-  # OS-проверка
-  OS_ID="$(. /etc/os-release 2>/dev/null && echo "$ID" || echo unknown)"
-  OS_VER="$(. /etc/os-release 2>/dev/null && echo "$VERSION_ID" || echo 0)"
-  case "$OS_ID" in
-    ubuntu) [ "${OS_VER%%.*}" -ge 20 ] 2>/dev/null || { err "Требуется Ubuntu 20.04+"; exit 1; } ;;
-    debian) [ "${OS_VER%%.*}" -ge 11 ] 2>/dev/null || { err "Требуется Debian 11+"; exit 1; } ;;
-    *) warn "Непроверенная ОС: $OS_ID $OS_VER" ;;
-  esac
-
-  # Клонирование репозитория
-  local REPO_URL="https://github.com/iMironRU/updatecon.git"
-  local REPO_DIR="updatecon"
-  if [ ! -f "$(pwd)/docker-compose.yml" ]; then
-    if [ -d "$REPO_DIR/.git" ]; then
-      run_spin "Обновляем репозиторий" bash -c "cd '$REPO_DIR' && git pull --ff-only"
-      cd "$REPO_DIR"
-    else
-      [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
-      if ! command -v git >/dev/null 2>&1; then
-        run_spin "Устанавливаем git" bash -c "apt-get update -qq && apt-get install -y -qq git"
-      fi
-      run_spin "Клонируем репозиторий" git clone "$REPO_URL" "$REPO_DIR"
-      cd "$REPO_DIR"
-    fi
-  fi
-
-  local SEED_FILE="data/seed.sql.gz"
-  local IS_FRESH=false
-  [ ! -f .env ] && IS_FRESH=true
-
-  # Сбор параметров
-  local WEB_PORT_INPUT ADMIN_LOGIN ADMIN_PW ITS_LOGIN_INPUT="" ITS_PW_INPUT="" RESTORE_SEED="n"
-  if $IS_FRESH; then
-    while true; do
-      read -rp "  Внешний порт сайта [80]: " WEB_PORT_INPUT
-      WEB_PORT_INPUT="${WEB_PORT_INPUT:-80}"
-      [[ "$WEB_PORT_INPUT" =~ ^[0-9]+$ ]] && [ "$WEB_PORT_INPUT" -ge 1 ] && [ "$WEB_PORT_INPUT" -le 65535 ] || { warn "Некорректный порт."; continue; }
-      port_free "$WEB_PORT_INPUT" || { warn "Порт $WEB_PORT_INPUT занят."; continue; }
-      break
-    done
-    read -rp "  Логин администратора [admin]: " ADMIN_LOGIN; ADMIN_LOGIN="${ADMIN_LOGIN:-admin}"
-    while true; do
-      read -rsp "  Пароль администратора (мин. 6 символов): " ADMIN_PW; echo
-      [ ${#ADMIN_PW} -ge 6 ] && break; warn "Слишком короткий."
-    done
-    echo
-    echo -e "  ${YELLOW}ИТС-кредиты${NC} нужны для авто-синхронизации (необязательно)."
-    read -rp "  Логин ИТС (Enter — пропустить): " ITS_LOGIN_INPUT
-    [ -n "$ITS_LOGIN_INPUT" ] && { read -rsp "  Пароль ИТС: " ITS_PW_INPUT; echo; }
-    [ -f "$SEED_FILE" ] && {
-      echo; read -rp "  Восстановить дамп данных (603 конфигурации)? [Y/n]: " RESTORE_SEED
-      RESTORE_SEED="${RESTORE_SEED:-Y}"
-    }
-    echo
-    echo -e "${CYAN}  ┌─ Параметры установки ─────────────────${NC}"
-    echo -e "  │  Внешний порт:  ${BOLD}$WEB_PORT_INPUT${NC}"
-    echo -e "  │  Логин admin:   ${BOLD}$ADMIN_LOGIN${NC}"
-    echo -e "  │  Логин ИТС:     ${BOLD}${ITS_LOGIN_INPUT:-не задан}${NC}"
-    echo -e "  │  Восст. дамп:   ${BOLD}$( [[ "$RESTORE_SEED" =~ ^[Yy] ]] && echo "да" || echo "нет" )${NC}"
-    echo -e "${CYAN}  └───────────────────────────────────────${NC}"
-    echo
-    local CONFIRM
-    read -rp "  Начать установку? [Enter / n]: " CONFIRM
-    [[ "${CONFIRM:-y}" =~ ^[Nn] ]] && { echo "  Отмена."; main_menu; return; }
+  # One installer: deploy.sh (both modes — own Caddy or behind a proxy — and auto-update).
+  local here; here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [ -n "$here" ] && [ -f "$here/deploy.sh" ]; then
+    bash "$here/deploy.sh"
   else
-    warn ".env уже существует — конфигурация не изменяется."
-    WEB_PORT_INPUT="$(grep -E '^WEB_PORT=' .env | cut -d= -f2 || echo 3000)"
-    echo
+    bash <(curl -fsSL https://raw.githubusercontent.com/iMironRU/updatecon/main/deploy.sh)
   fi
-
-  echo; step "Установка началась. Лог: $LOG_FILE"; echo
-
-  # Docker
-  ! command -v docker >/dev/null 2>&1 && \
-    run_spin "Устанавливаем Docker" bash -c \
-      "curl -fsSL https://get.docker.com | sh && usermod -aG docker '${SUDO_USER:-$USER}' 2>/dev/null || true"
-  local DC; DC="$(_detect_dc)"; log "Docker готов"
-
-  # .env
-  if $IS_FRESH; then
-    cp .env.example .env
-    local DB_PW; DB_PW="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
-    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${DB_PW}/"   .env
-    sed -i "s|postgres://upd:changeme@|postgres://upd:${DB_PW}@|"  .env
-    sed -i "s/^WEB_PORT=.*/WEB_PORT=${WEB_PORT_INPUT}/"            .env
-    sed -i "s/^ADMIN_LOGIN=.*/ADMIN_LOGIN=${ADMIN_LOGIN}/"         .env
-    sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=${ADMIN_PW}/"      .env
-    [ -n "$ITS_LOGIN_INPUT" ] && {
-      sed -i "s/^ITS_LOGIN=.*/ITS_LOGIN=${ITS_LOGIN_INPUT}/"   .env
-      sed -i "s/^ITS_PASSWORD=.*/ITS_PASSWORD=${ITS_PW_INPUT}/" .env
-    }
-    log ".env создан"
-  fi
-  mkdir -p data
-
-  # Образы
-  $DC pull >> "$LOG_FILE" 2>&1 && log "Образы скачаны из ghcr.io" || \
-    run_spin "Сборка Docker-образов" $DC build
-
-  # PostgreSQL
-  run_spin "Запуск PostgreSQL" $DC up -d db
-  printf "  ${CYAN}⠋${NC}  Ждём готовности БД..."
-  for i in $(seq 1 30); do $DC exec -T db pg_isready -U upd >> "$LOG_FILE" 2>&1 && break || sleep 2; done
-  printf "\r  ${GREEN}✓${NC}  PostgreSQL готов   \n"
-  local DB_PW_SYNC; DB_PW_SYNC="$(grep -E '^POSTGRES_PASSWORD=' .env | cut -d= -f2)"
-  $DC exec -T db psql -U upd -d upd -c "ALTER USER upd PASSWORD '${DB_PW_SYNC}'" >> "$LOG_FILE" 2>&1 || true
-
-  # Дамп
-  if $IS_FRESH && [[ "${RESTORE_SEED:-n}" =~ ^[Yy] ]] && [ -f "$SEED_FILE" ]; then
-    $DC up -d worker >> "$LOG_FILE" 2>&1
-    printf "  ${CYAN}⠋${NC}  Применяем миграции БД..."
-    local MIGRATED=0
-    for i in $(seq 1 30); do
-      local READY; READY="$($DC exec -T db psql -U upd -d upd -tAc \
-        "SELECT count(*) FROM information_schema.tables \
-         WHERE table_schema='public' AND table_name='configurations'" 2>/dev/null | tr -d '[:space:]' || echo 0)"
-      [ "$READY" = "1" ] && { MIGRATED=1; break; }; sleep 2
-    done
-    $DC stop worker >> "$LOG_FILE" 2>&1
-    [ "$MIGRATED" != "1" ] && { err "Миграции не прошли — см. $LOG_FILE"; exit 1; }
-    printf "\r  ${GREEN}✓${NC}  Миграции применены   \n"
-    run_spin "Восстанавливаем дамп данных" bash -c "zcat '$SEED_FILE' | $DC exec -T db psql -U upd -d upd -q"
-    sed -i "s/^IMPORT_ON_START=.*/IMPORT_ON_START=0/" .env
-  fi
-
-  # Запуск
-  run_spin "Запуск всех сервисов" $DC up -d
-  local PORT; PORT="$(grep -E '^WEB_PORT=' .env | cut -d= -f2 || echo 3000)"
-  printf "  ${CYAN}⠋${NC}  Ждём веб-сервер..."
-  local OK=0
-  for i in $(seq 1 40); do
-    curl -fsS "http://localhost:${PORT}/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }; sleep 3
-  done
-  [ "$OK" = "1" ] && printf "\r  ${GREEN}✓${NC}  Веб-сервер отвечает   \n" \
-                  || printf "\r  ${YELLOW}!${NC}  Не ответил — проверьте: $DC logs web\n"
-
-  local HOST_IP; HOST_IP="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null \
-    || hostname -I 2>/dev/null | awk '{print $1}' || echo '<IP>')"
-  local PORT_SUFFIX; PORT_SUFFIX="$( [ "$PORT" = "80" ] && echo "" || echo ":$PORT" )"
-  local ADMIN_SHOW; ADMIN_SHOW="$(grep -E '^ADMIN_LOGIN=' .env | cut -d= -f2 || echo admin)"
-
-  echo
-  echo -e "${GREEN}${BOLD}  ✓  Апдейкон успешно запущен!${NC}"
-  echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
-  echo -e "  ${BOLD}Сайт:${NC}     ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/${NC}"
-  echo -e "  ${BOLD}Админка:${NC}  ${GREEN}http://${HOST_IP}${PORT_SUFFIX}/admin${NC}"
-  echo -e "  ${BOLD}Логин:${NC}    ${YELLOW}${ADMIN_SHOW}${NC}"
-  echo -e "${GREEN}  ──────────────────────────────────────────${NC}"
-  echo
-  rm -f "$LOG_FILE"
 }
 
 # ── Настройки .env ───────────────────────────────────────────────────────────
@@ -490,42 +343,17 @@ _apply_env() {
 
 # ── Обновление ────────────────────────────────────────────────────────────────
 do_update() {
+  # One updater: update.sh (handles COMPOSE_FILE / proxy mode); always the newest copy.
   local dir; dir="$(_find_project_dir)"
-  local dc; dc="$(_detect_dc)"
-
-  echo
-  echo -e "${CYAN}${BOLD}  ▶  Обновление Апдейкон${NC}"
-  echo -e "${CYAN}  ──────────────────────────────────────────${NC}"
-  echo
-
-  cd "$dir"
-
-  # Обновляем docker-compose.yml из репозитория чтобы гарантировать
-  # наличие image: ghcr.io/... (старые инсталляции могли не иметь этой строки)
-  local RAW="https://raw.githubusercontent.com/iMironRU/updatecon/main/docker-compose.yml"
-  if curl -fsSL --max-time 10 "$RAW" -o docker-compose.yml.new 2>>"$LOG_FILE"; then
-    mv docker-compose.yml.new docker-compose.yml
-    log "docker-compose.yml обновлён"
+  local tmp; tmp="$(mktemp)"
+  if curl -fsSL --max-time 15 https://raw.githubusercontent.com/iMironRU/updatecon/main/update.sh -o "$tmp"; then
+    UPDATECON_DIR="$dir" bash "$tmp"
+  elif [ -f "$dir/update.sh" ]; then
+    UPDATECON_DIR="$dir" bash "$dir/update.sh"
   else
-    warn "Не удалось обновить docker-compose.yml — продолжаем с текущим"
-    rm -f docker-compose.yml.new
+    err "Не удалось получить update.sh"
   fi
-
-  run_spin "Скачиваем образ из ghcr.io" $dc pull
-  run_spin "Перезапускаем сервисы" $dc up -d
-
-  local PORT; PORT="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d= -f2 || echo 3000)"
-  printf "  ${CYAN}⠋${NC}  Ждём веб-сервер..."
-  local OK=0
-  for i in $(seq 1 20); do
-    curl -fsS "http://localhost:${PORT}/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }; sleep 3
-  done
-  [ "$OK" = "1" ] && printf "\r  ${GREEN}✓${NC}  Веб-сервер отвечает   \n" \
-                  || printf "\r  ${YELLOW}!${NC}  Не ответил — проверьте: $dc logs web\n"
-  echo
-  echo -e "${GREEN}${BOLD}  ✓  Апдейкон обновлён.${NC}"
-  echo
-  rm -f "$LOG_FILE"
+  rm -f "$tmp"
 }
 
 # ── Удаление ──────────────────────────────────────────────────────────────────
@@ -564,6 +392,8 @@ do_uninstall() {
   step "Удаление началось"
   if [ -n "$dir" ] && [ -f "${dir}/docker-compose.yml" ]; then
     cd "$dir"
+    # The nightly auto-update (deploy.sh) goes with the install.
+    [ -f /etc/cron.d/updatecon ] && rm -f /etc/cron.d/updatecon && echo "  ✓  Автообновление отключено"
     if [[ "$DEL_DATA" =~ ^[Yy] ]]; then
       printf "  Останавливаем и удаляем volumes..."
       $dc down -v >> "$LOG_FILE" 2>&1 \
