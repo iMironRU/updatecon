@@ -537,6 +537,41 @@ tr.run-all td { background: rgba(88,166,255,.05); }
       </div>
     </div>
 
+    <!-- Яндекс Метрика: the counter goes into the public site's pages (metrika.ts); the panel itself is not counted. -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Яндекс Метрика</span><span class="src-badge" id="mk-state"></span></div>
+      <div class="card-body">
+        <form onsubmit="saveMetrika(event)" autocomplete="off">
+          <div class="field">
+            <label for="mk-id">Номер счётчика</label>
+            <input id="mk-id" spellcheck="false" placeholder="например, 98765432 — или вставьте код счётчика целиком">
+            <div class="hint">Счётчик создаётся на <a href="https://metrika.yandex.ru/add" target="_blank" rel="noopener">metrika.yandex.ru</a>
+              с адресом этого сайта. Код на сайт ставится сам, переходы по страницам приложения тоже считаются.
+              Панель администратора не отслеживается.</div>
+          </div>
+          <label class="check-row"><input type="checkbox" id="mk-webvisor">
+            Вебвизор — запись действий посетителей и карта скроллинга</label>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+            <button class="btn btn-ghost" type="button" id="mk-off" onclick="disableMetrika()" style="display:none">Отключить</button>
+            <span class="form-msg" id="mk-msg"></span>
+          </div>
+          <div class="hint" id="mk-current" style="margin-top:12px"></div>
+          <details class="hint" style="margin-top:10px">
+            <summary style="cursor:pointer">Цели для Метрики (JavaScript-события)</summary>
+            <div style="margin-top:6px;line-height:1.8">Метрика → Цели → Добавить цель → «JavaScript-событие», идентификатор:
+              <div><span class="mono">chain</span> — построена цепочка обновлений</div>
+              <div><span class="mono">download</span> — переход к скачиванию обновления</div>
+              <div><span class="mono">chain_copy</span> — цепочка скопирована</div>
+              <div><span class="mono">chain_share</span> — скопирована ссылка на цепочку</div>
+              <div><span class="mono">fav</span> — конфигурация добавлена в «Мои»</div>
+              <div><span class="mono">pwa_install</span> — сайт установлен как приложение</div>
+            </div>
+          </details>
+        </form>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header"><span class="card-title">Конфигурация сервера</span></div>
       <div class="card-body">
@@ -576,7 +611,7 @@ function show(page) {
   if (page === 'import') loadSnapshotInfo();
   if (page === 'match') loadMatch();
   if (page === 'tags') loadTags();
-  if (page === 'settings') { loadSettings(); loadSslStatus(); loadVersion(); loadAccess(); }
+  if (page === 'settings') { loadSettings(); loadSslStatus(); loadVersion(); loadAccess(); loadMetrika(); }
 }
 
 function logout() {
@@ -779,6 +814,40 @@ async function saveAccess(e) {
       setTimeout(function() { location.href = location.origin + r.base + '#settings'; }, 900);
     } else { formMsg('acc-msg', '✓ Сохранено', 'ok'); loadAccess(); }
   } catch (err) { formMsg('acc-msg', '✗ ' + err.message, 'err'); }
+}
+
+// ── Яндекс Метрика ──
+async function loadMetrika() {
+  try { showMetrika(await apiFetch('/admin/api/settings/metrika')); }
+  catch (e) { formMsg('mk-msg', '✗ Не удалось загрузить', 'err'); }
+}
+function showMetrika(m) {
+  document.getElementById('mk-id').value = m.id;
+  document.getElementById('mk-webvisor').checked = m.webvisor;
+  document.getElementById('mk-off').style.display = m.id ? '' : 'none';
+  var st = document.getElementById('mk-state');
+  st.textContent = m.id ? 'подключена' : 'не подключена'; st.className = 'src-badge' + (m.id ? ' admin' : '');
+  document.getElementById('mk-current').innerHTML = m.id
+    ? 'Счётчик <b class="mono" style="color:var(--text)">' + esc(m.id) + '</b> стоит на всех страницах сайта' + (m.webvisor ? ', Вебвизор включён' : '') +
+      ' — <a href="https://metrika.yandex.ru/dashboard?id=' + encodeURIComponent(m.id) + '" target="_blank" rel="noopener">открыть в Метрике ↗</a>'
+    : '';
+}
+async function saveMetrika(e) {
+  e.preventDefault();
+  var id = document.getElementById('mk-id').value.trim();
+  if (!id) { formMsg('mk-msg', '✗ Укажите номер счётчика', 'err'); return; }
+  try {
+    var r = await apiSend('POST', '/admin/api/settings/metrika', { id: id, webvisor: document.getElementById('mk-webvisor').checked });
+    showMetrika(r);
+    formMsg('mk-msg', '✓ Сохранено — счётчик на сайте с этой минуты', 'ok');
+  } catch (err) { formMsg('mk-msg', '✗ ' + err.message, 'err'); }
+}
+async function disableMetrika() {
+  if (!confirm('Убрать счётчик Яндекс Метрики с сайта?')) return;
+  try {
+    showMetrika(await apiSend('POST', '/admin/api/settings/metrika', { id: '', webvisor: document.getElementById('mk-webvisor').checked }));
+    formMsg('mk-msg', '✓ Метрика отключена', 'ok');
+  } catch (err) { formMsg('mk-msg', '✗ ' + err.message, 'err'); }
 }
 
 async function loadSettings() {

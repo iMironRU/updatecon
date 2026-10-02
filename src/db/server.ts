@@ -36,6 +36,7 @@
  *   POST /admin/api/settings/admin-password -> change the admin password (current one required)
  *   GET|POST /admin/api/access             -> the panel's address (instead of /admin) and the site's link to it
  *   GET  /api/site                         -> what the public site may show (the panel link, if allowed)
+ *   GET|POST /admin/api/settings/metrika   -> Яндекс Метрика counter for the public site (metrika.ts)
  *   GET  /admin/api/projects               -> releases.1c.ru projects + links
  *   GET  /admin/api/apps?q=                -> application editions (link picker)
  *   POST /admin/api/projects/link          -> manual link / unlink / back to auto
@@ -49,6 +50,7 @@ import fastifyStatic from "@fastify/static";
 import fastifyCookie from "@fastify/cookie";
 import fastifyFormbody from "@fastify/formbody";
 import { readFileSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { request as httpsRequest } from "node:https";
@@ -63,6 +65,7 @@ import { moreStats, platformCheck, releasesBy, platformInfo, newsEvents } from "
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
+import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
@@ -158,8 +161,8 @@ async function safeAdminImport(source: ImportSource) {
 // session cookie use ADMIN_BASE, so a change applies at once.
 let ADMIN_BASE = "/admin";
 let ADMIN_LINK_PUBLIC = true;   // the public site's Настройки show a link to the panel
-const ADMIN_RESERVED = new Set(["api", "catalog", "config", "chain", "stats", "platform", "settings",
-  "favicon.svg", "version.json", "index.html", "assets", "static", "public"]);
+const ADMIN_RESERVED = new Set(["api", "catalog", "config", "chain", "stats", "platform", "settings", "news",
+  "icons", "favicon.svg", "version.json", "index.html", "assets", "static", "public"]);
 
 function adminRewrite(url: string): string {
   if (ADMIN_BASE === "/admin") return url;
@@ -210,8 +213,23 @@ async function resolveConfig(q: Record<string, unknown>, versionHint?: string): 
   return rows[0];
 }
 
+// ── The site's page ────────────────────────────────────────────────────────
+// Every page of the site is public/index.html (the History API router); it is
+// served from here — not by @fastify/static — to carry the Яндекс Метрика tag
+// when a counter is set. Re-read when the file changes.
+const PUBLIC_DIR = join(__dirname, "..", "..", "public");
+let sitePageCache: { mtime: number; html: string } | null = null;
+async function sitePage(): Promise<string> {
+  const file = join(PUBLIC_DIR, "index.html");
+  const { mtimeMs } = await stat(file);
+  if (sitePageCache?.mtime !== mtimeMs) sitePageCache = { mtime: mtimeMs, html: await readFile(file, "utf8") };
+  const tag = metrikaTag();
+  return tag ? sitePageCache.html.replace("</head>", tag + "</head>") : sitePageCache.html;
+}
+
 export async function buildServer() {
   await loadAdminAccess();
+  await loadMetrika();
   const app = Fastify({ logger: true, rewriteUrl: (req) => adminRewrite(req.url ?? "/") });
   // The ITS account may come from the admin UI (settings) rather than .env.
   try { await applyItsCredentials(); } catch (e) { console.warn("[credentials] not applied:", (e as Error).message); }
@@ -321,6 +339,20 @@ export async function buildServer() {
     ADMIN_BASE = base; ADMIN_LINK_PUBLIC = publicLink;
     console.log(`[admin] панель администратора: ${ADMIN_BASE}${ADMIN_LINK_PUBLIC ? "" : " (ссылка на сайте скрыта)"}`);
     return { ok: true, base, publicLink };
+  });
+
+  // ── Admin API: Яндекс Метрика on the public site ──────────────────────────
+  app.get("/admin/api/settings/metrika", async () => metrikaSettings());
+
+  app.post("/admin/api/settings/metrika", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | undefined) ?? {};
+    const raw = String(body.id ?? "").trim();
+    const id = raw ? parseCounterId(raw) : "";
+    if (id === null) {
+      return reply.code(400).send({ error: "Не найден номер счётчика: введите число (например, 98765432) или вставьте код счётчика целиком" });
+    }
+    await saveMetrika({ id, webvisor: body.webvisor !== false });
+    return { ok: true, ...metrikaSettings() };
   });
 
   // ── Admin API ─────────────────────────────────────────────────────────────
@@ -684,8 +716,10 @@ export async function buildServer() {
 
   // ── Public static + API ───────────────────────────────────────────────────
   app.register(fastifyStatic, {
-    root: join(__dirname, "..", "..", "public"),
+    root: PUBLIC_DIR,
     prefix: "/",
+    // The page itself goes through sitePage() (the fallback below): it may carry the Метрика tag.
+    allowedPath: (path) => path !== "/" && path !== "/index.html",
   });
 
   app.get("/api/health", async () => ({
@@ -1112,9 +1146,9 @@ export async function buildServer() {
   // API, so a hard refresh or a shared link lands here. Old /#/… links and
   // /%23/… (a proxy encoding the fragment) are rewritten by the page itself.
   // Unknown API paths stay a JSON 404, not a page.
-  app.setNotFoundHandler((req, reply) => {
+  app.setNotFoundHandler(async (req, reply) => {
     if (/^\/(admin\/)?api\//.test(req.url)) return reply.code(404).send({ error: "not found" });
-    void reply.sendFile("index.html");
+    return reply.code(200).type("text/html; charset=utf-8").header("cache-control", "no-cache").send(await sitePage());
   });
 
   return app;

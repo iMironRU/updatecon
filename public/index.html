@@ -836,7 +836,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
   INSTALL_PROMPT = e;
   refresh_install_section();
 });
-window.addEventListener('appinstalled', () => { INSTALL_PROMPT = null; refresh_install_section(); });
+window.addEventListener('appinstalled', () => { INSTALL_PROMPT = null; refresh_install_section(); goal('pwa_install'); });
 
 function app_standalone() {
   return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -1516,9 +1516,11 @@ function est_time(steps) {
 }
 function handle_dl(e, url) {
   if (!url) { e.preventDefault(); toast('Ссылка для скачивания не указана'); return; }
+  goal('download');
 }
 function do_share_chain(cfgId, fromV, toV) {
   const url = `${location.origin}/chain?config=${cfgId}&from=${encodeURIComponent(fromV)}&to=${encodeURIComponent(toV)}`;
+  goal('chain_share');
   navigator.clipboard.writeText(url).then(() => toast('Ссылка скопирована')).catch(() => prompt('Скопируйте ссылку:', url));
 }
 async function do_copy_chain(cfgId, fromV, toV) {
@@ -1534,6 +1536,7 @@ async function do_copy_chain(cfgId, fromV, toV) {
     } catch(e) { toast('Ошибка при получении цепочки'); return; }
   }
   if (!steps?.length) return;
+  goal('chain_copy');
   let txt = `Цепочка обновлений: ${cfg.name}\nОт: ${fromV}\nДо: ${steps[steps.length-1].v}\nШагов: ${steps.length}\n\nПорядок установки:\n`;
   steps.forEach((s,i) => { txt += `${i+1}. ${s.v}${s.date ? ' (' + fmt_date(s.date) + ')' : ''}\n`; });
   txt += `\nСгенерировано: ${new Date().toLocaleString('ru')} | updatecon`;
@@ -1598,6 +1601,23 @@ document.getElementById('mobile-menu').addEventListener('click', e => { if (e.ta
 document.addEventListener('keydown', e => { if (e.key === 'Escape') toggle_menu(false); });
 matchMedia('(min-width: 761px)').addEventListener('change', e => { if (e.matches) toggle_menu(false); });
 
+/* Яндекс Метрика: when a counter is set in the admin panel, the server puts its
+   code into the page (window.UC_METRIKA = counter). The counter's init counts
+   the first page; in-app page changes are reported here. Filter changes
+   (replaceState) are not page views. Goal ids are listed in the admin card. */
+let METRIKA_URL = null;
+function metrika_hit() {
+  if (!window.UC_METRIKA || typeof window.ym !== 'function') return;
+  const url = location.href;
+  if (METRIKA_URL === null) { METRIKA_URL = url; return; }
+  if (url === METRIKA_URL) return;
+  ym(window.UC_METRIKA, 'hit', url, { referer: METRIKA_URL, title: document.title });
+  METRIKA_URL = url;
+}
+function goal(name) {
+  if (window.UC_METRIKA && typeof window.ym === 'function') ym(window.UC_METRIKA, 'reachGoal', name);
+}
+
 let ROUTE_PATH = null;
 async function route() {
   const { path, params } = parse_route();
@@ -1635,6 +1655,7 @@ async function route() {
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
   else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
   ROUTE_PATH = path;
+  metrika_hit();
   // Back to the same filtered catalog → back to the same place in it.
   // 'instant': html has scroll-behavior: smooth, which would animate page changes.
   const top = path === '/catalog' && CAT_SCROLL && CAT_SCROLL.hash === CAT_URL ? CAT_SCROLL.y : 0;
@@ -1766,13 +1787,14 @@ async function home_build_chain() {
   result.innerHTML = `<div class="card card-body">${render_loading('Строим цепочку...')}</div>`;
   await Promise.all(configs_to_check.map(c => loadVersionsForConfig(c.id)));
 
-  let html = '';
+  let html = '', reached = false;
   for (const cfg of configs_to_check) {
     const toV = toVRaw || cfg.latestV;
     if (!toV) continue;
     let r;
     try { r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV }); }
     catch(e) { continue; }
+    if (r.found && !reached) { reached = true; goal('chain'); }
 
     if (r.note && !r.found) {
       html += `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br><span style="color:var(--text-muted);font-size:14px">${r.note}</span></div></div>`;
@@ -2591,6 +2613,7 @@ async function cfg_do_chain(id) {
   let r;
   try { r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV }); }
   catch(e) { result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>Ошибка сервера</span></div>`; return; }
+  if (r.found) goal('chain');
 
   if (!r.found) {
     const msg = r.note || 'Цепочка не найдена';
@@ -2627,6 +2650,7 @@ async function bind_chain_page(params) {
   let r;
   try { r = await apiFetch('/api/chain', { config_id: cfg.id, from, to: toV }); }
   catch(e) { el.innerHTML = `<div class="alert alert-warning">${icn_alert()} Ошибка сервера</div>`; return; }
+  if (r.found) goal('chain');
 
   if (!r.found) {
     const msg = r.note || 'Цепочка не найдена';
@@ -3234,6 +3258,7 @@ function fav_toggle(e, id) {
     const t = b.querySelector('span'); if (t) t.textContent = on ? 'В моих' : 'В мои';
   });
   toast(on ? '★ Добавлено в «Мои конфигурации»' : 'Убрано из «Моих конфигураций»');
+  if (on) goal('fav');
   if (ROUTE_PATH === '/news' && NEWS.mine) news_render();
   if (ROUTE_PATH === '/catalog' && CAT && CAT.fav) apply_filters();
   return false;

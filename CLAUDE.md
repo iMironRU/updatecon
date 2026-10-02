@@ -35,6 +35,8 @@ src/db/
                         `data` GitHub release; installs without an ITS account apply it (worker start, nightly,
                         admin button) in one transaction, keeping settings and manual links/tags
   credentials.ts        ITS account / admin password editable in the admin UI (DB wins over .env)
+  metrika.ts            Яндекс Метрика counter (admin UI → settings); server.ts serves index.html itself
+                        (not @fastify/static) to put the tag in; the page reports SPA hits + goals
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   platform.ts           1С:Предприятие builds from releases.1c.ru (dates, OS, notes, bugboard) → platform_builds
