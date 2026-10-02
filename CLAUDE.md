@@ -154,6 +154,18 @@ links (re-resolved by template_key + edition) and manual tags. `settings` and
 snapshot-fed installs share /config/<id> links with it. `SNAPSHOT_URL=off`
 disables it.
 
+## Admin panel address
+
+Routes are registered under `/admin`. A custom address (settings `admin_path`,
+e.g. `/panel-7k2q`, from Настройки → Адрес панели) is mapped onto them by
+Fastify `rewriteUrl` (server.ts `adminRewrite`); `/admin` then becomes an unknown
+page. Hooks see the rewritten `/admin/…` URL, so auth still applies. The admin
+HTML keeps absolute `/admin/…` links and is rewritten when served (`adminHtml`);
+redirects and the session cookie path use `ADMIN_BASE`. `admin_link_public = 0`
+hides the panel link on the public site (`/api/site` then returns null — the
+address is not given away). Forgotten address: `docker compose logs web | grep
+панель`, or delete `admin_path` from settings.
+
 ## SQL inside sql`…` templates — escaping gotcha
 
 The drizzle `sql` tag receives *cooked* template strings, so TS escapes are

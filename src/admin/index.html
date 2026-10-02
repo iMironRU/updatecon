@@ -100,6 +100,12 @@ tr:hover td { background: var(--surface2); }
 .field input[readonly] { color: var(--muted); cursor: default; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
+.path-input { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.path-input:focus-within { border-color: var(--blue); }
+.path-input span { padding-left: 12px; color: var(--muted); font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+.path-input input { border: none !important; background: transparent !important; padding-left: 0 !important; min-width: 0; }
+.check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 14px; cursor: pointer; }
+.copy-btn { margin-left: 8px; padding: 1px 8px; font-size: 11px; }
 .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .form-msg { font-size: 13px; }
 .form-msg.ok { color: var(--green); } .form-msg.err { color: var(--red); } .form-msg.wait { color: var(--muted); }
@@ -507,6 +513,30 @@ tr.run-all td { background: rgba(88,166,255,.05); }
       </div>
     </div>
 
+    <!-- Panel address: a custom path instead of /admin, and whether the site links to it. -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Адрес панели</span></div>
+      <div class="card-body">
+        <form onsubmit="saveAccess(event)">
+          <div class="field">
+            <label for="acc-path">Адрес панели администратора</label>
+            <div class="path-input"><span id="acc-origin"></span><input id="acc-path" spellcheck="false" autocomplete="off" required></div>
+            <div class="hint">Свой адрес вместо общеизвестного /admin — например, panel-7k2q. Старый адрес перестаёт открываться сразу,
+              /admin отвечает «страница не найдена». Забыли адрес — он в логе веб-сервера:
+              <span style="font-family:var(--mono)">docker compose logs web | grep панель</span></div>
+          </div>
+          <label class="check-row"><input type="checkbox" id="acc-public">
+            Показывать ссылку на панель на сайте (Настройки → Администрирование)</label>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+            <button class="btn btn-ghost" type="button" onclick="genAccessPath()">Придумать адрес</button>
+            <span class="form-msg" id="acc-msg"></span>
+          </div>
+          <div class="hint" id="acc-current" style="margin-top:12px"></div>
+        </form>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header"><span class="card-title">Конфигурация сервера</span></div>
       <div class="card-body">
@@ -546,7 +576,7 @@ function show(page) {
   if (page === 'import') loadSnapshotInfo();
   if (page === 'match') loadMatch();
   if (page === 'tags') loadTags();
-  if (page === 'settings') { loadSettings(); loadSslStatus(); loadVersion(); }
+  if (page === 'settings') { loadSettings(); loadSslStatus(); loadVersion(); loadAccess(); }
 }
 
 function logout() {
@@ -715,6 +745,40 @@ async function saveAdminPassword(e) {
     formMsg('adm-msg', '✓ Пароль изменён — со следующего входа действует новый', 'ok');
     setSrc('adm-src', 'admin');
   } catch (err) { formMsg('adm-msg', '✗ ' + err.message, 'err'); }
+}
+
+// ── Panel address ──
+var ACCESS = null;
+async function loadAccess() {
+  try {
+    ACCESS = await apiFetch('/admin/api/access');
+    document.getElementById('acc-origin').textContent = location.origin + '/';
+    document.getElementById('acc-path').value = ACCESS.base.replace(/^\//, '');
+    document.getElementById('acc-public').checked = ACCESS.publicLink;
+    var url = location.origin + ACCESS.base;
+    document.getElementById('acc-current').innerHTML = 'Сейчас панель открывается по адресу <b style="font-family:var(--mono);color:var(--text)">' + esc(url) +
+      '</b><button type="button" class="btn btn-ghost copy-btn" onclick="navigator.clipboard.writeText(\'' + esc(url) + '\'); this.textContent=\'скопировано\'">копировать</button>' +
+      (ACCESS.publicLink ? '' : '<br>Ссылки на неё на сайте нет.');
+  } catch (e) { formMsg('acc-msg', '✗ Не удалось загрузить', 'err'); }
+}
+function genAccessPath() {
+  var abc = 'abcdefghijkmnpqrstuvwxyz23456789', b = new Uint8Array(6), out = '';
+  crypto.getRandomValues(b); b.forEach(function(x) { out += abc[x % abc.length]; });
+  document.getElementById('acc-path').value = 'panel-' + out;
+}
+async function saveAccess(e) {
+  e.preventDefault();
+  var path = document.getElementById('acc-path').value.trim().replace(/^\/+/, '');
+  var publicLink = document.getElementById('acc-public').checked;
+  var moving = ACCESS && '/' + path !== ACCESS.base;
+  if (moving && !confirm('Перенести панель на ' + location.origin + '/' + path + '?\nСтарый адрес перестанет открываться — сохраните новый.')) return;
+  try {
+    var r = await apiSend('POST', '/admin/api/access', { path: path, publicLink: publicLink });
+    if (moving) {
+      formMsg('acc-msg', '✓ Переходим на новый адрес…', 'ok');
+      setTimeout(function() { location.href = location.origin + r.base + '#settings'; }, 900);
+    } else { formMsg('acc-msg', '✓ Сохранено', 'ok'); loadAccess(); }
+  } catch (err) { formMsg('acc-msg', '✗ ' + err.message, 'err'); }
 }
 
 async function loadSettings() {
@@ -1248,8 +1312,8 @@ async function applyDomain() {
   }
 }
 
-// Init
-loadDash();
+// Init (#settings: right after moving the panel to a new address)
+show(location.hash === '#settings' ? 'settings' : 'dash');
 checkRunningImport();
 
 // Show build version in header

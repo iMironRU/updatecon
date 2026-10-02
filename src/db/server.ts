@@ -33,6 +33,8 @@
  *   POST /admin/api/settings/its           -> save the ITS account (checked on releases.1c.ru first)
  *   DELETE /admin/api/settings/its         -> back to ITS_LOGIN / ITS_PASSWORD from .env
  *   POST /admin/api/settings/admin-password -> change the admin password (current one required)
+ *   GET|POST /admin/api/access             -> the panel's address (instead of /admin) and the site's link to it
+ *   GET  /api/site                         -> what the public site may show (the panel link, if allowed)
  *   GET  /admin/api/projects               -> releases.1c.ru projects + links
  *   GET  /admin/api/apps?q=                -> application editions (link picker)
  *   POST /admin/api/projects/link          -> manual link / unlink / back to auto
@@ -50,7 +52,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { request as httpsRequest } from "node:https";
 import { randomBytes } from "node:crypto";
-import { sql, eq, desc, getTableColumns } from "drizzle-orm";
+import { sql, eq, desc, getTableColumns, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns, patches, settings, releaseProjects } from "./schema.js";
 import { findChain } from "./chain.js";
@@ -148,6 +150,39 @@ async function safeAdminImport(source: ImportSource) {
   }
 }
 
+// ── Where the admin panel lives ────────────────────────────────────────────
+// Routes are registered under /admin; a custom address ("/panel-7k2q", set in
+// Настройки → Доступ к панели) is mapped onto them per request, and /admin
+// itself then answers like any unknown page. Outward links, redirects and the
+// session cookie use ADMIN_BASE, so a change applies at once.
+let ADMIN_BASE = "/admin";
+let ADMIN_LINK_PUBLIC = true;   // the public site's Настройки show a link to the panel
+const ADMIN_RESERVED = new Set(["api", "catalog", "config", "chain", "stats", "platform", "settings",
+  "favicon.svg", "version.json", "index.html", "assets", "static", "public"]);
+
+function adminRewrite(url: string): string {
+  if (ADMIN_BASE === "/admin") return url;
+  const under = (base: string) => url === base || url.startsWith(base + "/") || url.startsWith(base + "?");
+  if (under(ADMIN_BASE)) return "/admin" + url.slice(ADMIN_BASE.length);
+  if (under("/admin")) return "/__no-admin" + url.slice("/admin".length);   // → the site's «not found»
+  return url;
+}
+/** The admin pages carry absolute /admin/… links: point them at the current address. */
+function adminHtml(html: string): string {
+  return ADMIN_BASE === "/admin" ? html : html.replace(/(["'`(=])\/admin(?=[\/"'`?)\s])/g, `$1${ADMIN_BASE}`);
+}
+async function loadAdminAccess() {
+  try {
+    const rows = await db.select().from(settings).where(inArray(settings.key, ["admin_path", "admin_link_public"]));
+    const v = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    if (v.admin_path && /^\/[a-z0-9][a-z0-9_-]{2,48}$/.test(v.admin_path)) ADMIN_BASE = v.admin_path;
+    if (v.admin_link_public === "0") ADMIN_LINK_PUBLIC = false;
+  } catch (e) {
+    console.warn("[admin] access settings not loaded:", (e as Error).message);
+  }
+  console.log(`[admin] панель администратора: ${ADMIN_BASE}${ADMIN_LINK_PUBLIC ? "" : " (ссылка на сайте скрыта)"}`);
+}
+
 interface ResolvedConfig { id: number; edition: number | null; releasesHref: string | null; }
 
 /**
@@ -175,7 +210,8 @@ async function resolveConfig(q: Record<string, unknown>, versionHint?: string): 
 }
 
 export async function buildServer() {
-  const app = Fastify({ logger: true });
+  await loadAdminAccess();
+  const app = Fastify({ logger: true, rewriteUrl: (req) => adminRewrite(req.url ?? "/") });
   // The ITS account may come from the admin UI (settings) rather than .env.
   try { await applyItsCredentials(); } catch (e) { console.warn("[credentials] not applied:", (e as Error).message); }
 
@@ -216,7 +252,7 @@ export async function buildServer() {
       if (url.startsWith("/admin/api/")) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
-      return reply.redirect("/admin/login");
+      return reply.redirect(`${ADMIN_BASE}/login`);
     }
   });
 
@@ -225,10 +261,10 @@ export async function buildServer() {
   const forgotHtml      = readFileSync(join(__dirname, "../admin/forgot-password.html"), "utf-8");
 
   app.get("/admin/login", async (_req, reply) =>
-    reply.type("text/html").send(loginHtml));
+    reply.type("text/html").send(adminHtml(loginHtml)));
 
   app.get("/admin/forgot-password", async (_req, reply) =>
-    reply.type("text/html").send(forgotHtml));
+    reply.type("text/html").send(adminHtml(forgotHtml)));
 
   app.post("/admin/login", async (req, reply) => {
     const body = req.body as Record<string, string> | undefined ?? {};
@@ -236,27 +272,55 @@ export async function buildServer() {
     if (username === adminLogin && await checkAdminPassword(password)) {
       const token = createSession();
       reply.setCookie(COOKIE_NAME, token, {
-        path: "/admin",
+        path: ADMIN_BASE,
         httpOnly: true,
         sameSite: "strict",
         maxAge: COOKIE_TTL_MS / 1000,
       });
-      return reply.redirect("/admin");
+      return reply.redirect(ADMIN_BASE);
     }
     // Wrong credentials — redirect back with error flag
-    return reply.redirect("/admin/login?error=1");
+    return reply.redirect(`${ADMIN_BASE}/login?error=1`);
   });
 
   app.get("/admin/logout", async (_req, reply) => {
-    reply.clearCookie(COOKIE_NAME, { path: "/admin" });
-    return reply.redirect("/admin/login");
+    reply.clearCookie(COOKIE_NAME, { path: ADMIN_BASE });
+    return reply.redirect(`${ADMIN_BASE}/login`);
   });
 
   // ── Admin HTML ────────────────────────────────────────────────────────────
-  const adminHtml = readFileSync(join(__dirname, "../admin/index.html"), "utf-8");
+  const indexHtml = readFileSync(join(__dirname, "../admin/index.html"), "utf-8");
 
   app.get("/admin", async (_req, reply) =>
-    reply.type("text/html").send(adminHtml));
+    reply.type("text/html").send(adminHtml(indexHtml)));
+
+  // ── Admin API: the panel's address and the public link to it ──────────────
+  app.get("/admin/api/access", async () => ({ base: ADMIN_BASE, publicLink: ADMIN_LINK_PUBLIC }));
+
+  app.post("/admin/api/access", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | undefined) ?? {};
+    const slug = String(body.path ?? "").trim().replace(/^\/+|\/+$/g, "").toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{2,48}$/.test(slug)) {
+      return reply.code(400).send({ error: "Адрес: 3–49 символов — латиница, цифры, - и _" });
+    }
+    if (slug !== "admin" && ADMIN_RESERVED.has(slug)) return reply.code(400).send({ error: `«${slug}» занят страницей сайта` });
+    const base = "/" + slug, publicLink = body.publicLink !== false;
+    const values: Record<string, string | null> = { admin_path: base === "/admin" ? null : base, admin_link_public: publicLink ? null : "0" };
+    for (const [key, value] of Object.entries(values)) {
+      if (value === null) await db.delete(settings).where(eq(settings.key, key));
+      else await db.insert(settings).values({ key, value, updatedAt: new Date() })
+        .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
+    }
+    // Keep the current session on the new address (the cookie is path-scoped).
+    const token = req.cookies[COOKIE_NAME];
+    if (token && base !== ADMIN_BASE) {
+      reply.clearCookie(COOKIE_NAME, { path: ADMIN_BASE });
+      reply.setCookie(COOKIE_NAME, token, { path: base, httpOnly: true, sameSite: "strict", maxAge: COOKIE_TTL_MS / 1000 });
+    }
+    ADMIN_BASE = base; ADMIN_LINK_PUBLIC = publicLink;
+    console.log(`[admin] панель администратора: ${ADMIN_BASE}${ADMIN_LINK_PUBLIC ? "" : " (ссылка на сайте скрыта)"}`);
+    return { ok: true, base, publicLink };
+  });
 
   // ── Admin API ─────────────────────────────────────────────────────────────
   app.get("/admin/api/status", async () => {
@@ -1006,6 +1070,10 @@ export async function buildServer() {
     if (!rows) return reply.code(400).send({ error: "platform: 8.3.24 or 8.3.24.1691" });
     return rows;
   });
+
+  // The public site shows a link to the panel only if allowed (else the
+  // address is not given away).
+  app.get("/api/site", async () => ({ adminLink: ADMIN_LINK_PUBLIC ? ADMIN_BASE : null }));
 
   app.get("/api/tags", async () =>
     TAGS.map((t) => ({ tag: t.tag, title: t.title, core: t.core })));
