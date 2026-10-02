@@ -33,22 +33,19 @@ if [ "$IMPORT" = 1 ]; then
       case "$line" in ITS_LOGIN=*|ITS_PASSWORD=*) export "${line%$'\r'}";; esac
     done < .env
   fi
+  # Continue the published lineage: ids (and /config/<id> links on installs
+  # that live on snapshots) stay the same. A no-op when it is already applied.
+  echo "[snapshot] taking the published snapshot first…"
+  node dist/db/snapshot.js apply
   echo "[snapshot] «Обновить всё» on the local database…"
-  node --input-type=module -e '
-    import { applyItsCredentials } from "./dist/db/credentials.js";
-    import { runFullUpdate } from "./dist/db/pipeline.js";
-    import { pool } from "./dist/db/client.js";
-    const c = await applyItsCredentials();
-    if (c.source === "none") { console.error("no ITS account (.env or admin UI)"); process.exit(1); }
-    const r = await runFullUpdate({ trigger: "manual" });
-    await pool.end();
-    if (r.status === "error" || r.status === "cancelled") { console.error("update failed:", r.summary); process.exit(1); }'
+  node dist/db/pipeline.js
 fi
 
 echo "[snapshot] dumping…"
 node dist/db/snapshot.js create "$OUT" --commit "$(git rev-parse --short HEAD)"
 
 if [ "$UPLOAD" = 1 ]; then
+  node dist/db/snapshot.js check "$OUT"
   gh release view data >/dev/null 2>&1 || gh release create data --latest=false \
     --title "Снимок базы данных" \
     --notes "Готовая база Апдейкона для установок без учётки ИТС: snapshot.ndjson.gz + snapshot.json. Обновляется scripts/snapshot.sh; установки берут её сами (src/db/snapshot.ts)."

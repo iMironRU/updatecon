@@ -154,6 +154,16 @@ links (re-resolved by template_key + edition) and manual tags. `settings` and
 snapshot-fed installs share /config/<id> links with it. `SNAPSHOT_URL=off`
 disables it.
 
+Publishing is automatic: `.github/workflows/snapshot.yml` (nightly 00:00 UTC +
+manual) runs on a Postgres service — migrations → **apply the published
+snapshot** → «Обновить всё» (`node dist/db/pipeline.js`, ITS account from the
+repo secrets ITS_LOGIN / ITS_PASSWORD) → `snapshot.js create` → `snapshot.js
+check` (refuses when a key table lost >5 % against the published one or the
+schema is older) → upload. Always continue the published lineage — never build
+a snapshot from an empty database, or every config id changes. scripts/snapshot.sh
+does the same locally. A worker on an EMPTY database also starts from the
+snapshot, ITS account or not, then imports on top.
+
 ## Admin panel address
 
 Routes are registered under `/admin`. A custom address (settings `admin_path`,

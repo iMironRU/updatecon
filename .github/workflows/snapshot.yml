@@ -1,0 +1,102 @@
+name: Database snapshot
+
+# Builds the database snapshot that installations without an ITS account take
+# (src/db/snapshot.ts) and publishes it to the `data` release — the same as
+# `npm run snapshot` on a developer machine:
+#   1. continue from the published snapshot (ids, and /config/<id> links on
+#      snapshot-fed installs, stay the same);
+#   2. «Обновить всё» with the ITS account from the repository secrets
+#      ITS_LOGIN / ITS_PASSWORD;
+#   3. dump, compare with the published one (a broken import must not replace
+#      good data), upload.
+on:
+  schedule:
+    - cron: "0 0 * * *"        # 03:00 МСК; installs look for a new snapshot at 04:00
+  workflow_dispatch:
+    inputs:
+      import:
+        description: "«Обновить всё» перед выгрузкой (иначе — только пересобрать снимок)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write              # upload to the `data` release
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: upd
+          POSTGRES_PASSWORD: upd
+          POSTGRES_DB: upd
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U upd"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://upd:upd@localhost:5432/upd
+      ITS_LOGIN: ${{ secrets.ITS_LOGIN }}
+      ITS_PASSWORD: ${{ secrets.ITS_PASSWORD }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: ITS account present
+        if: github.event_name == 'schedule' || inputs.import
+        run: |
+          if [ -z "$ITS_LOGIN" ] || [ -z "$ITS_PASSWORD" ]; then
+            echo "::error::Нет секретов ITS_LOGIN / ITS_PASSWORD (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Migrations
+        run: |
+          node --input-type=module -e '
+            import pg from "pg";
+            import { drizzle } from "drizzle-orm/node-postgres";
+            import { migrate } from "drizzle-orm/node-postgres/migrator";
+            const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+            await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
+            await pool.end();'
+
+      - name: Continue from the published snapshot
+        run: node dist/db/snapshot.js apply --force
+
+      - name: «Обновить всё»
+        if: github.event_name == 'schedule' || inputs.import
+        run: node dist/db/pipeline.js
+
+      - name: Dump
+        run: node dist/db/snapshot.js create data/snapshot --commit "${GITHUB_SHA::7}"
+
+      - name: Compare with the published snapshot
+        run: node dist/db/snapshot.js check data/snapshot
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view data >/dev/null 2>&1 || gh release create data --latest=false \
+            --title "Снимок базы данных" \
+            --notes "Готовая база Апдейкона для установок без учётки ИТС. Собирается .github/workflows/snapshot.yml."
+          # The data first, then its description: an install reading the new json always finds its file.
+          gh release upload data data/snapshot/snapshot.ndjson.gz --clobber
+          gh release upload data data/snapshot/snapshot.json --clobber
+          echo "### Снимок опубликован" >> "$GITHUB_STEP_SUMMARY"
+          node -e 'const m=require("./data/snapshot/snapshot.json"); console.log(Object.entries(m.tables).map(([t,n])=>`- ${t}: ${n}`).join("\n"))' >> "$GITHUB_STEP_SUMMARY"

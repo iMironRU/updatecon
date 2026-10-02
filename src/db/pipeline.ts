@@ -15,8 +15,10 @@
  * import_runs (source = 'all') — a nightly run can be read in the admin UI.
  */
 
+import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
-import { db } from "./client.js";
+import { db, pool } from "./client.js";
+import { applyItsCredentials } from "./credentials.js";
 import { importRuns } from "./schema.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
@@ -190,4 +192,16 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
       AND id NOT IN (SELECT id FROM import_runs WHERE source = 'all' ORDER BY id DESC LIMIT ${KEEP_LOGS})
   `);
   return { status, summary };
+}
+
+// CLI: node dist/db/pipeline.js — «Обновить всё» on DATABASE_URL (scripts/snapshot.sh,
+// the snapshot workflow). Exit 1 when nothing could be updated or it was cancelled.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  (async () => {
+    const c = await applyItsCredentials();
+    if (c.source === "none") { console.error("no ITS account (ITS_LOGIN / ITS_PASSWORD or the admin UI)"); process.exitCode = 1; return; }
+    const r = await runFullUpdate({ trigger: "manual" });
+    console.log(`[update] ${r.status}: ${r.summary}`);
+    if (r.status === "error" || r.status === "cancelled") process.exitCode = 1;
+  })().then(() => pool.end()).catch(async (e) => { console.error(e); await pool.end().catch(() => {}); process.exit(1); });
 }

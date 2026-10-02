@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { migrate as drizzleMigrate } from "drizzle-orm/node-postgres/migrator";
 import cron from "node-cron";
+import { sql } from "drizzle-orm";
 import { db } from "./client.js";
 import { runFullUpdate } from "./pipeline.js";
 import { applyItsCredentials } from "./credentials.js";
@@ -62,6 +63,19 @@ async function main() {
     console.log(`[worker] tags: own=${t.own} based=${t.based} (solutions ${t.bySolutions}, versions ${t.byVersions})`);
   } catch (e) {
     console.error("[worker] tags refresh failed:", (e as Error).message);
+  }
+
+  // A brand-new database starts from the published snapshot — even with an ITS
+  // account: the first own import then only adds what is new (minutes, not a
+  // full collection), and ids follow the published lineage.
+  try {
+    const r = await db.execute(sql`SELECT NOT EXISTS (SELECT 1 FROM configurations) AS empty`);
+    if ((((r as any).rows ?? r) as { empty: boolean }[])[0]?.empty) {
+      const s = await syncSnapshot();
+      console.log(`[worker] empty database → snapshot: ${s.status} — ${s.message}`);
+    }
+  } catch (e) {
+    console.error("[worker] snapshot for an empty database failed:", (e as Error).message);
   }
 
   if (process.env.IMPORT_ON_START === "1") {

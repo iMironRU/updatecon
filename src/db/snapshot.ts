@@ -286,11 +286,23 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       console.log("Выгружаем таблицы…");
       const m = await createSnapshot(dir, { commit });
       console.log(`Готово: ${join(dir, FILE)} — ${(m.bytes / 1024 / 1024).toFixed(1)} МБ, sha256 ${m.sha256.slice(0, 16)}…`);
+    } else if (cmd === "check" && dir) {
+      // Before publishing: a snapshot that lost a noticeable share of rows
+      // against the published one is a broken import, not news — refuse it.
+      const mine = JSON.parse(readFileSync(join(dir, META), "utf8")) as SnapshotMeta;
+      const prev = await remoteMeta().catch(() => null);
+      if (!prev) { console.log("no published snapshot yet — nothing to compare"); return; }
+      const bad = ["configurations", "update_edges", "version_meta", "release_projects", "platform_builds"]
+        .filter((t) => (prev.tables[t] ?? 0) > 0 && (mine.tables[t] ?? 0) < prev.tables[t] * 0.95)
+        .map((t) => `${t}: ${prev.tables[t]} → ${mine.tables[t] ?? 0}`);
+      if (mine.migrations < prev.migrations) bad.push(`schema older than the published one (${mine.migrations} < ${prev.migrations})`);
+      if (bad.length) { console.error("refusing to publish:\n  " + bad.join("\n  ")); process.exitCode = 1; return; }
+      console.log("ok against the published snapshot: " + Object.entries(mine.tables).map(([t, n]) => `${t} ${n}`).join(", "));
     } else if (cmd === "apply") {
       const r = await syncSnapshot({ force: process.argv.includes("--force") });
       console.log(r.status, r.message);
     } else {
-      console.log("usage: snapshot.js create <dir> [--commit <sha>] | apply [--force]");
+      console.log("usage: snapshot.js create <dir> [--commit <sha>] | check <dir> | apply [--force]");
       process.exitCode = 2;
     }
   })().then(() => pool.end()).catch(async (e) => { console.error(e); await pool.end().catch(() => {}); process.exit(1); });
