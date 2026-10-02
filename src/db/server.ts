@@ -28,6 +28,9 @@
  *   POST /admin/api/import/releases        -> trigger releases import
  *   POST /admin/api/import/all             -> «Обновить всё»: LST, then releases.1c.ru (pipeline.ts)
  *   GET  /admin/api/logs/:id               -> stored full log of an «Обновить всё» run
+ *   POST /admin/api/settings/its           -> save the ITS account (checked on releases.1c.ru first)
+ *   DELETE /admin/api/settings/its         -> back to ITS_LOGIN / ITS_PASSWORD from .env
+ *   POST /admin/api/settings/admin-password -> change the admin password (current one required)
  *   GET  /admin/api/projects               -> releases.1c.ru projects + links
  *   GET  /admin/api/apps?q=                -> application editions (link picker)
  *   POST /admin/api/projects/link          -> manual link / unlink / back to auto
@@ -55,6 +58,10 @@ import { moreStats, platformCheck, releasesBy, platformInfo } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
+import {
+  applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
+  checkAdminPassword, setAdminPassword, adminPasswordSource,
+} from "./credentials.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
 import { ReleasesSession } from "../releases/fetch-releases.js";
 import { parsePatchesPage } from "../releases/parse-releases.js";
@@ -160,10 +167,12 @@ async function resolveConfig(q: Record<string, unknown>, versionHint?: string): 
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
+  // The ITS account may come from the admin UI (settings) rather than .env.
+  try { await applyItsCredentials(); } catch (e) { console.warn("[credentials] not applied:", (e as Error).message); }
 
   // ── Admin session auth (cookie-based) ─────────────────────────────────────
+  // The password can be changed in the admin UI (a hash in settings); else .env.
   const adminLogin    = process.env.ADMIN_LOGIN    ?? "admin";
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "admin";
   const COOKIE_NAME   = "uc_admin_session";
   const COOKIE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
@@ -215,7 +224,7 @@ export async function buildServer() {
   app.post("/admin/login", async (req, reply) => {
     const body = req.body as Record<string, string> | undefined ?? {};
     const { username = "", password = "" } = body;
-    if (username === adminLogin && password === adminPassword) {
+    if (username === adminLogin && await checkAdminPassword(password)) {
       const token = createSession();
       reply.setCookie(COOKIE_NAME, token, {
         path: "/admin",
@@ -248,9 +257,7 @@ export async function buildServer() {
       .orderBy(desc(importRuns.id))
       .limit(5);
 
-    const itsLogin = process.env.ITS_LOGIN
-      ? process.env.ITS_LOGIN.slice(0, 3) + "•".repeat(Math.max(0, process.env.ITS_LOGIN.length - 3))
-      : "(не задан)";
+    const its = await itsCredentials();
 
     const dbUrl = process.env.DATABASE_URL
       ? process.env.DATABASE_URL.replace(/:([^:@]+)@/, ":••••@")
@@ -258,8 +265,12 @@ export async function buildServer() {
 
     return {
       cron: process.env.IMPORT_CRON ?? "0 4 * * *",
-      itsLogin,
+      // The ITS login is shown in full to the signed-in admin; the password never leaves the server.
+      itsLogin: its.login,
+      itsSource: its.source,               // admin | env | none
+      itsUnreadable: !!its.unreadable,     // saved in the admin UI, but the DB password changed since
       adminLogin,
+      adminPasswordSource: await adminPasswordSource(),
       dbUrl,
       port: process.env.PORT ?? "3000",
       recentRuns,
@@ -275,6 +286,39 @@ export async function buildServer() {
       .orderBy(desc(importRuns.id))
       .limit(limit);
     return { runs };
+  });
+
+  // ── Admin API: credentials ──────────────────────────────────────────────
+  app.post("/admin/api/settings/its", async (req, reply) => {
+    const { login = "", password = "" } = (req.body as Record<string, string> | undefined) ?? {};
+    const l = String(login).trim();
+    let p = String(password);
+    if (!l) return reply.code(400).send({ error: "Укажите логин ИТС" });
+    // Only the login changed: keep the password we already use.
+    if (!p) {
+      const cur = await itsCredentials();
+      if (!cur.password) return reply.code(400).send({ error: "Укажите пароль ИТС" });
+      p = cur.password;
+    }
+    let ok: boolean;
+    try { ok = await verifyItsLogin(l, p); }
+    catch (e) { return reply.code(502).send({ error: `Не удалось проверить на releases.1c.ru: ${(e as Error).message}` }); }
+    if (!ok) return reply.code(400).send({ error: "releases.1c.ru не принял этот логин и пароль" });
+    const c = await saveItsCredentials(l, p);
+    return { ok: true, login: c.login, source: c.source };
+  });
+
+  app.delete("/admin/api/settings/its", async () => {
+    const c = await clearItsCredentials();
+    return { ok: true, login: c.login, source: c.source };
+  });
+
+  app.post("/admin/api/settings/admin-password", async (req, reply) => {
+    const { current = "", next = "" } = (req.body as Record<string, string> | undefined) ?? {};
+    if (!(await checkAdminPassword(String(current)))) return reply.code(400).send({ error: "Текущий пароль неверный" });
+    if (String(next).length < 8) return reply.code(400).send({ error: "Новый пароль — не короче 8 символов" });
+    await setAdminPassword(String(next));
+    return { ok: true };
   });
 
   app.get("/admin/api/logs/:id", async (req, reply) => {
@@ -325,7 +369,7 @@ export async function buildServer() {
       if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
         return reply
           .status(400)
-          .send({ error: "ITS_LOGIN / ITS_PASSWORD не заданы в .env" });
+          .send({ error: "Учётка ИТС не задана — Настройки → Доступ к ИТС" });
       }
       const lastRun =
         (await db

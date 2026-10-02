@@ -16,6 +16,7 @@ import { migrate as drizzleMigrate } from "drizzle-orm/node-postgres/migrator";
 import cron from "node-cron";
 import { db } from "./client.js";
 import { runFullUpdate } from "./pipeline.js";
+import { applyItsCredentials } from "./credentials.js";
 import { refreshTags } from "./tags.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,6 +35,9 @@ async function migrate() {
 async function safeImport(trigger: "scheduled" | "on-start") {
   console.log(`[worker] update start (${trigger}) ${new Date().toISOString()}`);
   try {
+    // The ITS account may have been changed in the admin UI since the last run.
+    const c = await applyItsCredentials();
+    console.log(`[worker] ITS account: ${c.source === "none" ? "не задан" : c.source === "admin" ? "из админки" : "из .env"}`);
     const r = await runFullUpdate({ trigger });
     console.log(`[worker] update ${r.status}: ${r.summary}`);
   } catch (e) {

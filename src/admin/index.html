@@ -99,6 +99,14 @@ tr:hover td { background: var(--surface2); }
 .field input:focus { border-color: var(--blue); }
 .field input[readonly] { color: var(--muted); cursor: default; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
+.form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.form-msg { font-size: 13px; }
+.form-msg.ok { color: var(--green); } .form-msg.err { color: var(--red); } .form-msg.wait { color: var(--muted); }
+.src-badge { margin-left: auto; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 12px;
+  background: var(--surface2); color: var(--muted); }
+.src-badge.admin { background: rgba(63,185,80,.15); color: var(--green); }
+.src-badge.none { background: rgba(248,81,73,.15); color: var(--red); }
 .hint { font-size: 11px; color: var(--light); margin-top: 4px; }
 .alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; display: flex; align-items: flex-start; gap: 8px; }
 .alert-warn { background: rgba(210,153,34,.1); border: 1px solid rgba(210,153,34,.3); color: var(--orange); }
@@ -215,7 +223,7 @@ tr.run-all td { background: rgba(88,166,255,.05); }
             <div class="hint">Задаётся в .env — применяется без перезапуска воркера.</div>
           </div>
           <div class="field">
-            <label>ITS_LOGIN</label>
+            <label>Учётка ИТС</label>
             <input id="s-its" readonly>
           </div>
         </div>
@@ -414,31 +422,69 @@ tr.run-all td { background: rgba(88,166,255,.05); }
       </div>
     </div>
 
+    <!-- ITS account: saved here it wins over .env and applies at once (no restart). -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Доступ к ИТС</span><span class="src-badge" id="its-src"></span></div>
+      <div class="card-body">
+        <div class="hint" style="margin:0 0 14px;font-size:12px">Логин портала 1С (releases.1c.ru, downloads.v8.1c.ru) — для импорта обновлений.
+          Перед сохранением проверяется входом на releases.1c.ru; пароль хранится в базе зашифрованным.</div>
+        <div class="alert alert-warn" id="its-unreadable" style="display:none">Сохранённый в админке пароль ИТС больше не читается (сменился пароль базы данных) — введите его заново.</div>
+        <form class="field-row" onsubmit="saveIts(event)" autocomplete="off">
+          <div class="field">
+            <label for="cfg-its-login">Логин ИТС</label>
+            <input id="cfg-its-login" autocomplete="username" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="cfg-its-password">Пароль ИТС</label>
+            <input id="cfg-its-password" type="password" autocomplete="new-password">
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit" id="its-save">Проверить и сохранить</button>
+            <button class="btn btn-ghost" type="button" id="its-reset" onclick="resetIts()" style="display:none">Вернуть из .env</button>
+            <span class="form-msg" id="its-msg"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Пароль администратора</span><span class="src-badge" id="adm-src"></span></div>
+      <div class="card-body">
+        <form onsubmit="saveAdminPassword(event)">
+          <div class="field-row">
+            <div class="field">
+              <label for="cfg-admin-login">Логин</label>
+              <input id="cfg-admin-login" readonly autocomplete="username">
+              <div class="hint">Логин задаётся в .env (ADMIN_LOGIN).</div>
+            </div>
+            <div class="field">
+              <label for="adm-current">Текущий пароль</label>
+              <input id="adm-current" type="password" autocomplete="current-password" required>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="adm-next">Новый пароль</label>
+              <input id="adm-next" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+            <div class="field">
+              <label for="adm-next2">Новый пароль ещё раз</label>
+              <input id="adm-next2" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Сменить пароль</button>
+            <span class="form-msg" id="adm-msg"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header"><span class="card-title">Конфигурация сервера</span></div>
       <div class="card-body">
         <div class="alert alert-warn" style="margin-bottom:18px">
-          Параметры задаются через переменные окружения (.env) и применяются при перезапуске сервиса.
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>ADMIN_LOGIN</label>
-            <input id="cfg-admin-login" readonly>
-          </div>
-          <div class="field">
-            <label>ADMIN_PASSWORD</label>
-            <input value="••••••••" readonly>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>ITS_LOGIN</label>
-            <input id="cfg-its-login" readonly>
-          </div>
-          <div class="field">
-            <label>ITS_PASSWORD</label>
-            <input value="••••••••" readonly>
-          </div>
+          Эти параметры задаются в .env на сервере и применяются при перезапуске.
         </div>
         <div class="field">
           <label>IMPORT_CRON <span style="font-weight:400;text-transform:none">(cron-выражение)</span></label>
@@ -566,7 +612,7 @@ async function loadDash() {
     document.getElementById('s-date').textContent = lr ? fmtDate(lr.finishedAt) : '—';
     document.getElementById('s-status').innerHTML = lr ? badge(lr.status) + ' ' + (lr.message||'').slice(0,60) : '';
     document.getElementById('s-cron').value = status.cron;
-    document.getElementById('s-its').value = status.itsLogin;
+    document.getElementById('s-its').value = status.itsSource === 'none' ? 'не задана — Настройки → Доступ к ИТС' : status.itsLogin + ' (' + (status.itsSource === 'admin' ? 'из админки' : 'из .env') + ')';
     document.getElementById('hdr-user').textContent = status.adminLogin;
 
     const runs = status.recentRuns || [];
@@ -587,11 +633,68 @@ async function loadLogs() {
   }
 }
 
+const SRC_TEXT = { admin: 'задан в админке', env: 'из .env', none: 'не задан' };
+function setSrc(id, src) {
+  const el = document.getElementById(id);
+  el.textContent = SRC_TEXT[src] || src; el.className = 'src-badge ' + src;
+}
+function formMsg(id, text, kind) { const el = document.getElementById(id); el.textContent = text; el.className = 'form-msg ' + (kind || ''); }
+async function apiSend(method, path, body) {
+  const r = await fetch(location.origin + path, { method, credentials: 'include',
+    headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+  return data;
+}
+function showIts(s) {
+  document.getElementById('cfg-its-login').value = s.itsLogin || '';
+  const pw = document.getElementById('cfg-its-password');
+  pw.value = '';
+  pw.placeholder = s.itsSource === 'none' ? 'не задан' : '•••••••• — оставьте пустым, чтобы не менять';
+  setSrc('its-src', s.itsSource);
+  document.getElementById('its-reset').style.display = s.itsSource === 'admin' ? '' : 'none';
+  document.getElementById('its-unreadable').style.display = s.itsUnreadable ? '' : 'none';
+}
+async function saveIts(e) {
+  e.preventDefault();
+  const login = document.getElementById('cfg-its-login').value.trim();
+  const password = document.getElementById('cfg-its-password').value;
+  const btn = document.getElementById('its-save');
+  btn.disabled = true; formMsg('its-msg', 'Проверяем вход на releases.1c.ru…', 'wait');
+  try {
+    await apiSend('POST', '/admin/api/settings/its', { login, password });
+    formMsg('its-msg', '✓ Вход прошёл, учётка сохранена — действует сразу', 'ok');
+    showIts(await apiFetch('/admin/api/status'));
+  } catch (err) { formMsg('its-msg', '✗ ' + err.message, 'err'); }
+  finally { btn.disabled = false; }
+}
+async function resetIts() {
+  if (!confirm('Убрать учётку ИТС из админки и вернуться к ITS_LOGIN / ITS_PASSWORD из .env?')) return;
+  try {
+    await apiSend('DELETE', '/admin/api/settings/its');
+    formMsg('its-msg', 'Используются значения из .env', 'ok');
+    showIts(await apiFetch('/admin/api/status'));
+  } catch (err) { formMsg('its-msg', '✗ ' + err.message, 'err'); }
+}
+async function saveAdminPassword(e) {
+  e.preventDefault();
+  const current = document.getElementById('adm-current').value;
+  const next = document.getElementById('adm-next').value, next2 = document.getElementById('adm-next2').value;
+  if (next !== next2) { formMsg('adm-msg', '✗ Новые пароли не совпадают', 'err'); return; }
+  try {
+    await apiSend('POST', '/admin/api/settings/admin-password', { current, next });
+    ['adm-current', 'adm-next', 'adm-next2'].forEach(id => { document.getElementById(id).value = ''; });
+    formMsg('adm-msg', '✓ Пароль изменён — со следующего входа действует новый', 'ok');
+    setSrc('adm-src', 'admin');
+  } catch (err) { formMsg('adm-msg', '✗ ' + err.message, 'err'); }
+}
+
 async function loadSettings() {
   try {
     const s = await apiFetch('/admin/api/status');
     document.getElementById('cfg-admin-login').value = s.adminLogin;
-    document.getElementById('cfg-its-login').value = s.itsLogin;
+    showIts(s);
+    setSrc('adm-src', s.adminPasswordSource);
     document.getElementById('cfg-cron').value = s.cron;
     document.getElementById('cfg-db').value = s.dbUrl;
     document.getElementById('cfg-port').value = s.port;
