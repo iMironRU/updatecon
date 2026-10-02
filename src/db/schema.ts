@@ -185,6 +185,9 @@ export const importRuns = pgTable(
     edgesUnchanged: integer("edges_unchanged").notNull().default(0),
     status: text("status").notNull().default("ok"), // ok | skipped | error
     message: text("message").notNull().default(""),
+    // Full text log of a "обновить всё" run (source = 'all'); kept for the
+    // latest runs only — see pipeline.ts.
+    log: text("log"),
     startedAt: timestamp("started_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

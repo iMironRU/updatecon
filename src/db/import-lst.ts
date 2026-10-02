@@ -281,8 +281,12 @@ export async function runImport(argPath?: string, opts: LstImportOptions = {}) {
       if ((r as any).inserted) edgesUpserted++;
       else edgesUnchanged++;
     }
+    // One line per 10% — the log is read by people, not a progress bar.
     const done = Math.min(i + BULK, totalEdges);
-    log(`Запись в БД: ${done} / ${totalEdges} (${Math.round(done / totalEdges * 100)}%)`);
+    const pct = Math.floor(done / totalEdges * 10);
+    if (pct > Math.floor(i / totalEdges * 10) || done === totalEdges) {
+      log(`Запись в БД: ${done} / ${totalEdges} (${Math.round(done / totalEdges * 100)}%)`);
+    }
   }
 
   await db.insert(importRuns).values({

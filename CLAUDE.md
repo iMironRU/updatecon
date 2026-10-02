@@ -29,6 +29,8 @@ src/db/
   manifests.ts          platform generation (8.2/8.3/8.5) from tmplts/<pkg>/1cv8.mft
   transitions.ts        "переходы" between products/editions from LST package sources
   stats.ts              stats page aggregates (/api/stats/more) + platform check (/api/platform-check)
+  pipeline.ts           «Обновить всё»: LST → releases.1c.ru → 1С:Решения in one run with a summary;
+                        used by the admin button and the scheduled worker; full log kept in import_runs.log
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
@@ -102,7 +104,10 @@ drizzle/                generated migration SQL (committed)
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on
   `(config_id, edition, from_version)` and `(... to_version)`.
-- `import_runs` (file_sha256, counts, status: ok|skipped|error).
+- `import_runs` (file_sha256, counts, status: ok|skipped|error; source lst|releases|all).
+  Rows with source `all` are «Обновить всё» runs (status ok|partial|error|cancelled), their
+  `log` holds the full text log (kept for the latest 30). Never select `log` into lists or
+  public endpoints — server.ts uses `RUN_COLS` / `RUN_LIST` without it.
 
 A parsed record `to <- [from...]` fans out into ONE edge per from-version,
 owned by the application edition of its own package (template of `cfuPath`

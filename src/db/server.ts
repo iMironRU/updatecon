@@ -25,6 +25,8 @@
  *   GET  /admin/api/import/status          -> is import running + last run
  *   POST /admin/api/import/lst             -> trigger LST import
  *   POST /admin/api/import/releases        -> trigger releases import
+ *   POST /admin/api/import/all             -> «Обновить всё»: LST, then releases.1c.ru (pipeline.ts)
+ *   GET  /admin/api/logs/:id               -> stored full log of an «Обновить всё» run
  *   GET  /admin/api/projects               -> releases.1c.ru projects + links
  *   GET  /admin/api/apps?q=                -> application editions (link picker)
  *   POST /admin/api/projects/link          -> manual link / unlink / back to auto
@@ -42,7 +44,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { request as httpsRequest } from "node:https";
 import { randomBytes } from "node:crypto";
-import { sql, eq, desc } from "drizzle-orm";
+import { sql, eq, desc, getTableColumns } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns, patches, settings, releaseProjects } from "./schema.js";
 import { findChain } from "./chain.js";
@@ -51,41 +53,57 @@ import { TAGS, refreshTags, setManualTags } from "./tags.js";
 import { moreStats, platformCheck, releasesBy } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
+import { runFullUpdate } from "./pipeline.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
 import { ReleasesSession } from "../releases/fetch-releases.js";
 import { parsePatchesPage } from "../releases/parse-releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// In-memory lock: only one import per source at a time.
+// In-memory lock: one import at a time — «Обновить всё» runs both sources, and
+// the single-source runs touch the same tables.
+type ImportSource = "lst" | "releases" | "all";
 const importRunning: Record<string, boolean> = {};
+const anyImportRunning = () => Object.values(importRunning).some(Boolean);
 
 // Per-source log buffer (cleared on each new run)
 interface LogEntry { ts: string; text: string; }
-const importLogs: Record<string, LogEntry[]> = { lst: [], releases: [] };
+const importLogs: Record<string, LogEntry[]> = { lst: [], releases: [], all: [] };
 const importProgress: Record<string, { current: number; total: number }> =
-  { lst: { current: 0, total: 0 }, releases: { current: 0, total: 0 } };
-const importAbort: Record<string, AbortController | null> = { lst: null, releases: null };
+  { lst: { current: 0, total: 0 }, releases: { current: 0, total: 0 }, all: { current: 0, total: 0 } };
+const importAbort: Record<string, AbortController | null> = { lst: null, releases: null, all: null };
 
 function addImportLog(source: string, text: string) {
   const ts = new Date().toLocaleTimeString("ru-RU",
     { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   importLogs[source].push({ ts, text });
-  if (importLogs[source].length > 1000) importLogs[source].shift();
+  if (importLogs[source].length > 5000) importLogs[source].shift();
   console.log(`[admin/${source}] ${text}`);
 }
 
-async function safeAdminImport(source: "lst" | "releases") {
-  if (importRunning[source]) return;
+// import_runs without the stored full log (that one is fetched per run).
+const { log: _runLog, ...RUN_COLS } = getTableColumns(importRuns);
+const RUN_LIST = { ...RUN_COLS, hasLog: sql<boolean>`(${importRuns.log} IS NOT NULL)` };
+
+async function safeAdminImport(source: ImportSource) {
+  if (anyImportRunning()) return;
   importRunning[source] = true;
   importLogs[source] = [];
   importProgress[source] = { current: 0, total: 0 };
   const ac = new AbortController();
   importAbort[source] = ac;
 
-  addImportLog(source, "Импорт запущен");
+  if (source !== "all") addImportLog(source, "Импорт запущен");
   try {
-    if (source === "lst") {
+    if (source === "all") {
+      // Progress goes to the bar; the log keeps the per-project results.
+      await runFullUpdate({
+        trigger: "manual",
+        onLog: (msg) => addImportLog(source, msg),
+        onProgress: (cur, tot) => { importProgress[source] = { current: cur, total: tot }; },
+        signal: ac.signal,
+      });
+    } else if (source === "lst") {
       await runImport(undefined, { onLog: (msg) => addImportLog(source, msg) });
     } else {
       await runReleasesImport(undefined, undefined, {
@@ -224,7 +242,7 @@ export async function buildServer() {
   // ── Admin API ─────────────────────────────────────────────────────────────
   app.get("/admin/api/status", async () => {
     const recentRuns = await db
-      .select()
+      .select(RUN_LIST)
       .from(importRuns)
       .orderBy(desc(importRuns.id))
       .limit(5);
@@ -251,11 +269,19 @@ export async function buildServer() {
   app.get("/admin/api/logs", async (req) => {
     const limit = Math.min(Number((req.query as any).limit ?? 50), 200);
     const runs = await db
-      .select()
+      .select(RUN_LIST)
       .from(importRuns)
       .orderBy(desc(importRuns.id))
       .limit(limit);
     return { runs };
+  });
+
+  app.get("/admin/api/logs/:id", async (req, reply) => {
+    const id = Number((req.params as any).id);
+    if (!Number.isInteger(id)) return reply.code(400).send({ error: "bad id" });
+    const [row] = await db.select({ id: importRuns.id, log: importRuns.log, message: importRuns.message })
+      .from(importRuns).where(eq(importRuns.id, id));
+    return row ?? reply.code(404).send({ error: "not found" });
   });
 
   app.get(
@@ -263,7 +289,7 @@ export async function buildServer() {
     async () => {
       const lastRun =
         (await db
-          .select()
+          .select(RUN_LIST)
           .from(importRuns)
           .orderBy(desc(importRuns.id))
           .limit(1))[0] ?? null;
@@ -274,12 +300,12 @@ export async function buildServer() {
   app.post(
     "/admin/api/import/lst",
     async (_req, reply) => {
-      if (importRunning["lst"]) {
-        return reply.status(409).send({ error: "LST import already running" });
+      if (anyImportRunning()) {
+        return reply.status(409).send({ error: "Импорт уже выполняется" });
       }
       const lastRun =
         (await db
-          .select()
+          .select(RUN_LIST)
           .from(importRuns)
           .orderBy(desc(importRuns.id))
           .limit(1))[0] ?? null;
@@ -292,10 +318,8 @@ export async function buildServer() {
   app.post(
     "/admin/api/import/releases",
     async (_req, reply) => {
-      if (importRunning["releases"]) {
-        return reply
-          .status(409)
-          .send({ error: "Releases import already running" });
+      if (anyImportRunning()) {
+        return reply.status(409).send({ error: "Импорт уже выполняется" });
       }
       if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
         return reply
@@ -304,7 +328,7 @@ export async function buildServer() {
       }
       const lastRun =
         (await db
-          .select()
+          .select(RUN_LIST)
           .from(importRuns)
           .orderBy(desc(importRuns.id))
           .limit(1))[0] ?? null;
@@ -312,6 +336,12 @@ export async function buildServer() {
       return { started: true, lastRunId: lastRun?.id ?? 0 };
     },
   );
+
+  app.post("/admin/api/import/all", async (_req, reply) => {
+    if (anyImportRunning()) return reply.status(409).send({ error: "Импорт уже выполняется" });
+    void safeAdminImport("all");
+    return { started: true };
+  });
 
   // Live log stream: GET /admin/api/import/log?source=releases&offset=0
   app.get("/admin/api/import/log", async (req) => {
@@ -889,7 +919,7 @@ export async function buildServer() {
       db.execute(sql`SELECT count(DISTINCT coalesce(template_key, id::text))::int c FROM configurations`),
       db.execute(sql`SELECT count(*)::int c FROM update_edges`),
       db.execute(sql`SELECT count(DISTINCT to_version)::int c FROM update_edges`),
-      db.select().from(importRuns)
+      db.select(RUN_COLS).from(importRuns)
         .where(eq(importRuns.status, "ok"))
         .orderBy(desc(importRuns.id))
         .limit(1),

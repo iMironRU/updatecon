@@ -85,6 +85,13 @@
       "when": 1790821634601,
       "tag": "0011_safe_the_twelve",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790917335953,
+      "tag": "0012_demonic_mister_fear",
+      "breakpoints": true
     }
   ]
 }

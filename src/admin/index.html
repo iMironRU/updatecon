@@ -130,6 +130,20 @@ tr:hover td { background: var(--surface2); }
 .log-err   { color: var(--red); }
 .log-info  { color: var(--blue); }
 .log-done  { color: var(--orange); font-weight: 600; }
+.log-step  { color: #e6edf3; font-weight: 700; }
+.log-warn  { color: var(--orange); }
+.import-log.tall { height: 460px; }
+.update-main { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.update-main .btn-primary { font-size: 15px; padding: 10px 20px; }
+.update-main-text { font-size: 13px; color: var(--muted); line-height: 1.5; flex: 1; min-width: 240px; }
+.update-steps { margin-bottom: 18px; font-size: 13px; color: var(--muted); }
+.update-steps summary { cursor: pointer; user-select: none; }
+.update-steps-body { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.update-steps-body .btn { font-size: 12px; padding: 5px 12px; }
+.badge-partial { background: rgba(210,153,34,.15); color: var(--orange); }
+.log-viewer { margin-top: 16px; }
+tr.run-all td { background: rgba(88,166,255,.05); }
+.log-viewer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -237,6 +251,11 @@ tr:hover td { background: var(--surface2); }
           <tbody id="logs-tbody"></tbody>
         </table>
       </div>
+      <div class="card-body log-viewer" id="log-viewer" style="display:none">
+        <div class="log-viewer-head"><span id="log-viewer-title"></span>
+          <button class="btn btn-ghost" style="margin-left:auto;padding:3px 10px;font-size:12px" onclick="document.getElementById('log-viewer').style.display='none'">✕ Закрыть</button></div>
+        <div class="import-log tall" id="log-viewer-body"></div>
+      </div>
     </div>
   </div>
 
@@ -246,24 +265,25 @@ tr:hover td { background: var(--surface2); }
       <div class="card-header"><span class="card-title">Ручной запуск импорта</span></div>
       <div class="card-body">
 
-        <div class="alert alert-info" style="margin-bottom:18px">
-          Импорт использует двухуровневую дельту по хэшу — повторный запуск на неизменённом файле безопасен.
+        <!-- One button does the whole refresh; the single steps stay for debugging. -->
+        <div class="update-main">
+          <button class="btn btn-primary" id="btn-import-all" onclick="triggerImport('all')">▶ Обновить всё</button>
+          <div class="update-main-text">
+            Список обновлений (LST) → сайт релизов releases.1c.ru → 1С:Решения, теги, переходы.
+            Обычно 5–10 минут; повторный запуск безопасен. Так же раз в сутки обновляет воркер по расписанию —
+            его логи в «Истории запусков».
+          </div>
+          <button class="btn btn-danger" id="btn-cancel" onclick="cancelImport()" style="display:none">✕ Прервать</button>
         </div>
+        <details class="update-steps">
+          <summary>Отдельные шаги</summary>
+          <div class="update-steps-body">
+            <button class="btn btn-ghost" id="btn-import-lst" onclick="triggerImport('lst')">▶ Только LST</button>
+            <button class="btn btn-ghost" id="btn-import-rel" onclick="triggerImport('releases')">▶ Только releases.1c.ru</button>
+          </div>
+        </details>
 
-        <!-- Кнопки запуска -->
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px">
-          <button class="btn btn-primary" id="btn-import-lst" onclick="triggerImport('lst')">
-            ▶ Запустить импорт LST
-          </button>
-          <button class="btn btn-ghost" id="btn-import-rel" onclick="triggerImport('releases')">
-            ▶ Импорт releases.1c.ru
-          </button>
-          <button class="btn btn-danger" id="btn-cancel" onclick="cancelImport()" style="display:none;margin-left:auto">
-            ✕ Прервать
-          </button>
-        </div>
-
-        <!-- Прогресс (виден только во время импорта releases) -->
+        <!-- Прогресс (виден во время шага releases.1c.ru) -->
         <div id="progress-wrap" class="progress-wrap" style="display:none">
           <div class="progress-header">
             <span class="progress-counter" id="progress-counter">0 / 0</span>
@@ -279,7 +299,7 @@ tr:hover td { background: var(--surface2); }
 
         <!-- Лог -->
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">Вывод:</div>
-        <div class="import-log" id="import-log"></div>
+        <div class="import-log tall" id="import-log"></div>
 
         <!-- Итог -->
         <div id="import-summary" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
@@ -484,23 +504,26 @@ function fmtBytes(b) {
   return (b/1024/1024).toFixed(1) + ' МБ';
 }
 function badge(status) {
-  const map = { ok: 'badge-ok', skipped: 'badge-skipped', error: 'badge-error', running: 'badge-running' };
-  const labels = { ok: 'ok', skipped: 'пропущен', error: 'ошибка', running: '...' };
+  const map = { ok: 'badge-ok', skipped: 'badge-skipped', error: 'badge-error', running: 'badge-running', partial: 'badge-partial', cancelled: 'badge-error' };
+  const labels = { ok: 'ok', skipped: 'пропущен', error: 'ошибка', running: '...', partial: 'с ошибками', cancelled: 'прервано' };
   return `<span class="badge ${map[status] || 'badge-skipped'}">${labels[status] || status}</span>`;
+}
+function sourceLabel(s) {
+  return { all: 'Обновить всё', lst: 'LST', releases: 'releases.1c.ru' }[s] || s;
 }
 function runRow(r, short) {
   if (short) return `<tr>
     <td class="mono">${r.id}</td>
-    <td>${r.source}</td>
+    <td>${sourceLabel(r.source)}</td>
     <td>${badge(r.status)}</td>
     <td class="mono">${(r.edgesUpserted||0).toLocaleString('ru')}</td>
     <td class="mono" style="color:var(--muted)">${(r.edgesUnchanged||0).toLocaleString('ru')}</td>
     <td style="color:var(--muted)">${fmtDate(r.startedAt)}</td>
   </tr>`;
-  return `<tr>
+  return `<tr${r.source === 'all' ? ' class="run-all"' : ''}>
     <td class="mono">${r.id}</td>
-    <td>${r.source}</td>
-    <td>${badge(r.status)}</td>
+    <td>${sourceLabel(r.source)}</td>
+    <td style="white-space:nowrap">${badge(r.status)}${r.hasLog ? ` <button class="btn btn-ghost" style="padding:1px 8px;font-size:11px;margin-left:4px" onclick="showRunLog(${r.id})">лог</button>` : ''}</td>
     <td class="mono" style="color:var(--muted);font-size:11px">${(r.fileSha256||'').slice(0,12)}…</td>
     <td>${fmtBytes(r.fileBytes)}</td>
     <td class="mono">${(r.configsFound||0).toLocaleString('ru')}</td>
@@ -509,6 +532,23 @@ function runRow(r, short) {
     <td style="color:var(--muted)">${fmtDate(r.startedAt)}</td>
     <td style="color:var(--muted)">${fmtDur(r.startedAt, r.finishedAt)}</td>
   </tr>`;
+}
+
+// Stored log of an «Обновить всё» run (manual or by the worker).
+async function showRunLog(id) {
+  const box = document.getElementById('log-viewer');
+  const body = document.getElementById('log-viewer-body');
+  body.innerHTML = '';
+  document.getElementById('log-viewer-title').textContent = 'Лог запуска #' + id;
+  box.style.display = '';
+  try {
+    const r = await apiFetch('/admin/api/logs/' + id);
+    (r.log || '').split('\n').forEach(function(line) {
+      const m = line.match(/^\[([0-9:]+)\] ([\s\S]*)$/);
+      logLine(body, m ? m[1] : '', m ? m[2] : line);
+    });
+  } catch (e) { logLine(body, '', '✗ Не удалось загрузить лог'); }
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function loadDash() {
@@ -570,7 +610,9 @@ function logLine(el, ts, text) {
   tsSpan.textContent = '[' + ts + '] ';
   div.appendChild(tsSpan);
   const txtSpan = document.createElement('span');
-  if (text.startsWith('  ✓')) txtSpan.className = 'log-match';
+  if (text.startsWith('━━━')) txtSpan.className = 'log-step';
+  else if (text.startsWith('⚠')) txtSpan.className = 'log-warn';
+  else if (text.startsWith('  ✓') || text.startsWith('  ≈')) txtSpan.className = 'log-match';
   else if (text.startsWith('  ✗') || text.startsWith('✗')) txtSpan.className = 'log-err';
   else if (text.startsWith('⛔')) txtSpan.className = 'log-err';
   else if (text.startsWith('Готово') || text.startsWith('✓')) txtSpan.className = 'log-done';
@@ -582,14 +624,10 @@ function logLine(el, ts, text) {
 }
 
 function setImportRunning(running, source) {
-  const btnLst = document.getElementById('btn-import-lst');
-  const btnRel = document.getElementById('btn-import-rel');
-  const btnCancel = document.getElementById('btn-cancel');
-  const progressWrap = document.getElementById('progress-wrap');
-  btnLst.disabled = running;
-  btnRel.disabled = running;
-  btnCancel.style.display = running ? '' : 'none';
-  progressWrap.style.display = (running && source === 'releases') ? '' : 'none';
+  ['btn-import-all', 'btn-import-lst', 'btn-import-rel'].forEach(function(id) { document.getElementById(id).disabled = running; });
+  document.getElementById('btn-cancel').style.display = running ? '' : 'none';
+  // The bar appears once the releases.1c.ru step reports its first project.
+  if (!running || source === 'lst') document.getElementById('progress-wrap').style.display = 'none';
 }
 
 function updateProgress(current, total) {
@@ -651,6 +689,7 @@ async function pollImportLog(source) {
 
     // Update progress bar
     if (data.progress && data.progress.total > 0) {
+      if (data.running) document.getElementById('progress-wrap').style.display = '';
       updateProgress(data.progress.current, data.progress.total);
     }
 
@@ -668,7 +707,10 @@ async function pollImportLog(source) {
       try {
         var st = await apiFetch('/admin/api/import/status');
         var run = st.lastRun;
-        if (run) {
+        if (run && run.source === 'all') {
+          document.getElementById('import-summary').innerHTML =
+            badge(run.status) + ' &nbsp; ' + fmtDur(run.startedAt, run.finishedAt) + ' &nbsp;·&nbsp; ' + esc(run.message);
+        } else if (run) {
           document.getElementById('import-summary').innerHTML =
             badge(run.status) + ' &nbsp; Завершено за ' + fmtDur(run.startedAt, run.finishedAt) +
             (run.edgesUpserted ? ' &nbsp;·&nbsp; добавлено: ' + run.edgesUpserted.toLocaleString('ru') : '') +
@@ -698,7 +740,7 @@ function now() {
 async function checkRunningImport() {
   // Guard: don't start a second poller if one is already running
   if (importPolling) return;
-  var sources = ['lst', 'releases'];
+  var sources = ['all', 'lst', 'releases'];
   for (var si = 0; si < sources.length; si++) {
     var src = sources[si];
     try {
