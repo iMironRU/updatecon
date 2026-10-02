@@ -460,10 +460,11 @@ a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
 .pl-lines td small { display: inline; margin-left: 6px; }
 .st-table .pl-links a { color: var(--accent); font-weight: 600; margin-right: 12px; white-space: nowrap; }
 .os-chip.new { background: var(--accent-dim); color: var(--accent); }
+.sel-tag { font-family: 'Golos Text', sans-serif; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-left: 6px;
+  background: var(--accent); color: #fff; white-space: nowrap; vertical-align: 1px; }
 .kpi-value.pl-ver { font-family: var(--mono); font-size: 26px; }
 @media (max-width: 560px) { .kpi-value.pl-ver { font-size: 17px; letter-spacing: -.3px; } }
 @media (max-width: 640px) { .hide-sm { display: none; } }
-.os-chip.gone { background: none; color: var(--text-light); text-decoration: line-through; }
 .pl-need { font-weight: 700; color: var(--accent); cursor: default; border-bottom: 1px dotted var(--accent); }
 .fact-link { color: inherit; border-bottom: 1px dotted var(--text-light); }
 .fact-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
@@ -3052,25 +3053,25 @@ async function bind_stats() {
    PLATFORM VIEW — builds of 1С:Предприятие and what configurations need
    ================================================================ */
 let PLATFORM_DATA = null;
-const OS_LABEL = { win64: 'Windows', win32: 'Windows 32', linux64: 'Linux', linux32: 'Linux 32', arm64: 'ARM', e2k: 'Эльбрус', mac: 'macOS' };
 const OS_TITLE = { win64: 'Windows, 64-bit', win32: 'Windows, 32-bit', linux64: 'Linux, 64-bit', linux32: 'Linux, 32-bit',
   arm64: 'Linux на ARM (64-bit)', e2k: 'Linux на Эльбрус-8С', mac: 'macOS' };
 const PL_STATE = { line: null, allLines: false };
-function os_chips(os, older) {
-  return (os || []).map(t => {
-    const isNew = older && older.length && !older.includes(t);
-    return `<span class="os-chip${isNew ? ' new' : ''}" title="${OS_TITLE[t] || t}${isNew ? ' — появилось в этой версии' : ''}">${OS_LABEL[t] || t}</span>`;
+// One chip per OS family; 32-bit rides along ("Windows 64/32") so a row stays short.
+const OS_GROUPS = [
+  { label: 'Windows', tags: ['win64', 'win32'] }, { label: 'Linux', tags: ['linux64', 'linux32'] },
+  { label: 'ARM', tags: ['arm64'] }, { label: 'Эльбрус', tags: ['e2k'] }, { label: 'macOS', tags: ['mac'] },
+];
+// Every row shows its full set; what is new against the next older row (lists
+// run newest first) is highlighted — that is where ARM appears or 32-bit goes.
+function os_cell(os, older) {
+  if (!os || !os.length) return '<span style="color:var(--text-light)" title="Нет данных о сборке">—</span>';
+  return OS_GROUPS.filter(g => g.tags.some(t => os.includes(t))).map(g => {
+    const bits = g.tags.length > 1 ? (os.includes(g.tags[0]) && os.includes(g.tags[1]) ? ' 64/32' : os.includes(g.tags[1]) ? ' 32' : '') : '';
+    const added = older && older.length ? g.tags.filter(t => os.includes(t) && !older.includes(t)) : [];
+    const title = g.tags.filter(t => os.includes(t)).map(t => OS_TITLE[t]).join(', ')
+      + (added.length ? ' — новое в этой версии: ' + added.map(t => OS_TITLE[t]).join(', ') : '');
+    return `<span class="os-chip${added.length ? ' new' : ''}" title="${title}">${g.label}${bits}</span>`;
   }).join('');
-}
-// Lists run newest first. The newest row shows the full set; the others show
-// only what changed against the next older row ("+ARM", "−Windows 32"), the
-// oldest row its full set — so the eye catches where support changed.
-function os_cell(os, older, full) {
-  if (!os || !os.length) return '<span style="color:var(--text-light)">—</span>';
-  if (full || !older || !older.length) return os_chips(os, older);
-  const added = os.filter(t => !older.includes(t)), gone = older.filter(t => !os.includes(t));
-  return added.map(t => `<span class="os-chip new" title="${OS_TITLE[t] || t} — появилось в этой версии">+${OS_LABEL[t] || t}</span>`).join('')
-    + gone.map(t => `<span class="os-chip gone" title="${OS_TITLE[t] || t} — больше не выпускается">−${OS_LABEL[t] || t}</span>`).join('');
 }
 const ver_cmp = (a, b) => platform_cmp_v(a, b);
 const line_of = v => String(v).split('.').slice(0, 3).join('.');
@@ -3174,12 +3175,12 @@ function platform_page_html() {
         ${tip_attr({ v: `Линейка ${l.line}`, l: `${l.builds.length} ${ru_plural(l.builds.length, 'сборка', 'сборки', 'сборок')}, ${l.oldest.date ? fmt_date(l.oldest.date) : '?'} — ${l.newest.date ? fmt_date(l.newest.date) : '?'}`,
           s: need.length ? [`минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, st_examples(need)] : [],
           h: 'Нажмите — сборки линейки' })}>
-      <td class="mono"><b>${l.line}</b></td>
+      <td class="mono"><b>${l.line}</b>${on ? ' <span class="sel-tag" title="Сборки этой линейки — ниже">сборки ниже ↓</span>' : ''}</td>
       <td>${l.builds.length}</td>
       <td class="mono">${l.oldest.v.split('.').pop()} <small>${l.oldest.date ? fmt_date(l.oldest.date) : ''}</small></td>
       <td class="mono">${l.newest.v.split('.').pop()} <small>${l.newest.date ? fmt_date(l.newest.date) : ''}</small></td>
       <td>${need.length || '<span style="color:var(--text-light)">—</span>'}</td>
-      <td class="os-cell">${os_cell(l.newest.os, i + 1 < shownLines.length ? shownLines[i + 1].newest.os : null, i === 0)}</td>
+      <td class="os-cell">${os_cell(l.newest.os, i + 1 < shownLines.length ? shownLines[i + 1].newest.os : null)}</td>
     </tr>`;
   }).join('');
   const hiddenLines = lines.length - lines.filter(isRecent).length;
@@ -3203,7 +3204,7 @@ function platform_page_html() {
 
     <div class="st-section">Линейки</div>
     ${st_card('Линейки платформы', 'нажмите на линейку — ниже её сборки', `<div class="st-table-wrap"><table class="st-table pl-lines">
-      <thead><tr><th>Линейка</th><th>Сборок</th><th>Первая</th><th>Последняя</th><th title="Для скольких актуальных конфигураций это минимальная линейка последнего релиза">Минимум для</th><th title="У самой новой линейки — все ОС, ниже — что изменилось">ОС</th></tr></thead>
+      <thead><tr><th>Линейка</th><th>Сборок</th><th>Первая</th><th>Последняя</th><th title="Для скольких актуальных конфигураций это минимальная линейка последнего релиза">Минимум для</th><th title="ОС самой новой сборки линейки; подсвечено то, чего не было в предыдущей линейке">ОС</th></tr></thead>
       <tbody>${lineRows}</tbody></table></div>
       ${hiddenLines || PL_STATE.allLines ? `<button class="st-more" onclick="PL_STATE.allLines=!PL_STATE.allLines; document.getElementById('pl-root').innerHTML=platform_page_html()">${PL_STATE.allLines ? 'Только свежие линейки' : 'Все линейки (' + lines.length + ')'}</button>` : ''}`)}
 
@@ -3229,9 +3230,9 @@ function platform_builds_html() {
     const need = exact.get(b.v) || [];
     const sel = b.v === PL_STATE.build;
     return `<tr id="pl-b-${b.v.replace(/\./g, '-')}" class="${sel ? 'sel' : ''}">
-      <td class="mono"><b>${b.v}</b>${b === l.newest ? ' <span class="badge badge-blue" style="font-size:10px;padding:1px 6px">новая</span>' : ''}</td>
+      <td class="mono"><b>${b.v}</b>${b === l.newest ? ' <span class="badge badge-blue" style="font-size:10px;padding:1px 6px">новая</span>' : ''}${sel ? ' <span class="sel-tag" title="Эта сборка указана в ссылке — например, как минимальная платформа конфигурации">выбрана</span>' : ''}</td>
       <td>${b.date ? fmt_date(b.date) : '—'}</td>
-      <td class="os-cell">${os_cell(b.os, i + 1 < l.builds.length ? l.builds[i + 1].os : null, i === 0)}</td>
+      <td class="os-cell">${os_cell(b.os, i + 1 < l.builds.length ? l.builds[i + 1].os : null)}</td>
       <td>${need.length ? `<span class="pl-need"${tip_attr({ v: `Минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, l: 'последний релиз требует эту сборку',
           s: need.slice().sort(main_cmp).slice(0, 6).map(c => c.name).concat(need.length > 6 ? ['и ещё ' + (need.length - 6)] : []) })} tabindex="0">${need.length}</span>` : ''}</td>
       <td class="pl-links">${b.notes ? `<a href="${esc_html(b.notes)}" target="_blank" rel="noopener">изменения</a>` : ''}${b.bugs ? `<a href="${esc_html(b.bugs)}" target="_blank" rel="noopener">ошибки</a>` : ''}</td>
@@ -3242,7 +3243,7 @@ function platform_builds_html() {
   return `<div class="st-section">Сборки ${l.line}</div>
     ${st_card(`Сборки линейки ${l.line}`, `${l.builds.length} ${ru_plural(l.builds.length, 'сборка', 'сборки', 'сборок')}, новые сверху`,
       missing + `<div class="st-table-wrap"><table class="st-table pl-builds">
-        <thead><tr><th>Сборка</th><th>Вышла</th><th title="У новой сборки — все ОС, ниже — что изменилось относительно предыдущей">ОС</th><th title="Для скольких актуальных конфигураций это минимальная сборка последнего релиза">Минимум для</th><th></th></tr></thead>
+        <thead><tr><th>Сборка</th><th>Вышла</th><th title="Подсвечено то, чего не было в предыдущей сборке">ОС</th><th title="Для скольких актуальных конфигураций это минимальная сборка последнего релиза">Минимум для</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>
         <div class="st-foot">Ссылки ведут на releases.1c.ru (список изменений) и bugboard.1c.ru (известные ошибки сборки) — нужен вход в ИТС.</div>`)}`;
 }
