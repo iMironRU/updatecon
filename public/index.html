@@ -449,6 +449,61 @@ a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
   color: var(--text-muted); font-size: 13px; cursor: pointer; }
 .st-drill-x:hover { background: var(--surface2); color: var(--text); }
 .lrow.nobar .lrow-top { margin-bottom: 0; }
+/* «Мои конфигурации» star */
+.fav-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 30px; height: 30px; flex: none;
+  border-radius: 8px; color: var(--text-light); transition: color .12s, background .12s; }
+.fav-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.fav-btn:hover { color: var(--yellow, #e3a008); background: var(--surface2); }
+.fav-btn.on { color: #e3a008; }
+.fav-btn.on svg { fill: currentColor; }
+.fav-btn.labelled { width: auto; height: auto; padding: 6px 12px; border: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.fav-btn.labelled.on { color: #e3a008; border-color: rgba(227,160,8,.5); }
+.config-card { position: relative; }
+.config-card > .fav-btn { position: absolute; top: 10px; right: 10px; z-index: 1; }
+/* news */
+.news-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.news-filters .select { width: auto; max-width: 260px; padding: 6px 10px; font-size: 13px; }
+.news-soon { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; margin-bottom: 18px;
+  border: 1px dashed var(--border-strong); border-radius: var(--r); font-size: 13px; }
+.news-soon-title { font-weight: 700; color: var(--text-muted); margin-right: 4px; }
+.news-soon-item { color: var(--text); padding: 3px 8px; border-radius: var(--r-xs); }
+.news-soon-item:hover { background: var(--surface2); }
+.news-soon-date { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-right: 4px; }
+.news-soon .mono, .news-row .mono, .news-hl .mono { font-family: var(--mono); font-size: 12px; }
+.news-day { margin-bottom: 22px; }
+.news-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px;
+  font-size: 15px; font-weight: 700; position: sticky; top: var(--hdr); background: var(--bg); padding: 8px 0; z-index: 2; }
+.news-day-count { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.news-hl { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; margin-bottom: 8px; border-radius: var(--r);
+  background: var(--surface); border: 1px solid var(--border); color: inherit; }
+a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
+.news-hl-kind { flex: none; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; margin-top: 1px;
+  background: var(--accent-dim); color: var(--accent); white-space: nowrap; }
+.news-hl-kind.kup { background: rgba(227,160,8,.14); color: #c27c0e; }
+.news-hl-kind.k85 { background: var(--accent); color: #fff; }
+.news-hl-kind.knew { background: rgba(5,150,105,.14); color: var(--green); }
+.news-hl-kind.klts { background: var(--surface2); color: var(--text-muted); }
+.news-hl-text { flex: 1; min-width: 0; color: inherit; font-size: 14px; line-height: 1.5; }
+.news-hl-sub { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.news-hl .fav-btn { margin: -4px -4px -4px 0; }
+.news-rows { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); overflow: hidden; }
+.news-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto 150px; align-items: center; gap: 10px;
+  padding: 6px 12px 6px 6px; border-top: 1px solid var(--border); font-size: 13px; }
+.news-row:first-child { border-top: none; }
+.news-row:hover { background: var(--surface2); }
+.news-row-name { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-row-name:hover { color: var(--accent); }
+.news-row-ver { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.news-row-plat { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
+.news-row-plat a { color: var(--text-muted); }
+.news-row-plat a:hover { color: var(--accent); }
+@media (max-width: 640px) {
+  .news-soon { display: block; }
+  .news-soon-item { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px 0; }
+  .news-row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "star name ver" "star plat plat"; row-gap: 0; }
+  .news-row .fav-btn { grid-area: star; } .news-row-name { grid-area: name; } .news-row-ver { grid-area: ver; }
+  .news-row-plat { grid-area: plat; text-align: left; }
+}
 /* platform page */
 .os-chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; margin: 1px 4px 1px 0; border-radius: 99px;
   background: var(--surface2); color: var(--text-muted); white-space: nowrap; }
@@ -657,6 +712,7 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
     <nav class="nav">
       <a class="nav-link" href="/">Главная</a>
       <a class="nav-link" href="/catalog">Каталог</a>
+      <a class="nav-link" href="/news">Новости</a>
       <a class="nav-link" href="/stats">Статистика</a>
       <a class="nav-link" href="/platform">Платформа</a>
       <a class="nav-link" href="/settings">Настройки</a>
@@ -682,6 +738,7 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
   <nav class="mobile-menu-list" aria-label="Разделы">
     <a class="nav-link" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>Главная</a>
     <a class="nav-link" href="/catalog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Каталог</a>
+    <a class="nav-link" href="/news"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13v14H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v8a2 2 0 0 1-2 2"/><line x1="8" y1="9" x2="13" y2="9"/><line x1="8" y1="13" x2="13" y2="13"/></svg>Новости</a>
     <a class="nav-link" href="/stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>Статистика</a>
     <a class="nav-link" href="/platform"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>Платформа</a>
     <a class="nav-link" href="/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Настройки</a>
@@ -1483,6 +1540,7 @@ async function route() {
   }
   else if (path === '/stats') { el.innerHTML = render_stats(); bind_stats(); }
   else if (path === '/platform') { el.innerHTML = render_platform(); await bind_platform(); }
+  else if (path === '/news') { el.innerHTML = render_news(); await bind_news(); }
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
   else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
   ROUTE_PATH = path;
@@ -1538,7 +1596,7 @@ function render_home() {
     ${latest.length ? `<div style="margin-bottom:16px" class="fade-up fade-up-3">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div style="font-size:16px;font-weight:700">Последние обновления</div>
-        <a href="/catalog" class="btn btn-ghost btn-sm">Весь каталог ${icn_chevron_r()}</a>
+        <a href="/news" class="btn btn-ghost btn-sm">Все новости ${icn_chevron_r()}</a>
       </div>
       <div class="catalog-grid">${latest.map(c => config_card_html(c)).join('')}</div>
     </div>` : ''}
@@ -1660,7 +1718,7 @@ function catalog_state(params) {
   return {
     q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
     platforms: list('plat'), ages: list('age'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
-    vendors: list('vendor'), legacy: params.legacy === '1', stale: params.stale === '1', sort: params.sort || 'main',
+    vendors: list('vendor'), legacy: params.legacy === '1', stale: params.stale === '1', fav: params.fav === '1', sort: params.sort || 'main',
     vendorQuery: '', vendorsAll: false, industriesAll: false, regionsAll: false, panelOpen: false,
   };
 }
@@ -1674,6 +1732,7 @@ function catalog_sync_url() {
   add('region', CAT.regions.join(CAT_SEP));
   add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
   if (CAT.legacy) parts.push('legacy=1');
+  if (CAT.fav) parts.push('fav=1');
   if (CAT.stale) parts.push('stale=1');
   if (CAT.sort !== 'main') add('sort', CAT.sort);
   CAT_URL = '/catalog' + (parts.length ? '?' + parts.join('&') : '');
@@ -1718,6 +1777,7 @@ function catalog_base(mode) {
     if (q && !cfg_matches_search(c, q)) return false;
     if (mode === 'legacy') return !c.isLatestEdition;
     if (mode === 'stale') return c.isLatestEdition && c.stale;
+    if (CAT.fav) return fav_has(c.id);   // «★ Мои»: every starred edition, old or stale included
     return !!q || ((c.isLatestEdition || CAT.legacy) && (!c.stale || CAT.stale));
   });
 }
@@ -1742,6 +1802,7 @@ function render_catalog() {
           <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
         </div>
         <!-- What people pick most, as compact chips; the rest folds into "Ещё фильтры". -->
+        <div class="filter-group"><div class="fchips"><button type="button" id="f-fav" class="fchip" onclick="CAT.fav=!CAT.fav; apply_filters()">★ Мои конфигурации</button></div></div>
         <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types" class="fchips"></div></div>
         <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines" class="fchips"></div></div>
         <div class="filter-group"><div class="filter-group-label">Страна</div><div id="f-regions"></div></div>
@@ -1787,6 +1848,7 @@ function config_card_html(c) {
   const freq_cls = !freq ? 'badge-gray' : freq <= 40 ? 'badge-green' : freq <= 80 ? 'badge-yellow' : 'badge-gray';
   const freq_text = freq ? `~${freq} дн.` : 'нет данных';
   return `<div class="card config-card card-clickable fade-up" onclick="navigate('/config/${c.id}')">
+    ${fav_btn(c.id)}
     <div class="config-card-body">
       <div class="config-card-top">
         ${config_avatar(c)}
@@ -1858,6 +1920,7 @@ function toggle_facet(field, value) {
 function remove_filter(field, value) {
   if (field === 'q') { CAT.q = ''; const s = document.getElementById('catalog-search'); if (s) s.value = ''; }
   else if (field === 'legacy') CAT.legacy = false;
+  else if (field === 'fav') CAT.fav = false;
   else if (field === 'stale') CAT.stale = false;
   else CAT[field] = CAT[field].filter(v => v !== value);
   apply_filters();
@@ -2028,12 +2091,15 @@ function render_summary(found) {
   CAT.orgs.forEach(v => chip('orgs', v, v));
   CAT.types.forEach(v => chip('types', v, type_label(v)));
   CAT.vendors.forEach(v => chip('vendors', v, (CONFIGS.find(c => c.vendorName.toLowerCase() === v) || { vendorName: v }).vendorName));
+  if (CAT.fav) chip('fav', '', '★ Мои конфигурации');
   if (CAT.legacy) chip('legacy', '', 'Предыдущие редакции');
   if (CAT.stale) chip('stale', '', 'Устаревшие');
   const el = document.getElementById('catalog-summary');
   if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
-  const active = CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
+  const favBtn = document.getElementById('f-fav');
+  if (favBtn) { favBtn.classList.toggle('on', CAT.fav); favBtn.setAttribute('aria-pressed', CAT.fav); favBtn.innerHTML = '★ Мои конфигурации<span>' + FAV.size + '</span>'; }
+  const active = (CAT.fav ? 1 : 0) + CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
     + CAT.levels.length + CAT.platforms.length + CAT.ages.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0) + (CAT.stale ? 1 : 0);
   const t = document.getElementById('filters-toggle');
   if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
@@ -2192,6 +2258,7 @@ function render_config(id) {
         </div>
       </div>
       <div class="config-detail-actions">
+        ${fav_btn(cfg.id, true)}
         ${cfg.infoUrl ? `<a href="${esc_html(cfg.infoUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Общая информация о конфигурации">${icn_link()} ${info_link_label(cfg.infoUrl)}</a>` : ''}
         ${cfg.url_1c ? `<a href="${cfg.url_1c}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icn_link()} На releases.1c.ru</a>` : ''}
         ${cfg.bugsUrl ? `<a href="${esc_html(cfg.bugsUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Известные ошибки и сроки исправления">${icn_link()} Каталог ошибок</a>` : ''}
@@ -3049,6 +3116,190 @@ async function bind_stats() {
   put('st-a-85', plat85_card_html(m));
   const t = document.getElementById('st-trans'); if (t) t.outerHTML = trans_card_html(m);
   const ch = document.getElementById('st-chains'); if (ch) ch.outerHTML = chains_card_html(m);
+}
+
+/* ================================================================
+   «МОИ КОНФИГУРАЦИИ» — a star on a card; kept in this browser only
+   ================================================================ */
+const FAV_KEY = 'uc_fav';
+let FAV = (() => { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]').map(String)); } catch (e) { return new Set(); } })();
+const fav_has = id => FAV.has(String(id));
+const ICN_STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l2.8 5.7 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 2.9 1.1-6.3L2.9 9.4l6.3-.9z"/></svg>';
+function fav_btn(id, label) {
+  const on = fav_has(id);
+  return `<button type="button" class="fav-btn${label ? ' labelled' : ''}${on ? ' on' : ''}" data-fav="${id}" aria-pressed="${on}"
+    title="${on ? 'Убрать из «Моих конфигураций»' : 'В «Мои конфигурации» — их новости отдельно'}"
+    onclick="return fav_toggle(event,'${id}')">${ICN_STAR}${label ? `<span>${on ? 'В моих' : 'В мои'}</span>` : ''}</button>`;
+}
+function fav_toggle(e, id) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  id = String(id);
+  if (FAV.has(id)) FAV.delete(id); else FAV.add(id);
+  try { localStorage.setItem(FAV_KEY, JSON.stringify([...FAV])); } catch (err) {}
+  const on = FAV.has(id);
+  document.querySelectorAll(`[data-fav="${id}"]`).forEach(b => {
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    b.title = on ? 'Убрать из «Моих конфигураций»' : 'В «Мои конфигурации» — их новости отдельно';
+    const t = b.querySelector('span'); if (t) t.textContent = on ? 'В моих' : 'В мои';
+  });
+  toast(on ? '★ Добавлено в «Мои конфигурации»' : 'Убрано из «Моих конфигураций»');
+  if (ROUTE_PATH === '/news' && NEWS.mine) news_render();
+  if (ROUTE_PATH === '/catalog' && CAT && CAT.fav) apply_filters();
+  return false;
+}
+
+/* ================================================================
+   NEWS VIEW — what happened, by day, from the data we already have
+   ================================================================ */
+const NEWS = { days: 30, data: null, mine: false, country: true, typical: false, line: '', open: {} };
+const RU_WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+const RU_MONTHS_PREP = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
+const RU_MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+function news_day_label(iso) {
+  const d = new Date(iso + 'T00:00'), today = new Date(new Date().toDateString());
+  const diff = Math.round((today - d) / 864e5);
+  const date = d.getDate() + ' ' + RU_MONTHS_GEN[d.getMonth()] + (d.getFullYear() !== today.getFullYear() ? ' ' + d.getFullYear() : '');
+  return diff === 0 ? 'Сегодня · ' + date : diff === 1 ? 'Вчера · ' + date : date + ', ' + RU_WD[d.getDay()];
+}
+function news_state_from_url() {
+  const p = parse_route().params;
+  NEWS.mine = p.mine === '1';
+  NEWS.country = p.all !== '1';
+  NEWS.typical = p.typical === '1';
+  NEWS.line = p.line || '';
+}
+function news_sync_url() {
+  const q = [];
+  if (NEWS.mine) q.push('mine=1');
+  if (!NEWS.country) q.push('all=1');
+  if (NEWS.typical) q.push('typical=1');
+  if (NEWS.line) q.push('line=' + encodeURIComponent(NEWS.line));
+  history.replaceState(null, '', '/news' + (q.length ? '?' + q.join('&') : ''));
+}
+function render_news() {
+  news_state_from_url();
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Новости</div></div>
+    <div class="news-filters fade-up" id="news-filters"></div>
+    <div id="news-soon"></div>
+    <div id="news-feed">${render_loading('Собираем новости…')}</div>
+  </div>`;
+}
+async function bind_news() {
+  try { NEWS.data = await apiFetch('/api/news', { days: NEWS.days }); }
+  catch (e) { const f = document.getElementById('news-feed'); if (f) f.innerHTML = '<div class="empty"><div class="empty-title">Не удалось загрузить новости</div></div>'; return; }
+  news_render();
+}
+async function news_more() {
+  NEWS.days = Math.min(180, NEWS.days + 30);
+  const b = document.getElementById('news-more'); if (b) b.textContent = 'Загружаем…';
+  await bind_news();
+}
+function news_set(key, val) { NEWS[key] = val; NEWS.open = {}; news_sync_url(); news_render(); }
+
+// Does a configuration pass the filters? (Platform builds are for everyone.)
+function news_pass(c) {
+  if (!c) return false;
+  if (NEWS.mine) return fav_has(c.id);
+  if (NEWS.country && !in_pref_country(c)) return false;
+  if (NEWS.typical && c.type !== 'standard') return false;
+  if (NEWS.line && !c.tags.some(t => t.tag === NEWS.line)) return false;
+  return true;
+}
+function news_filters_html() {
+  const lines = TAG_DICT.map(t => `<option value="${esc_html(t.tag)}"${t.tag === NEWS.line ? ' selected' : ''}>${esc_html(t.tag)} — ${esc_html(t.title)}</option>`).join('');
+  return `<div class="sort-seg" role="group" aria-label="Чьи новости">
+      <button class="${NEWS.mine ? '' : 'active'}" aria-pressed="${!NEWS.mine}" onclick="news_set('mine', false)">Все</button>
+      <button class="${NEWS.mine ? 'active' : ''}" aria-pressed="${NEWS.mine}" onclick="news_set('mine', true)">★ Мои${FAV.size ? ' · ' + FAV.size : ''}</button>
+    </div>
+    ${NEWS.mine ? '' : `
+    <button type="button" class="fchip${NEWS.country ? ' on' : ''}" aria-pressed="${NEWS.country}" onclick="news_set('country', ${!NEWS.country})"
+      title="Только продукты страны из настроек (${esc_html(region_label(pref_country()))})">${esc_html(region_label(pref_country()))}</button>
+    <button type="button" class="fchip${NEWS.typical ? ' on' : ''}" aria-pressed="${NEWS.typical}" onclick="news_set('typical', ${!NEWS.typical})">Только типовые</button>
+    <select class="select news-line" aria-label="Линейка" onchange="news_set('line', this.value)">
+      <option value="">Все линейки</option>${lines}</select>`}`;
+}
+
+// Coming up: planned releases in two weeks, end of ДП in a month (stats' calendar data).
+function news_soon_html() {
+  const limit = new Date(); limit.setDate(limit.getDate() + 14);
+  const ltsLimit = new Date(); ltsLimit.setDate(ltsLimit.getDate() + 30);
+  const ev = calendar_events().filter(e => (e.kind === 'rel' ? e.d <= limit : e.d <= ltsLimit))
+    .map(e => ({ ...e, list: e.list.filter(news_pass) })).filter(e => e.list.length).slice(0, 6);
+  if (!ev.length) return '';
+  const dd = d => String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+  return `<div class="news-soon fade-up"><div class="news-soon-title">Скоро</div>${ev.map(e => {
+    const c = e.list[0];
+    return `<a class="news-soon-item" href="/config/${c.id}">
+      <span class="news-soon-date">${e.exact ? dd(e.d) : 'в ' + RU_MONTHS_PREP[e.d.getMonth()]}</span>
+      <span>${e.kind === 'rel' ? 'релиз' : 'конец ДП'} <b>${esc_html(c.short)}</b>${e.list.length > 1 ? ' +' + (e.list.length - 1) : ''}
+        <span class="mono">${esc_html(e.ver)}${e.kind === 'lts' ? '.x' : ''}</span></span></a>`;
+  }).join('')}</div>`;
+}
+
+function news_release_row(e, c) {
+  const plat = e.platform ? (String(e.platform).match(/\d+\.\d+\.\d+\.\d+/) || [''])[0] : '';
+  const lts = c.ltsLine && e.version.startsWith(c.ltsLine + '.');
+  return `<div class="news-row">
+    ${fav_btn(c.id)}
+    <a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a>
+    <span class="news-row-ver">${esc_html(e.version)}${lts ? ' <span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : ''}</span>
+    <span class="news-row-plat">${plat ? `<a href="/platform?build=${plat}" title="Минимальная платформа">≥ ${plat}</a>` : ''}</span>
+  </div>`;
+}
+// The things worth a headline: new platform builds, raised requirements,
+// a product's first release, a move to 8.5, ended long-term support.
+function news_highlight(e, c) {
+  if (e.type === 'platform_build') {
+    return `<a class="news-hl" href="/platform?build=${e.build}">
+      <span class="news-hl-kind">платформа</span>
+      <span class="news-hl-text">Новая сборка платформы <b class="mono">${esc_html(e.build)}</b>${e.os && e.os.length ? `<span class="news-hl-sub">${os_cell(e.os)}</span>` : ''}</span></a>`;
+  }
+  const head = `${fav_btn(c.id)}<a class="news-hl-text" href="/config/${c.id}">`;
+  if (e.type === 'to85') return `<div class="news-hl"><span class="news-hl-kind k85">8.5</span>${head}<b>${esc_html(c.name)}</b> выпускает релизы под платформу 8.5
+      <span class="news-hl-sub">первый такой — ${esc_html(e.version)}, требования: ${esc_html(e.platform || '')}</span></a></div>`;
+  if (e.type === 'lts_end') return `<div class="news-hl"><span class="news-hl-kind klts">ДП</span>${head}Закончилась длительная поддержка ветки <b class="mono">${esc_html(e.lts_line)}.x</b>
+      <span class="news-hl-sub">${esc_html(c.name)}</span></a></div>`;
+  if (e.first) return `<div class="news-hl"><span class="news-hl-kind knew">новое</span>${head}Новый продукт в каталоге: <b>${esc_html(c.name)}</b>
+      <span class="news-hl-sub">первый релиз ${esc_html(e.version)}</span></a></div>`;
+  const plat = (String(e.platform || '').match(/\d+\.\d+\.\d+\.\d+/) || [''])[0];
+  return `<div class="news-hl"><span class="news-hl-kind kup">платформа ↑</span>${head}<b>${esc_html(c.name)}</b> ${esc_html(e.version)} требует платформу
+      <b class="mono">≥ ${esc_html(plat)}</b><span class="news-hl-sub">предыдущий релиз шёл на ${esc_html(e.raised_from)} — без обновления платформы не встанет</span></a></div>`;
+}
+
+function news_render() {
+  const f = document.getElementById('news-filters'); if (f) f.innerHTML = news_filters_html();
+  const s = document.getElementById('news-soon'); if (s) s.innerHTML = news_soon_html();
+  const box = document.getElementById('news-feed');
+  if (!box || !NEWS.data) return;
+  const byId = new Map(CONFIGS.map(c => [c.id, c]));
+  const events = NEWS.data.events.filter(e => e.type === 'platform_build' ? !NEWS.mine && !NEWS.line : news_pass(byId.get(String(e.config_id))));
+  if (NEWS.mine && !FAV.size) {
+    box.innerHTML = `<div class="empty"><div class="empty-title">Пока нет «Моих конфигураций»</div>
+      <div class="empty-sub">Отметьте звёздочкой ★ нужные конфигурации в <a href="/catalog">каталоге</a> или на их странице — здесь будут только их новости.</div></div>`;
+    return;
+  }
+  const days = new Map();
+  events.forEach(e => { (days.get(e.date) || days.set(e.date, []).get(e.date)).push(e); });
+  let html = '';
+  for (const [date, list] of days) {
+    const hl = list.filter(e => e.type !== 'release' || e.first || e.raised_from);
+    const rel = list.filter(e => e.type === 'release' && !e.first && !e.raised_from)
+      .sort((a, b) => main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
+    const LIMIT = 8, open = NEWS.open[date];
+    const shown = open ? rel : rel.slice(0, LIMIT);
+    const nRel = list.filter(e => e.type === 'release').length;
+    html += `<section class="news-day fade-up">
+      <div class="news-day-head"><span>${news_day_label(date)}</span>
+        <span class="news-day-count">${nRel ? nRel + ' ' + ru_plural(nRel, 'релиз', 'релиза', 'релизов') : ''}</span></div>
+      ${hl.map(e => news_highlight(e, byId.get(String(e.config_id)))).join('')}
+      ${shown.length ? `<div class="news-rows">${shown.map(e => news_release_row(e, byId.get(String(e.config_id)))).join('')}</div>` : ''}
+      ${rel.length > LIMIT ? `<button class="st-more" onclick="NEWS.open['${date}']=!NEWS.open['${date}']; news_render()">${open ? 'Свернуть' : 'Ещё ' + (rel.length - LIMIT) + ' ' + ru_plural(rel.length - LIMIT, 'релиз', 'релиза', 'релизов')}</button>` : ''}
+    </section>`;
+  }
+  box.innerHTML = (html || `<div class="empty"><div class="empty-title">За ${NEWS.days} дней ничего</div>
+      <div class="empty-sub">${NEWS.mine ? 'У ваших конфигураций не было релизов.' : 'Попробуйте снять фильтры.'}</div></div>`)
+    + (NEWS.days < 180 ? `<div style="text-align:center;margin:8px 0 32px"><button class="btn btn-secondary btn-sm" id="news-more" onclick="news_more()">Показать ещё 30 дней</button></div>` : '');
 }
 
 /* ================================================================

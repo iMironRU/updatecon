@@ -15,6 +15,7 @@
  *   GET  /api/platform-check?p=8.3.24.1691 -> which latest releases this platform takes
  *   GET  /api/stats/releases?year=|dow=    -> who released most in a year / on a weekday
  *   GET  /api/platform                     -> platform builds, current versions, requirements, coverage
+ *   GET  /api/news?days=30                 -> news feed: releases, platform builds, moves to 8.5, ended ДП
  *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
  *   GET  /*                                -> static UI (public/)
@@ -58,7 +59,7 @@ import { configurations, updateEdges, importRuns, patches, settings, releaseProj
 import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus, CADDY_DISABLED } from "./caddy.js";
 import { TAGS, refreshTags, setManualTags } from "./tags.js";
-import { moreStats, platformCheck, releasesBy, platformInfo } from "./stats.js";
+import { moreStats, platformCheck, releasesBy, platformInfo, newsEvents } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
@@ -1054,6 +1055,7 @@ export async function buildServer() {
 
   app.get("/api/stats/more", async () => moreStats());
   app.get("/api/platform", async () => platformInfo());
+  app.get("/api/news", async (req) => newsEvents(Number((req.query as any).days ?? 30) || 30));
 
   app.get("/api/stats/releases", async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;

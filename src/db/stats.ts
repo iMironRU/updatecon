@@ -324,3 +324,73 @@ export async function platformInfo(): Promise<PlatformInfo> {
   };
   return platformCache;
 }
+
+// ── News feed ──────────────────────────────────────────────────────────────
+// Computed from what the database already has (no event log yet): releases
+// (flagged when they are a product's first one or raise the minimum platform),
+// new platform builds, products moving to 8.5, ended long-term support.
+
+export interface NewsEvent {
+  type: "release" | "platform_build" | "to85" | "lts_end";
+  date: string;                       // YYYY-MM-DD
+  config_id?: number;
+  version?: string;
+  platform?: string | null;           // the release's requirement as listed
+  raised_from?: string;               // the previous release's minimum, when this one is higher
+  first?: boolean;                    // the product's first release we know of
+  build?: string; line?: string; os?: string[] | null;
+  lts_line?: string;
+}
+
+const lowest = (req: string | null | undefined): Plat | null => {
+  const e = (req?.match(/\d+\.\d+\.\d+\.\d+/g) ?? []).map((x) => parsePlatform(x)!).sort(cmpPlat);
+  return e[0] ?? null;
+};
+
+export async function newsEvents(days: number): Promise<{ days: number; events: NewsEvent[] }> {
+  const d = Math.max(1, Math.min(180, Math.round(days)));
+  const [rel, builds, to85, lts] = await Promise.all([
+    db.execute(sql`
+      WITH v AS (
+        SELECT config_id, version, release_date, min_platform,
+               lag(min_platform) OVER w AS prev_platform,
+               row_number() OVER w AS n
+        FROM version_meta
+        WHERE release_date IS NOT NULL AND version ~ '^[0-9]+(\\.[0-9]+)*$'
+        WINDOW w AS (PARTITION BY config_id ORDER BY release_date, string_to_array(version, '.')::bigint[])
+      )
+      SELECT config_id, version, release_date::text AS date, min_platform, prev_platform, n = 1 AS first
+      FROM v WHERE release_date >= current_date - ${d}::int
+      ORDER BY release_date DESC, config_id`),
+    db.execute(sql`
+      SELECT version, line, release_date::text AS date, os FROM platform_builds
+      WHERE release_date >= current_date - ${d}::int AND nick IN ('Platform83', 'Platform85')`),
+    db.execute(sql`
+      SELECT DISTINCT ON (config_id) config_id, version, release_date::text AS date, min_platform
+      FROM version_meta WHERE min_platform ~ '(^|[^0-9.])8\\.5\\.' AND release_date IS NOT NULL
+      ORDER BY config_id, release_date, version`),
+    db.execute(sql`
+      SELECT config_id, lts_version, lts_until::text AS date FROM release_projects
+      WHERE config_id IS NOT NULL AND lts_until BETWEEN current_date - ${d}::int AND current_date`),
+  ]);
+  const events: NewsEvent[] = [];
+  for (const r of rowsOf<{ config_id: number; version: string; date: string; min_platform: string | null; prev_platform: string | null; first: boolean }>(rel)) {
+    const e: NewsEvent = { type: "release", date: r.date, config_id: Number(r.config_id), version: r.version, platform: r.min_platform };
+    if (r.first) e.first = true;
+    const cur = lowest(r.min_platform), prev = lowest(r.prev_platform);
+    if (cur && prev && cmpPlat(cur, prev) > 0) e.raised_from = fmtPlat(prev);
+    events.push(e);
+  }
+  for (const b of rowsOf<{ version: string; line: string; date: string; os: string[] | null }>(builds)) {
+    events.push({ type: "platform_build", date: b.date, build: b.version, line: b.line, os: b.os });
+  }
+  const since = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+  for (const r of rowsOf<{ config_id: number; version: string; date: string; min_platform: string }>(to85)) {
+    if (r.date >= since) events.push({ type: "to85", date: r.date, config_id: Number(r.config_id), version: r.version, platform: r.min_platform });
+  }
+  for (const r of rowsOf<{ config_id: number; lts_version: string; date: string }>(lts)) {
+    events.push({ type: "lts_end", date: r.date, config_id: Number(r.config_id), lts_line: r.lts_version.split(".").slice(0, 3).join(".") });
+  }
+  events.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return { days: d, events };
+}

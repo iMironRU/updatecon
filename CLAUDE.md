@@ -44,7 +44,9 @@ src/releases/
   chain.ts              findChain(): recursive-CTE shortest path
   server.ts             Fastify API + serves public/
   worker.ts             migrate -> optional immediate import -> cron
-public/index.html       single-file UI (vanilla JS, no build); clean paths (/config/96) via the History API,
+public/index.html       single-file UI (vanilla JS, no build); /news is computed from the data by stats.ts
+                        newsEvents (no event log yet); «Мои конфигурации» = config ids in localStorage uc_fav;
+                        clean paths (/config/96) via the History API,
                         server falls back to index.html; old /#/… links are rewritten on load
 drizzle/                generated migration SQL (committed)
 ```
