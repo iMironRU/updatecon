@@ -17,6 +17,7 @@ import cron from "node-cron";
 import { db } from "./client.js";
 import { runFullUpdate } from "./pipeline.js";
 import { applyItsCredentials } from "./credentials.js";
+import { syncSnapshot } from "./snapshot.js";
 import { refreshTags } from "./tags.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,12 @@ async function safeImport(trigger: "scheduled" | "on-start") {
     // The ITS account may have been changed in the admin UI since the last run.
     const c = await applyItsCredentials();
     console.log(`[worker] ITS account: ${c.source === "none" ? "не задан" : c.source === "admin" ? "из админки" : "из .env"}`);
+    // No account of its own: take the published database snapshot instead.
+    if (c.source === "none") {
+      const r = await syncSnapshot();
+      console.log(`[worker] snapshot: ${r.status} — ${r.message}`);
+      return;
+    }
     const r = await runFullUpdate({ trigger });
     console.log(`[worker] update ${r.status}: ${r.summary}`);
   } catch (e) {
@@ -59,6 +66,18 @@ async function main() {
 
   if (process.env.IMPORT_ON_START === "1") {
     await safeImport("on-start");
+  } else {
+    // Without an ITS account a fresh install should not wait for the night:
+    // a new published snapshot is cheap to check (one small JSON).
+    try {
+      const c = await applyItsCredentials();
+      if (c.source === "none") {
+        const r = await syncSnapshot();
+        console.log(`[worker] snapshot on start: ${r.status} — ${r.message}`);
+      }
+    } catch (e) {
+      console.error("[worker] snapshot on start failed:", (e as Error).message);
+    }
   }
 
   const expr = process.env.IMPORT_CRON ?? "0 4 * * *";

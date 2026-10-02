@@ -31,6 +31,10 @@ src/db/
   stats.ts              stats page aggregates (/api/stats/more) + platform check (/api/platform-check)
   pipeline.ts           «Обновить всё»: LST → releases.1c.ru → 1С:Решения in one run with a summary;
                         used by the admin button and the scheduled worker; full log kept in import_runs.log
+  snapshot.ts           the data tables as one file (snapshot.ndjson.gz + snapshot.json) published in the
+                        `data` GitHub release; installs without an ITS account apply it (worker start, nightly,
+                        admin button) in one transaction, keeping settings and manual links/tags
+  credentials.ts        ITS account / admin password editable in the admin UI (DB wins over .env)
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   platform.ts           1С:Предприятие builds from releases.1c.ru (dates, OS, notes, bugboard) → platform_builds
@@ -133,6 +137,22 @@ owned by the application edition of its own package (template of `cfuPath`
   `tags.ts`; "Оригинальная" = based on nothing), industries, tasks,
   editions, support phone/e-mail. Fetched at the end of the releases import,
   one page a second, refreshed weekly.
+
+## Database snapshots (data from GitHub)
+
+`npm run snapshot` (scripts/snapshot.sh) runs «Обновить всё» on the local dev
+database, dumps the data tables and uploads them to the `data` release
+(`--no-import`, `--no-upload` for parts). One asset, overwritten — never commit
+dumps to git (+20 MB of history each). Rows are written with `row_to_json` and
+read back with `json_populate_recordset`, so types round-trip without pg_dump.
+An install takes a snapshot only if its own schema is at least the snapshot's
+(`migrations` = drizzle journal entries); otherwise «сначала обновите
+приложение». Apply = DELETE + INSERT in one transaction (readers keep the old
+data until COMMIT — no TRUNCATE locks), then sequences, then manual project
+links (re-resolved by template_key + edition) and manual tags. `settings` and
+`import_runs` are never in a snapshot. Ids follow the publisher, so
+snapshot-fed installs share /config/<id> links with it. `SNAPSHOT_URL=off`
+disables it.
 
 ## SQL inside sql`…` templates — escaping gotcha
 

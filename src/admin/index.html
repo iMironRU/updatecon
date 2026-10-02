@@ -145,6 +145,10 @@ tr:hover td { background: var(--surface2); }
 .update-main .btn-primary { font-size: 15px; padding: 10px 20px; }
 .update-main-text { font-size: 13px; color: var(--muted); line-height: 1.5; flex: 1; min-width: 240px; }
 .update-steps { margin-bottom: 18px; font-size: 13px; color: var(--muted); }
+.snap-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); }
+.snap-text { flex: 1; min-width: 240px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.snap-text b { color: var(--text); font-weight: 600; }
 .update-steps summary { cursor: pointer; user-select: none; }
 .update-steps-body { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 .update-steps-body .btn { font-size: 12px; padding: 5px 12px; }
@@ -282,6 +286,11 @@ tr.run-all td { background: rgba(88,166,255,.05); }
             его логи в «Истории запусков».
           </div>
           <button class="btn btn-danger" id="btn-cancel" onclick="cancelImport()" style="display:none">✕ Прервать</button>
+        </div>
+        <!-- Installs without an ITS account take the database published from GitHub. -->
+        <div class="snap-row">
+          <div class="snap-text" id="snap-text">Готовая база из репозитория: проверяем…</div>
+          <button class="btn btn-ghost" id="btn-import-snap" onclick="takeSnapshot()">⬇ Обновить из репозитория</button>
         </div>
         <details class="update-steps">
           <summary>Отдельные шаги</summary>
@@ -516,6 +525,7 @@ function show(page) {
   currentPage = page;
   if (page === 'dash') loadDash();
   if (page === 'logs') loadLogs();
+  if (page === 'import') loadSnapshotInfo();
   if (page === 'match') loadMatch();
   if (page === 'tags') loadTags();
   if (page === 'settings') { loadSettings(); loadSslStatus(); }
@@ -555,7 +565,7 @@ function badge(status) {
   return `<span class="badge ${map[status] || 'badge-skipped'}">${labels[status] || status}</span>`;
 }
 function sourceLabel(s) {
-  return { all: 'Обновить всё', lst: 'LST', releases: 'releases.1c.ru' }[s] || s;
+  return { all: 'Обновить всё', lst: 'LST', releases: 'releases.1c.ru', snapshot: 'Снимок из репозитория' }[s] || s;
 }
 function runRow(r, short) {
   if (short) return `<tr>
@@ -701,6 +711,28 @@ async function loadSettings() {
   } catch(e) {}
 }
 
+// ── Database snapshot from GitHub ─────────────────────────────────────────
+var SNAP = null;
+async function loadSnapshotInfo() {
+  const el = document.getElementById('snap-text');
+  try {
+    SNAP = await apiFetch('/admin/api/snapshot');
+    const r = SNAP.remote, a = SNAP.applied;
+    if (!r) { el.innerHTML = 'Готовая база из репозитория: ' + (SNAP.error ? 'недоступна (' + esc(SNAP.error) + ')' : 'ещё не опубликована') + '.'; return; }
+    const same = a && a.sha256 === r.sha256;
+    el.innerHTML = 'Готовая база из репозитория: снимок от <b>' + fmtDate(r.created_at) + '</b>, ' +
+      (r.tables.configurations || 0).toLocaleString('ru') + ' редакций, ' + (r.bytes / 1048576).toFixed(1) + ' МБ. ' +
+      (same ? 'Уже применён здесь ' + fmtDate(a.applied_at) + '.' : a ? 'Здесь применён более ранний.' : 'Здесь ещё не применялся.') +
+      ' Без учётки ИТС воркер берёт его сам каждую ночь.';
+  } catch (e) { el.textContent = 'Готовая база из репозитория: не удалось проверить.'; }
+}
+function takeSnapshot() {
+  const r = SNAP && SNAP.remote;
+  const when = r ? ' от ' + fmtDate(r.created_at) : '';
+  if (!confirm('Заменить данные снимком из репозитория' + when + '?\nНастройки, ручные привязки и ручные теги сохранятся.')) return;
+  triggerImport('snapshot');
+}
+
 // ── Import with live log ──────────────────────────────────────────────────
 let importPolling = null;
 let importLogOffset = 0;
@@ -727,7 +759,7 @@ function logLine(el, ts, text) {
 }
 
 function setImportRunning(running, source) {
-  ['btn-import-all', 'btn-import-lst', 'btn-import-rel'].forEach(function(id) { document.getElementById(id).disabled = running; });
+  ['btn-import-all', 'btn-import-lst', 'btn-import-rel', 'btn-import-snap'].forEach(function(id) { document.getElementById(id).disabled = running; });
   document.getElementById('btn-cancel').style.display = running ? '' : 'none';
   // The bar appears once the releases.1c.ru step reports its first project.
   if (!running || source === 'lst') document.getElementById('progress-wrap').style.display = 'none';
@@ -803,6 +835,7 @@ async function pollImportLog(source) {
       clearInterval(importPolling);
       importPolling = null;
       setImportRunning(false, source);
+      loadSnapshotInfo();
       var progTotal = (data.progress && data.progress.total) ? data.progress.total : 0;
       updateProgress(progTotal, progTotal);
 
@@ -810,7 +843,7 @@ async function pollImportLog(source) {
       try {
         var st = await apiFetch('/admin/api/import/status');
         var run = st.lastRun;
-        if (run && run.source === 'all') {
+        if (run && (run.source === 'all' || run.source === 'snapshot')) {
           document.getElementById('import-summary').innerHTML =
             badge(run.status) + ' &nbsp; ' + fmtDur(run.startedAt, run.finishedAt) + ' &nbsp;·&nbsp; ' + esc(run.message);
         } else if (run) {
@@ -843,7 +876,7 @@ function now() {
 async function checkRunningImport() {
   // Guard: don't start a second poller if one is already running
   if (importPolling) return;
-  var sources = ['all', 'lst', 'releases'];
+  var sources = ['all', 'snapshot', 'lst', 'releases'];
   for (var si = 0; si < sources.length; si++) {
     var src = sources[si];
     try {

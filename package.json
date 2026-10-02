@@ -12,7 +12,8 @@
     "import:releases": "tsx src/releases/import-releases.ts",
     "server": "tsx src/db/server.ts",
     "worker": "tsx src/db/worker.ts",
-    "dev": "tsx watch src/db/server.ts"
+    "dev": "tsx watch src/db/server.ts",
+    "snapshot": "bash scripts/snapshot.sh"
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",

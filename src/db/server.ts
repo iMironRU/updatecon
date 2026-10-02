@@ -27,6 +27,8 @@
  *   POST /admin/api/import/lst             -> trigger LST import
  *   POST /admin/api/import/releases        -> trigger releases import
  *   POST /admin/api/import/all             -> «Обновить всё»: LST, then releases.1c.ru (pipeline.ts)
+ *   GET  /admin/api/snapshot               -> published database snapshot vs the one applied here
+ *   POST /admin/api/import/snapshot        -> take the published snapshot (snapshot.ts)
  *   GET  /admin/api/logs/:id               -> stored full log of an «Обновить всё» run
  *   POST /admin/api/settings/its           -> save the ITS account (checked on releases.1c.ru first)
  *   DELETE /admin/api/settings/its         -> back to ITS_LOGIN / ITS_PASSWORD from .env
@@ -58,6 +60,7 @@ import { moreStats, platformCheck, releasesBy, platformInfo } from "./stats.js";
 import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
+import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
   checkAdminPassword, setAdminPassword, adminPasswordSource,
@@ -70,16 +73,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // In-memory lock: one import at a time — «Обновить всё» runs both sources, and
 // the single-source runs touch the same tables.
-type ImportSource = "lst" | "releases" | "all";
+type ImportSource = "lst" | "releases" | "all" | "snapshot";
 const importRunning: Record<string, boolean> = {};
 const anyImportRunning = () => Object.values(importRunning).some(Boolean);
 
 // Per-source log buffer (cleared on each new run)
 interface LogEntry { ts: string; text: string; }
-const importLogs: Record<string, LogEntry[]> = { lst: [], releases: [], all: [] };
+const importLogs: Record<string, LogEntry[]> = { lst: [], releases: [], all: [], snapshot: [] };
 const importProgress: Record<string, { current: number; total: number }> =
-  { lst: { current: 0, total: 0 }, releases: { current: 0, total: 0 }, all: { current: 0, total: 0 } };
-const importAbort: Record<string, AbortController | null> = { lst: null, releases: null, all: null };
+  { lst: { current: 0, total: 0 }, releases: { current: 0, total: 0 }, all: { current: 0, total: 0 }, snapshot: { current: 0, total: 0 } };
+const importAbort: Record<string, AbortController | null> = { lst: null, releases: null, all: null, snapshot: null };
 
 function addImportLog(source: string, text: string) {
   const ts = new Date().toLocaleTimeString("ru-RU",
@@ -103,7 +106,13 @@ async function safeAdminImport(source: ImportSource) {
 
   if (source !== "all") addImportLog(source, "Импорт запущен");
   try {
-    if (source === "all") {
+    if (source === "snapshot") {
+      await syncSnapshot({
+        force: true,
+        onLog: (msg) => addImportLog(source, msg),
+        onProgress: (cur, tot) => { importProgress[source] = { current: cur, total: tot }; },
+      });
+    } else if (source === "all") {
       // Progress goes to the bar; the log keeps the per-project results.
       await runFullUpdate({
         trigger: "manual",
@@ -381,6 +390,18 @@ export async function buildServer() {
       return { started: true, lastRunId: lastRun?.id ?? 0 };
     },
   );
+
+  app.get("/admin/api/snapshot", async () => {
+    let remote = null, error: string | null = null;
+    try { remote = await remoteMeta(); } catch (e) { error = (e as Error).message; }
+    return { url: SNAPSHOT_URL, remote, error, applied: await appliedSnapshot() };
+  });
+
+  app.post("/admin/api/import/snapshot", async (_req, reply) => {
+    if (anyImportRunning()) return reply.status(409).send({ error: "Импорт уже выполняется" });
+    void safeAdminImport("snapshot");
+    return { started: true };
+  });
 
   app.post("/admin/api/import/all", async (_req, reply) => {
     if (anyImportRunning()) return reply.status(409).send({ error: "Импорт уже выполняется" });

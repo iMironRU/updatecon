@@ -32,3 +32,4 @@ docker-compose.override.yml
 # scripts/dev-local.sh instance lock
 .dev-local.pid
 .dev-local.log
+data/snapshot/
