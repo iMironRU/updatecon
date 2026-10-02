@@ -48,6 +48,10 @@ public/index.html       single-file UI (vanilla JS, no build); /news is computed
                         newsEvents (no event log yet); «Мои конфигурации» = config ids in localStorage uc_fav;
                         clean paths (/config/96) via the History API,
                         server falls back to index.html; old /#/… links are rewritten on load
+public/sw.js            PWA service worker: network first, cache fallback for the public pages and
+                        GET /api/* (offline answers carry X-Updatecon-Offline: 1 → the page's
+                        «Нет связи» bar); never touches the admin panel. Bump CACHE when sw.js changes
+public/manifest.webmanifest, public/icons/   install manifest + icons (rendered from icons/*.svg)
 drizzle/                generated migration SQL (committed)
 ```
 

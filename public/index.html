@@ -4,7 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Апдейкон — Навигатор обновлений 1С</title>
+<meta name="description" content="Цепочки обновлений конфигураций 1С: какие .cfu и в каком порядке ставить, каталог, новости релизов и платформы">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#EEF1F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C1120" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Апдейкон">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;900&family=Russo+One&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -651,6 +660,18 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
   font-size: 14px; font-weight: 500; z-index: 9999; transition: transform .25s var(--ease);
   white-space: nowrap; box-shadow: var(--shadow-lg); pointer-events: none; }
 #toast.show { transform: translateX(-50%) translateY(0); }
+/* No network: the service worker answered from its cache (sw.js) */
+.offline-bar { position: fixed; top: var(--hdr); left: 0; right: 0; z-index: 98;
+  display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 16px;
+  background: var(--yellow-dim); color: var(--text); border-bottom: 1px solid var(--border);
+  font-size: 13px; text-align: center; }
+.offline-bar[hidden] { display: none; }
+body.offline .main { padding-top: calc(var(--hdr) + 32px); }
+.offline-bar svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--yellow); }
+.app-install { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.app-install img { width: 56px; height: 56px; border-radius: 13px; flex-shrink: 0; }
+.app-install-text { flex: 1; min-width: 200px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.app-install-text b { color: var(--text); font-weight: 600; }
 .footer { border-top: 1px solid var(--border); padding: 20px 0; margin-top: 48px; background: var(--surface); }
 .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .footer-brand { font-size: 13px; color: var(--text-muted); }
@@ -745,6 +766,10 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
   </nav>
 </div>
 <div class="menu-backdrop" id="menu-backdrop" hidden onclick="toggle_menu(false)"></div>
+<div class="offline-bar" id="offline-bar" role="status" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65"/><path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/><path d="M16.85 11.25a10 10 0 0 1 2.22 1.68"/><path d="M5 13a10 10 0 0 1 5.24-2.76"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+  <span>Нет связи с сервером — показаны данные с последнего посещения</span>
+</div>
 
 <main class="main" id="main-content"></main>
 
@@ -784,7 +809,65 @@ async function apiFetch(path, params) {
   const url = path + (params ? '?' + new URLSearchParams(params) : '');
   const r = await fetch(url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
+  set_offline(r.headers.get('X-Updatecon-Offline') === '1');
   return r.json();
+}
+
+/* ================================================================
+   INSTALLABLE APP (manifest.webmanifest + sw.js)
+   ================================================================ */
+// sw.js answers from its cache when the server is unreachable and marks such
+// responses; the bar says the data may be old. Browser online/offline events
+// only show the device's own connection, so the responses decide.
+function set_offline(on) {
+  const bar = document.getElementById('offline-bar');
+  if (!bar || bar.hidden !== on) return;
+  bar.hidden = !on;
+  document.body.classList.toggle('offline', on);
+}
+window.addEventListener('online', () => set_offline(false));
+
+let INSTALL_PROMPT = null;     // beforeinstallprompt (Chrome, Edge, Яндекс): install from our own button
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  INSTALL_PROMPT = e;
+  refresh_install_section();
+});
+window.addEventListener('appinstalled', () => { INSTALL_PROMPT = null; refresh_install_section(); });
+
+function app_standalone() {
+  return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+function install_section_body() {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let text, btn = '';
+  if (app_standalone()) {
+    text = '<b>Апдейкон открыт как приложение.</b> Без сети покажет данные с последнего посещения.';
+  } else if (INSTALL_PROMPT) {
+    text = '<b>Установите Апдейкон</b> — отдельное окно и значок на рабочем столе или домашнем экране. Без сети открываются данные с последнего посещения.';
+    btn = '<button class="btn btn-primary" onclick="install_app()">Установить приложение</button>';
+  } else if (ios) {
+    text = '<b>Установка на iPhone и iPad:</b> в Safari нажмите «Поделиться» → «На экран „Домой“».';
+  } else {
+    text = '<b>Апдейкон можно установить как приложение:</b> значок установки в адресной строке или пункт «Установить приложение» в меню браузера (Chrome, Edge, Яндекс Браузер). Без сети открываются данные с последнего посещения.';
+  }
+  return `<img src="/icons/icon-192.png" alt=""><div class="app-install-text">${text}</div>${btn}`;
+}
+function refresh_install_section() {
+  const el = document.getElementById('app-install');
+  if (el) el.innerHTML = install_section_body();
+}
+async function install_app() {
+  if (!INSTALL_PROMPT) return;
+  const ev = INSTALL_PROMPT;
+  INSTALL_PROMPT = null;
+  ev.prompt();
+  const { outcome } = await ev.userChoice;
+  if (outcome === 'accepted') toast('Апдейкон установлен');
+  refresh_install_section();
+}
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
 
 function nick_from_href(href) {
@@ -1282,6 +1365,11 @@ function apply_theme(th) {
   else document.documentElement.setAttribute('data-theme', th);
   localStorage.setItem('uc_theme', th);
   update_theme_icon();
+  // The browser / installed app bar: the system's choice, or the one picked here
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    const own = m.media.includes('dark') ? '#0C1120' : '#EEF1F8';
+    m.content = th === 'auto' ? own : (th === 'dark' ? '#0C1120' : '#EEF1F8');
+  });
 }
 function update_theme_icon() {
   const dark = current_theme() === 'dark' ||
@@ -3580,6 +3668,11 @@ function render_settings() {
           Тёмная
         </div>
       </div>
+    </div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Приложение</div>
+      <div class="settings-section-sub">Апдейкон устанавливается на компьютер и телефон как обычное приложение</div>
+      <div class="app-install" id="app-install">${install_section_body()}</div>
     </div>
     <div class="settings-section fade-up fade-up-2">
       <div class="settings-section-title">API эндпоинты</div>
