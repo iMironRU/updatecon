@@ -502,7 +502,10 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .news-row:hover { background: var(--surface2); }
 .news-row-name { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .news-row-name:hover { color: var(--accent); }
-.news-row-ver { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+/* ДП goes before the number: the numbers stay aligned on the right, with or without it */
+.news-row-ver { display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.news-row-ver .badge-lts { padding: 1px 7px; font-size: 11px; font-family: 'Golos Text', sans-serif; }
 .news-row-plat { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
 .news-row-plat a { color: var(--text-muted); }
 .news-row-plat a:hover { color: var(--accent); }
@@ -3331,7 +3334,7 @@ function news_release_row(e, c) {
   return `<div class="news-row">
     ${fav_btn(c.id)}
     <a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a>
-    <span class="news-row-ver">${esc_html(e.version)}${lts ? ' <span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : ''}</span>
+    <span class="news-row-ver">${lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : ''}<span>${esc_html(e.version)}</span></span>
     <span class="news-row-plat">${plat ? `<a href="/platform?build=${plat}" title="Минимальная платформа">≥ ${plat}</a>` : ''}</span>
   </div>`;
 }
