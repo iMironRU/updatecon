@@ -432,6 +432,24 @@ a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
   color: var(--text-muted); font-size: 13px; cursor: pointer; }
 .st-drill-x:hover { background: var(--surface2); color: var(--text); }
 .lrow.nobar .lrow-top { margin-bottom: 0; }
+/* platform page */
+.os-chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; margin: 1px 4px 1px 0; border-radius: 99px;
+  background: var(--surface2); color: var(--text-muted); white-space: nowrap; }
+.os-cell { white-space: normal; }
+.st-table tr.sel td { background: var(--accent-dim); }
+.pl-lines tbody tr { cursor: pointer; }
+.pl-lines tbody tr:hover td { background: var(--surface2); }
+.pl-lines tbody tr.sel:hover td { background: var(--accent-dim); }
+.pl-lines td small { display: inline; margin-left: 6px; }
+.st-table .pl-links a { color: var(--accent); font-weight: 600; margin-right: 12px; white-space: nowrap; }
+.os-chip.new { background: var(--accent-dim); color: var(--accent); }
+.kpi-value.pl-ver { font-family: var(--mono); font-size: 26px; }
+@media (max-width: 560px) { .kpi-value.pl-ver { font-size: 17px; letter-spacing: -.3px; } }
+@media (max-width: 640px) { .hide-sm { display: none; } }
+.os-chip.gone { background: none; color: var(--text-light); text-decoration: line-through; }
+.pl-need { font-weight: 700; color: var(--accent); cursor: default; border-bottom: 1px dotted var(--accent); }
+.fact-link { color: inherit; border-bottom: 1px dotted var(--text-light); }
+.fact-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
 /* platform check */
 .pc-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
 .pc-form .input { width: 200px; }
@@ -623,6 +641,7 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
       <a class="nav-link" href="/">Главная</a>
       <a class="nav-link" href="/catalog">Каталог</a>
       <a class="nav-link" href="/stats">Статистика</a>
+      <a class="nav-link" href="/platform">Платформа</a>
       <a class="nav-link" href="/settings">Настройки</a>
     </nav>
     <div class="header-actions">
@@ -1413,6 +1432,7 @@ async function route() {
     await bind_chain_page(params);
   }
   else if (path === '/stats') { el.innerHTML = render_stats(); bind_stats(); }
+  else if (path === '/platform') { el.innerHTML = render_platform(); await bind_platform(); }
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
   else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
   ROUTE_PATH = path;
@@ -2115,7 +2135,8 @@ function render_config(id) {
         <div class="cfg-facts">
           <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div>
             ${latest?.date ? `<div class="meta-item-sub">${fmt_date(latest.date)} · ${days_ago(latest.date)}</div>` : ''}</div>
-          <div><div class="meta-item-label">Платформа</div><div class="meta-item-value mono">${latestPlat ? '≥ ' + esc_html(latestPlat) : '—'}</div></div>
+          <div><div class="meta-item-label">Платформа</div><div class="meta-item-value mono">${latestPlat
+            ? `<a class="fact-link" href="/platform?build=${encodeURIComponent((String(latestPlat).match(/\d+\.\d+\.\d+\.\d+/) || [''])[0])}" title="Сборки этой линейки, ОС и известные ошибки">≥ ${esc_html(latestPlat)}</a>` : '—'}</div></div>
           ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${esc_html(cfg.nextReleaseVersion)}</div>${cfg.nextReleasePlannedDate || cfg.nextReleasePlanUpdated ? `<div class="meta-item-sub">${esc_html(cfg.nextReleasePlannedDate || '')}${cfg.nextReleasePlannedDate && cfg.nextReleasePlanUpdated ? ' · ' : ''}${cfg.nextReleasePlanUpdated ? 'план от ' + fmt_date(cfg.nextReleasePlanUpdated) : ''}</div>` : ''}</div>` : ''}
           ${cfg.ltsVersion ? `<div><div class="meta-item-label">Ветка ДП</div><div class="meta-item-value mono">${esc_html(cfg.ltsLine)}.x</div><div class="meta-item-sub">поддержка до ${fmt_date(cfg.ltsUntil)}${lts_ended(cfg) ? ' (завершена)' : ''}</div></div>` : ''}
         </div>
@@ -2573,7 +2594,8 @@ function platform_card_html() {
     });
   };
   return st_card('Платформа 1С:Предприятие', `по последней версии, из ${nfmt(cur.length)} конфигураций`,
-    gens.map(row).join('') + (by[''] ? row('') : ''));
+    gens.map(row).join('') + (by[''] ? row('') : '')
+    + `<div class="st-foot">Какую сборку ставить, сборки и ОС — на странице <a href="/platform">«Платформа»</a>.</div>`);
 }
 
 // How long ago the newest release came out (current editions). Rows open the
@@ -2977,8 +2999,224 @@ async function bind_stats() {
   put('st-a-85', plat85_card_html(m));
   const t = document.getElementById('st-trans'); if (t) t.outerHTML = trans_card_html(m);
   const ch = document.getElementById('st-chains'); if (ch) ch.outerHTML = chains_card_html(m);
+}
+
+/* ================================================================
+   PLATFORM VIEW — builds of 1С:Предприятие and what configurations need
+   ================================================================ */
+let PLATFORM_DATA = null;
+const OS_LABEL = { win64: 'Windows', win32: 'Windows 32', linux64: 'Linux', linux32: 'Linux 32', arm64: 'ARM', e2k: 'Эльбрус', mac: 'macOS' };
+const OS_TITLE = { win64: 'Windows, 64-bit', win32: 'Windows, 32-bit', linux64: 'Linux, 64-bit', linux32: 'Linux, 32-bit',
+  arm64: 'Linux на ARM (64-bit)', e2k: 'Linux на Эльбрус-8С', mac: 'macOS' };
+const PL_STATE = { line: null, allLines: false };
+function os_chips(os, older) {
+  return (os || []).map(t => {
+    const isNew = older && older.length && !older.includes(t);
+    return `<span class="os-chip${isNew ? ' new' : ''}" title="${OS_TITLE[t] || t}${isNew ? ' — появилось в этой версии' : ''}">${OS_LABEL[t] || t}</span>`;
+  }).join('');
+}
+// Lists run newest first. The newest row shows the full set; the others show
+// only what changed against the next older row ("+ARM", "−Windows 32"), the
+// oldest row its full set — so the eye catches where support changed.
+function os_cell(os, older, full) {
+  if (!os || !os.length) return '<span style="color:var(--text-light)">—</span>';
+  if (full || !older || !older.length) return os_chips(os, older);
+  const added = os.filter(t => !older.includes(t)), gone = older.filter(t => !os.includes(t));
+  return added.map(t => `<span class="os-chip new" title="${OS_TITLE[t] || t} — появилось в этой версии">+${OS_LABEL[t] || t}</span>`).join('')
+    + gone.map(t => `<span class="os-chip gone" title="${OS_TITLE[t] || t} — больше не выпускается">−${OS_LABEL[t] || t}</span>`).join('');
+}
+const ver_cmp = (a, b) => platform_cmp_v(a, b);
+const line_of = v => String(v).split('.').slice(0, 3).join('.');
+
+function render_platform() {
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Платформа 1С:Предприятие</div></div>
+    <div id="pl-root">${render_loading('Загрузка сборок платформы...')}</div>
+  </div>`;
+}
+async function bind_platform() {
+  tip_init();
+  try {
+    const [p, m] = await Promise.all([
+      PLATFORM_DATA || apiFetch('/api/platform'),
+      STATS_MORE || apiFetch('/api/stats/more').catch(() => null),
+    ]);
+    PLATFORM_DATA = p; if (m) STATS_MORE = m;
+  } catch (e) {
+    const r = document.getElementById('pl-root');
+    if (r) r.innerHTML = '<div class="empty"><div class="empty-title">Не удалось загрузить данные о платформе</div></div>';
+    return;
+  }
+  const params = parse_route().params;
+  const lines = platform_lines();
+  PL_STATE.build = params.build || '';
+  PL_STATE.line = params.line && lines.some(l => l.line === params.line) ? params.line
+    : params.build ? line_of(params.build)
+    : (lines.find(l => l.gen === '8.3') || lines[0] || {}).line;
+  if (PL_STATE.line && !lines.some(l => l.line === PL_STATE.line)) PL_STATE.allLines = true;
+  const root = document.getElementById('pl-root');
+  if (!root) return;
+  root.innerHTML = platform_page_html();
   const v = pc_saved();
   if (v) pc_run(v);
+  if (params.build || params.line) {
+    // After route() has put the page at the top.
+    setTimeout(() => {
+      const el = document.getElementById(params.build ? 'pl-b-' + params.build.replace(/\./g, '-') : 'pl-builds');
+      if (el) el.scrollIntoView({ block: params.build ? 'center' : 'start', behavior: 'instant' });
+    }, 0);
+  }
+}
+
+// Lines (8.3.27 …) from the builds: dates, counts, the newest build's OS.
+function platform_lines() {
+  const by = new Map();
+  (PLATFORM_DATA ? PLATFORM_DATA.builds : []).forEach(b => {
+    const l = by.get(b.line) || { line: b.line, gen: b.line.split('.').slice(0, 2).join('.'), builds: [] };
+    l.builds.push(b);
+    by.set(b.line, l);
+  });
+  return [...by.values()].map(l => {
+    l.builds.sort((a, b) => ver_cmp(b.v, a.v));
+    l.newest = l.builds[0]; l.oldest = l.builds[l.builds.length - 1];
+    return l;
+  }).sort((a, b) => ver_cmp(b.line, a.line));
+}
+
+function platform_page_html() {
+  const p = PLATFORM_DATA;
+  const lines = platform_lines();
+  const live = stats_live();
+  const liveIds = new Set(live.map(c => c.id));
+  const withReq = live.filter(c => p.required[c.id]);
+  const newest = gen => lines.find(l => l.gen === gen);
+  const n83 = newest('8.3'), n85 = newest('8.5');
+  const cnt = gen => lines.filter(l => l.gen === gen).reduce((s, l) => s + l.builds.length, 0);
+  const first83 = lines.filter(l => l.gen === '8.3').map(l => l.oldest).sort((a, b) => ver_cmp(a.v, b.v))[0];
+  const kpi = (label, value, sub, href) => `<${href ? `a href="${href}"` : 'div'} class="kpi"><div class="kpi-label">${label}</div>
+      <div class="kpi-value pl-ver">${value}</div><div class="kpi-sub">${sub}</div></${href ? 'a' : 'div'}>`;
+
+  // ── Coverage: on the newest build of each line, whose newest release installs ──
+  const cov = p.coverage.slice().sort((a, b) => ver_cmp(b.line, a.line));
+  const best = Math.max(0, ...cov.map(r => r.ok.filter(id => liveIds.has(String(id))).length));
+  const covRows = cov.map(r => {
+    const ok = r.ok.filter(id => liveIds.has(String(id))).length;
+    const unk = r.unknown.filter(id => liveIds.has(String(id))).length;
+    const total = withReq.length;
+    return st_hrow({
+      name: r.line + `<small>${r.build.split('.').pop()}</small>`,
+      val: `${nfmt(ok)} <span><span class="hide-sm">из ${nfmt(total)} </span>· ${pct_text(ok, total)}</span>`, w: total ? ok / total * 100 : 0,
+      cls: ok === best && ok ? 'emph' : '',
+      href: '/platform?line=' + r.line,
+      tip: { v: `${nfmt(ok)} из ${nfmt(total)} · ${pct_text(ok, total)}`, l: `На ${r.build} встанут последние релизы`,
+             s: [unk ? `ещё у ${unk} эта платформа в требованиях не указана` : '', total - ok - unk ? `${total - ok - unk} нужна платформа новее` : ''],
+             h: 'Нажмите — сборки этой линейки' },
+    });
+  }).join('');
+
+  // ── Lines table ──
+  const reqLine = new Map();   // line → live configs whose newest release needs at least this line
+  withReq.forEach(c => { const l = line_of(p.required[c.id]); (reqLine.get(l) || reqLine.set(l, []).get(l)).push(c); });
+  const RECENT = [8, 3, 20];
+  const isRecent = l => l.gen === '8.5' || ver_cmp(l.line, RECENT.join('.')) >= 0;
+  const shownLines = PL_STATE.allLines ? lines : lines.filter(isRecent);
+  const lineRows = shownLines.map((l, i) => {
+    const need = reqLine.get(l.line) || [];
+    const on = l.line === PL_STATE.line;
+    return `<tr class="${on ? 'sel' : ''}" onclick="pl_pick_line('${l.line}')" tabindex="0" onkeydown="if(event.key==='Enter')pl_pick_line('${l.line}')"
+        ${tip_attr({ v: `Линейка ${l.line}`, l: `${l.builds.length} ${ru_plural(l.builds.length, 'сборка', 'сборки', 'сборок')}, ${l.oldest.date ? fmt_date(l.oldest.date) : '?'} — ${l.newest.date ? fmt_date(l.newest.date) : '?'}`,
+          s: need.length ? [`минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, st_examples(need)] : [],
+          h: 'Нажмите — сборки линейки' })}>
+      <td class="mono"><b>${l.line}</b></td>
+      <td>${l.builds.length}</td>
+      <td class="mono">${l.oldest.v.split('.').pop()} <small>${l.oldest.date ? fmt_date(l.oldest.date) : ''}</small></td>
+      <td class="mono">${l.newest.v.split('.').pop()} <small>${l.newest.date ? fmt_date(l.newest.date) : ''}</small></td>
+      <td>${need.length || '<span style="color:var(--text-light)">—</span>'}</td>
+      <td class="os-cell">${os_cell(l.newest.os, i + 1 < shownLines.length ? shownLines[i + 1].newest.os : null, i === 0)}</td>
+    </tr>`;
+  }).join('');
+  const hiddenLines = lines.length - lines.filter(isRecent).length;
+
+  return `
+    <div class="kpi-row fade-up">
+      ${n83 ? kpi('8.3 · актуальная', n83.newest.v, n83.newest.date ? fmt_date(n83.newest.date) + ' · ' + days_ago(n83.newest.date) : '', '/platform?line=' + n83.line) : ''}
+      ${n85 ? kpi('8.5 · актуальная', n85.newest.v, n85.newest.date ? fmt_date(n85.newest.date) + ' · ' + days_ago(n85.newest.date) : '', '/platform?line=' + n85.line) : ''}
+      ${kpi('Мобильная платформа', esc_html(p.current.mobile85 || p.current.mobile || '—'), p.current.mobile85 && p.current.mobile ? '8.3: ' + esc_html(p.current.mobile) : 'для мобильных приложений')}
+      ${kpi('Сборок в каталоге', nfmt(cnt('8.3') + cnt('8.5')), `8.3 — ${cnt('8.3')}${first83 && first83.date ? ' с ' + first83.date.slice(0, 4) + ' года' : ''}, 8.5 — ${cnt('8.5')}`)}
+    </div>
+
+    <div class="st-section">Какую платформу ставить</div>
+    <div class="st-grid">
+      ${st_card('На какой линейке встанут последние релизы', `из ${nfmt(withReq.length)} актуальных конфигураций с требованиями`,
+        (covRows || '<div class="st-empty">Нет данных</div>')
+        + `<div class="st-foot">Для каждой конфигурации берём требования её последнего релиза на releases.1c.ru и проверяем на самой новой сборке линейки.
+           Для 8.5 у большинства в требованиях пока указана только 8.3 — их не считаем.</div>`)}
+      <div id="check">${platform_check_html()}</div>
+    </div>
+
+    <div class="st-section">Линейки</div>
+    ${st_card('Линейки платформы', 'нажмите на линейку — ниже её сборки', `<div class="st-table-wrap"><table class="st-table pl-lines">
+      <thead><tr><th>Линейка</th><th>Сборок</th><th>Первая</th><th>Последняя</th><th title="Для скольких актуальных конфигураций это минимальная линейка последнего релиза">Минимум для</th><th title="У самой новой линейки — все ОС, ниже — что изменилось">ОС</th></tr></thead>
+      <tbody>${lineRows}</tbody></table></div>
+      ${hiddenLines || PL_STATE.allLines ? `<button class="st-more" onclick="PL_STATE.allLines=!PL_STATE.allLines; document.getElementById('pl-root').innerHTML=platform_page_html()">${PL_STATE.allLines ? 'Только свежие линейки' : 'Все линейки (' + lines.length + ')'}</button>` : ''}`)}
+
+    <div id="pl-builds">${platform_builds_html()}</div>
+
+    <div class="st-section">Переход на ${PLATFORM_NEWEST}</div>
+    <div class="st-grid">
+      <div id="st-a-85">${plat85_card_html(STATS_MORE)}</div>
+      ${platform_on85_html()}
+    </div>`;
+}
+
+// Builds of the selected line: dates, OS, release notes, known errors, and
+// which configurations name exactly this build as their minimum.
+function platform_builds_html() {
+  const l = platform_lines().find(x => x.line === PL_STATE.line);
+  if (!l) return '';
+  const live = stats_live();
+  const p = PLATFORM_DATA;
+  const exact = new Map();
+  live.forEach(c => { const r = p.required[c.id]; if (r && line_of(r) === l.line) (exact.get(r) || exact.set(r, []).get(r)).push(c); });
+  const rows = l.builds.map((b, i) => {
+    const need = exact.get(b.v) || [];
+    const sel = b.v === PL_STATE.build;
+    return `<tr id="pl-b-${b.v.replace(/\./g, '-')}" class="${sel ? 'sel' : ''}">
+      <td class="mono"><b>${b.v}</b>${b === l.newest ? ' <span class="badge badge-blue" style="font-size:10px;padding:1px 6px">новая</span>' : ''}</td>
+      <td>${b.date ? fmt_date(b.date) : '—'}</td>
+      <td class="os-cell">${os_cell(b.os, i + 1 < l.builds.length ? l.builds[i + 1].os : null, i === 0)}</td>
+      <td>${need.length ? `<span class="pl-need"${tip_attr({ v: `Минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, l: 'последний релиз требует эту сборку',
+          s: need.slice().sort(main_cmp).slice(0, 6).map(c => c.name).concat(need.length > 6 ? ['и ещё ' + (need.length - 6)] : []) })} tabindex="0">${need.length}</span>` : ''}</td>
+      <td class="pl-links">${b.notes ? `<a href="${esc_html(b.notes)}" target="_blank" rel="noopener">изменения</a>` : ''}${b.bugs ? `<a href="${esc_html(b.bugs)}" target="_blank" rel="noopener">ошибки</a>` : ''}</td>
+    </tr>`;
+  }).join('');
+  const missing = PL_STATE.build && line_of(PL_STATE.build) === l.line && !l.builds.some(b => b.v === PL_STATE.build)
+    ? `<div class="st-foot" style="margin:0 0 10px">Сборки ${esc_html(PL_STATE.build)} нет в каталоге releases.1c.ru — ближайшие ниже.</div>` : '';
+  return `<div class="st-section">Сборки ${l.line}</div>
+    ${st_card(`Сборки линейки ${l.line}`, `${l.builds.length} ${ru_plural(l.builds.length, 'сборка', 'сборки', 'сборок')}, новые сверху`,
+      missing + `<div class="st-table-wrap"><table class="st-table pl-builds">
+        <thead><tr><th>Сборка</th><th>Вышла</th><th title="У новой сборки — все ОС, ниже — что изменилось относительно предыдущей">ОС</th><th title="Для скольких актуальных конфигураций это минимальная сборка последнего релиза">Минимум для</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+        <div class="st-foot">Ссылки ведут на releases.1c.ru (список изменений) и bugboard.1c.ru (известные ошибки сборки) — нужен вход в ИТС.</div>`)}`;
+}
+function pl_pick_line(line) {
+  PL_STATE.line = line; PL_STATE.build = '';
+  history.replaceState(null, '', '/platform?line=' + line);
+  const root = document.getElementById('pl-root');
+  if (root) root.innerHTML = platform_page_html();
+  const v = pc_saved(); if (v) pc_run(v);
+  const b = document.getElementById('pl-builds');
+  if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Who already ships releases for 8.5 (any edition currently in the catalog).
+function platform_on85_html() {
+  const on = stats_current().filter(c => c.platform && platform_cmp(c.platform, PLATFORM_NEWEST) >= 0).sort(main_cmp);
+  return st_card(`Уже на ${PLATFORM_NEWEST}`, `${on.length} ${ru_plural(on.length, 'конфигурация', 'конфигурации', 'конфигураций')}`,
+    on.length ? on.map(c => st_lrow({ name: esc_html(c.name), val: `<span>${esc_html(c.latestV || '')}</span>`, href: '/config/' + c.id,
+      tip: { v: c.name, l: 'последний релиз требует ' + (c.latestPlat || PLATFORM_NEWEST), h: 'Нажмите — открыть конфигурацию' } })).join('')
+      + `<div class="st-foot"><a href="/catalog?plat=${PLATFORM_NEWEST}">Открыть в каталоге →</a></div>`
+      : '<div class="st-empty">Пока ни одной</div>');
 }
 
 function render_stats() {
@@ -2993,7 +3231,6 @@ function render_stats() {
     <div class="fade-up fade-up-1">
       <div class="st-section">Платформа и актуальность</div>
       <div class="st-grid">${platform_card_html()}${freshness_card_html()}</div>
-      ${platform_check_html()}
       <div class="st-section">Что впереди</div>
       <div class="st-grid">${calendar_card_html()}<div id="st-a-85">${plat85_card_html(STATS_MORE)}</div></div>
       <div class="st-section">Динамика релизов</div>

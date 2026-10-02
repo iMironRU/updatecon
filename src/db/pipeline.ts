@@ -7,8 +7,10 @@
  *   2. releases.1c.ru: projects ↔ applications, release dates, platforms,
  *      sizes, planned releases, long-term support; then 1С:Решения cards and
  *      tags again.
+ *   3. Platform builds (releases.1c.ru): every 8.2/8.3/8.5 build with its
+ *      date, OS and links (src/releases/platform.ts).
  *
- * The steps are independent sources, so step 2 runs even if step 1 failed.
+ * The steps are independent sources, so each runs even if an earlier failed.
  * The run ends with a summary of what changed, and the whole log is stored in
  * import_runs (source = 'all') — a nightly run can be read in the admin UI.
  */
@@ -18,6 +20,7 @@ import { db } from "./client.js";
 import { importRuns } from "./schema.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
+import { syncPlatform } from "../releases/platform.js";
 
 const KEEP_LOGS = 30;   // full logs of the latest runs; older rows keep the summary only
 
@@ -30,7 +33,7 @@ export interface PipelineOptions {
 
 interface Snapshot {
   editions: number; edges: number; versions: number; releases: number;
-  projects: number; linked: number; transitions: number; solutions: number; tags: number;
+  projects: number; linked: number; transitions: number; solutions: number; tags: number; builds: number;
 }
 
 async function snapshot(): Promise<Snapshot> {
@@ -44,7 +47,8 @@ async function snapshot(): Promise<Snapshot> {
       (SELECT count(*) FROM release_projects WHERE config_id IS NOT NULL)::int AS linked,
       (SELECT count(*) FROM transitions)::int AS transitions,
       (SELECT count(*) FROM solutions_info WHERE status = 'ok')::int AS solutions,
-      (SELECT count(*) FROM template_tags WHERE tag <> '')::int AS tags
+      (SELECT count(*) FROM template_tags WHERE tag <> '')::int AS tags,
+      (SELECT count(*) FROM platform_builds)::int AS builds
   `);
   return (((r as any).rows ?? r) as Snapshot[])[0];
 }
@@ -77,7 +81,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
   log(`Обновление данных (${{ manual: "вручную", scheduled: "по расписанию", "on-start": "при запуске" }[opts.trigger]})`);
 
   // ── Step 1: LST ───────────────────────────────────────────────────────────
-  log("━━━ Шаг 1 из 2 · Список обновлений (LST, downloads.v8.1c.ru) ━━━");
+  log("━━━ Шаг 1 из 3 · Список обновлений (LST, downloads.v8.1c.ru) ━━━");
   let t0 = Date.now();
   try {
     await runImport(undefined, { onLog: log });
@@ -95,7 +99,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
     log("⛔ Прервано — шаг 2 не запускался");
     steps.push({ name: "releases.1c.ru", status: "cancelled", ms: 0 });
   } else {
-    log("━━━ Шаг 2 из 2 · Сайт релизов (releases.1c.ru) и 1С:Решения ━━━");
+    log("━━━ Шаг 2 из 3 · Сайт релизов (releases.1c.ru) и 1С:Решения ━━━");
     t0 = Date.now();
     if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
       log("⚠ ITS_LOGIN / ITS_PASSWORD не заданы — шаг пропущен");
@@ -119,6 +123,27 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
     }
   }
 
+  // ── Step 3: platform builds ───────────────────────────────────────────────
+  if (opts.signal?.aborted) {
+    if (!steps.some((s) => s.status === "cancelled")) log("⛔ Прервано — шаг 3 не запускался");
+    steps.push({ name: "платформа", status: "cancelled", ms: 0 });
+  } else {
+    log("━━━ Шаг 3 из 3 · Платформа 1С:Предприятие (releases.1c.ru) ━━━");
+    t0 = Date.now();
+    if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
+      log("⚠ ITS_LOGIN / ITS_PASSWORD не заданы — шаг пропущен");
+      steps.push({ name: "платформа", status: "skipped", ms: 0 });
+    } else {
+      try {
+        const r = await syncPlatform({ onLog: log, onProgress: (cur, tot) => opts.onProgress?.(cur, tot), signal: opts.signal });
+        steps.push({ name: "платформа", status: r.errors && !r.details ? "error" : "ok", ms: Date.now() - t0 });
+      } catch (e) {
+        log(`✗ Платформа: ${(e as Error).message}`);
+        steps.push({ name: "платформа", status: "error", ms: Date.now() - t0 });
+      }
+    }
+  }
+
   // ── Summary ───────────────────────────────────────────────────────────────
   const after = await snapshot();
   const errors = lines.filter((l) => /\]\s+✗/.test(l)).length;
@@ -131,6 +156,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
   log(`Редакций: ${nf(after.editions)}${delta(before.editions, after.editions)} · рёбер обновления: ${nf(after.edges)}${delta(before.edges, after.edges)} · версий: ${nf(after.versions)}${delta(before.versions, after.versions)}`);
   log(`Релизов с датами: ${nf(after.releases)}${delta(before.releases, after.releases)} · проектов releases.1c.ru: ${nf(after.projects)}, сопоставлено ${nf(after.linked)}${delta(before.linked, after.linked)}`);
   log(`Переходов: ${nf(after.transitions)}${delta(before.transitions, after.transitions)} · карточек 1С:Решений: ${nf(after.solutions)}${delta(before.solutions, after.solutions)} · тегов: ${nf(after.tags)}${delta(before.tags, after.tags)}`);
+  log(`Сборок платформы: ${nf(after.builds)}${delta(before.builds, after.builds)}`);
   log(errors ? `✗ Ошибок в логе: ${errors}` : "Ошибок нет");
   log(`${status === "ok" ? "✓ Готово" : status === "partial" ? "⚠ Готово с ошибками" : status === "cancelled" ? "⛔ Прервано" : "✗ Не удалось"} за ${dur(total)}`);
 

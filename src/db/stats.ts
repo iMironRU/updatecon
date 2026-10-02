@@ -34,6 +34,7 @@ let cacheKey = "";
 let cacheAt = 0;
 let metaCache: Map<number, MetaRow[]> | null = null;
 let moreCache: MoreStats | null = null;
+let platformCache: PlatformInfo | null = null;
 
 async function freshKey(): Promise<boolean> {
   const r = rowsOf<{ k: string }>(await db.execute(sql`SELECT coalesce(max(id), 0)::text AS k FROM import_runs`));
@@ -43,6 +44,7 @@ async function freshKey(): Promise<boolean> {
     cacheAt = Date.now();
     metaCache = null;
     moreCache = null;
+    platformCache = null;
     return false;
   }
   return true;
@@ -258,4 +260,67 @@ export async function releasesBy(q: { year?: number; dow?: number }): Promise<{ 
     total: rows.reduce((s, r) => s + Number(r.n), 0),
     top: rows.slice(0, 12).map((r) => ({ id: Number(r.id), n: Number(r.n) })),
   };
+}
+
+// ── Platform page ──────────────────────────────────────────────────────────
+
+export interface PlatformInfo {
+  builds: { v: string; nick: string; line: string; date: string | null; os: string[] | null; notes: string | null; bugs: string | null }[];
+  current: Record<string, string | null>;          // releases.1c.ru nick → its newest version
+  required: Record<string, string>;                // config id → lowest platform its newest release runs on
+  coverage: { line: string; build: string; ok: number[]; unknown: number[] }[];
+}
+
+const COVERAGE_FROM: Plat = [8, 3, 20, 0];
+
+export async function platformInfo(): Promise<PlatformInfo> {
+  if ((await freshKey()) && platformCache) return platformCache;
+  const [builds, current] = await Promise.all([
+    db.execute(sql`
+      SELECT version AS v, nick, line, release_date::text AS date, os, notes_url AS notes, bugs_url AS bugs
+      FROM platform_builds ORDER BY string_to_array(version, '.')::int[] DESC`),
+    db.execute(sql`
+      SELECT nick, latest_version FROM release_projects
+      WHERE nick IN ('Platform83', 'Platform85', 'mobile', 'mobile85', 'PlTr83', 'PlTr85')`),
+  ]);
+  const list = rowsOf<PlatformInfo["builds"][number]>(builds);
+  const meta = await loadMeta();
+
+  // What each configuration's newest release asks for, and the lowest of it.
+  const reqOf = new Map<number, string>();
+  const required: Record<string, string> = {};
+  for (const [id, rows] of meta) {
+    const top = rows.find((r) => r.min_platform);
+    if (!top?.min_platform) continue;
+    const entries = (top.min_platform.match(/\d+\.\d+\.\d+\.\d+/g) ?? []).map((x) => parsePlatform(x)!).sort(cmpPlat);
+    if (!entries.length) continue;
+    reqOf.set(id, top.min_platform);
+    required[id] = fmtPlat(entries[0]);
+  }
+
+  // Coverage: on the newest build of each recent line, whose newest release installs.
+  const newestOfLine = new Map<string, string>();
+  for (const b of list) {
+    if (b.nick === "Platform82") continue;
+    if (!newestOfLine.has(b.line)) newestOfLine.set(b.line, b.v);   // list is newest first
+  }
+  const coverage: PlatformInfo["coverage"] = [];
+  for (const [line, build] of newestOfLine) {
+    const u = parsePlatform(build)!;
+    if (cmpPlat(u, COVERAGE_FROM) < 0) continue;
+    const ok: number[] = [], unknown: number[] = [];
+    for (const [id, req] of reqOf) {
+      const st = check(req, u).st;
+      if (st === "ok") ok.push(id); else if (st === "unknown") unknown.push(id);
+    }
+    coverage.push({ line, build, ok, unknown });
+  }
+
+  platformCache = {
+    builds: list,
+    current: Object.fromEntries(rowsOf<{ nick: string; latest_version: string | null }>(current).map((r) => [r.nick, r.latest_version])),
+    required,
+    coverage,
+  };
+  return platformCache;
 }

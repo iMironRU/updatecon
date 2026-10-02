@@ -33,6 +33,7 @@ src/db/
                         used by the admin button and the scheduled worker; full log kept in import_runs.log
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
+  platform.ts           1С:Предприятие builds from releases.1c.ru (dates, OS, notes, bugboard) → platform_builds
   client.ts             pg Pool + Drizzle instance (honours globalThis.__SHARED_POOL__ for tests)
   fetch-lst.ts          ITS Basic-auth fetch OR local file (LST_FILE/argv)
   import-lst.ts         runImport(): two-level hash delta, fan-out to edges
@@ -120,6 +121,12 @@ owned by the application edition of its own package (template of `cfuPath`
   read-only pass over the LST text (the locked parsers drop source names).
   **Information only** — the user decided transitions are shown ("можно
   перейти"), not chained; locked decision 2 stands.
+- `platform_builds` (version PK) — every 8.2/8.3/8.5 platform build from
+  releases.1c.ru with its date; for 8.3/8.5 also `os` (win64 win32 linux64
+  linux32 arm64 e2k mac — from <h5> groups or, on older pages, file names),
+  release notes and bugboard links. Step 3 of «Обновить всё»; a build page is
+  fetched once. The /platform page (and `/api/platform`) is built on it plus
+  version_meta.min_platform: coverage per line, minimum per configuration.
 - `solutions_info` (url PK) — solutions.1c.ru product card for linked
   projects: product kind, enterprise types, countries, developers, **base
   configuration** (official "на базе", outranks the version heuristic in

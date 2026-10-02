@@ -374,3 +374,28 @@ export type TemplateTag = typeof templateTags.$inferSelect;
 export type PackageManifest = typeof packageManifests.$inferSelect;
 export type SolutionInfo = typeof solutionsInfo.$inferSelect;
 export type Transition = typeof transitions.$inferSelect;
+
+/**
+ * Builds of the 1С:Предприятие platform from releases.1c.ru
+ * (src/releases/platform.ts): every 8.2/8.3/8.5 build with its date; for
+ * 8.3/8.5 also the OS it ships for (win64 win32 linux64 linux32 arm64 e2k
+ * mac), the release notes and the bugboard page. details_status: null = the
+ * build page was not fetched yet, ok | error (retried after a week).
+ */
+export const platformBuilds = pgTable(
+  "platform_builds",
+  {
+    version: text("version").primaryKey(),
+    nick: text("nick").notNull(),           // Platform83 | Platform85 | Platform82
+    line: text("line").notNull(),           // "8.3.27"
+    releaseDate: date("release_date"),
+    os: text("os").array(),
+    notesUrl: text("notes_url"),
+    bugsUrl: text("bugs_url"),
+    detailsStatus: text("details_status"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+  },
+  (t) => ({
+    lineIdx: index("platform_builds_line_idx").on(t.line),
+  }),
+);

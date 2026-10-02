@@ -92,6 +92,13 @@
       "when": 1790917335953,
       "tag": "0012_demonic_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790919343067,
+      "tag": "0013_goofy_phantom_reporter",
+      "breakpoints": true
     }
   ]
 }
