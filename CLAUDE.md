@@ -220,8 +220,9 @@ Manager, nginx, Traefik) — `.env` gets `COMPOSE_FILE=docker-compose.proxy.yml`
 `AUTO_UPDATE=1` tells the admin UI. update.sh / manage.sh / uninstall.sh work in
 both modes (docker compose reads COMPOSE_FILE from .env — never pass `-f`).
 Worker reads the ITS account (admin UI or `.env`); without one it applies the
-published snapshot. The production install (upd.send2me.ru) predates this and
-has its own /opt/updatcon/compose.yml — see the memory note, not update.sh.
+published snapshot. The production install (upd.send2me.ru) is a standard
+proxy-mode install at /opt/updatecon behind Nginx Proxy Manager, updated with its
+refresh.sh (no nightly app update) — see the memory note.
 
 ## Module resolution gotcha — IMPORTANT
 
