@@ -1,0 +1,4 @@
+# Windows PowerShell 5.1 needs the BOM and reads CRLF best: keep .ps1 byte for byte.
+*.ps1 -text
+# bash breaks on CRLF, even when the repo is cloned on Windows.
+*.sh text eol=lf
