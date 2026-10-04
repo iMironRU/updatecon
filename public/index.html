@@ -526,6 +526,34 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .pl-lines tbody tr.sel:hover td { background: var(--accent-dim); }
 .pl-lines td small { display: inline; margin-left: 6px; }
 .st-table .pl-links a { color: var(--accent); font-weight: 600; margin-right: 12px; white-space: nowrap; }
+.st-table .pl-links .pl-install { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; margin-right: 12px; cursor: pointer; white-space: nowrap; }
+.st-table .pl-links .pl-install:hover, .st-table .pl-links .pl-install:focus-visible { text-decoration: underline; }
+/* Script dialog: download + install / update on the user's own machine */
+.sdlg { margin: auto; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: hidden auto; padding: 0; border: 1px solid var(--border);
+  border-radius: var(--r-xl); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); }
+.sdlg::backdrop { background: rgba(10,16,32,.45); }
+.sdlg-body { padding: 22px 24px 24px; display: grid; gap: 16px; }
+.sdlg-body > * { min-width: 0; }
+.sdlg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sdlg-title { font-size: 18px; font-weight: 700; }
+.sdlg-sub { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+.sdlg-close { flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.sdlg-close:hover { color: var(--text); border-color: var(--border-strong); }
+.sdlg-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; justify-self: start; }
+.sdlg-tabs button { font: inherit; font-size: 13px; font-weight: 600; padding: 7px 18px; border: 0; background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.sdlg-tabs button + button { border-left: 1px solid var(--border); }
+.sdlg-tabs button[aria-selected="true"] { background: var(--accent-dim); color: var(--accent); }
+.sdlg-tabs button:disabled { cursor: not-allowed; opacity: .5; }
+.sdlg-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.sdlg ol, .sdlg ul { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.55; display: grid; gap: 4px; }
+.sdlg-run { display: flex; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 8px 8px 12px; }
+.sdlg-run code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; white-space: nowrap; }
+.sdlg-run button { flex-shrink: 0; }
+.sdlg-opts { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.sdlg-opts code { font-family: var(--mono); font-size: 12px; color: var(--text); background: var(--surface2); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+.sdlg-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sdlg-note { font-size: 12px; color: var(--text-muted); }
+.sdlg .mono { font-family: var(--mono); font-size: .92em; }
 .os-chip.new { background: var(--accent-dim); color: var(--accent); }
 .sel-tag { font-family: 'Golos Text', sans-serif; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-left: 6px;
   background: var(--accent); color: #fff; white-space: nowrap; vertical-align: 1px; }
@@ -1394,6 +1422,7 @@ const icn_check   = () => icn('<polyline points="20 6 9 17 4 12"/>');
 const icn_x       = () => icn('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
 const icn_dl      = () => icn('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
 const icn_copy    = () => icn('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>');
+const icn_term    = () => icn('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>');
 const icn_share   = () => icn('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>');
 const icn_link    = () => icn('<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>');
 const icn_clock   = () => icn('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
@@ -1496,6 +1525,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
       <div class="chain-actions">
         ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${toV}')">${icn_share()} Поделиться</button>` : ''}
         <button class="btn btn-secondary" onclick="do_copy_chain('${cfg?.id||''}','${fromV}','${toV}')">${icn_copy()} Скопировать</button>
+        ${cfg && steps.length ? `<button class="btn btn-secondary" onclick="open_chain_script('${cfg.id}','${fromV}','${steps[steps.length-1].v}',${steps.length})" title="Скрипт для Windows или Linux: скачает обновления и накатит их на базу">${icn_term()} Скрипт</button>` : ''}
       </div>
     </div>
   </div></div>`;
@@ -1813,6 +1843,106 @@ async function home_build_chain() {
     html += `<div style="margin-bottom:24px">${render_chain_steps(steps, fromV, cfg)}</div>`;
   }
   result.innerHTML = html || `<div class="empty"><p>Цепочка не найдена</p></div>`;
+}
+
+/* ================================================================
+   SCRIPTS — download and apply an update chain / install a platform
+   build on the user's own machine (server: scripts.ts, /api/script/*)
+   ================================================================ */
+let SCRIPT_DLG = null;   // { kind: 'chain'|'platform', os, ... }
+function script_default_os() {
+  return /Linux|X11/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent) ? 'linux' : 'windows';
+}
+function linux_installer_ok(v) {          // the unified Linux installer exists from 8.3.20 on
+  const [a, b, c] = v.split('.').map(Number);
+  return a > 8 || (a === 8 && (b > 3 || (b === 3 && c >= 20)));
+}
+function open_chain_script(cfgId, fromV, toV, count) {
+  const cfg = CONFIGS.find(c => c.id === String(cfgId));
+  if (!cfg) return;
+  const slug = (cfg.templateCode || '').split(/[\\/]/).pop().replace(/[^A-Za-z0-9_-]/g, '') || 'config' + cfg.id;
+  SCRIPT_DLG = { kind: 'chain', os: script_default_os(), cfgId: cfg.id, fromV, toV, count, name: cfg.name,
+    base: `updatecon-${slug}-${fromV}-${toV}`, partner: !/^1c\//i.test(cfg.templateCode || '') };
+  script_dialog_render();
+}
+function open_platform_script(version) {
+  SCRIPT_DLG = { kind: 'platform', os: script_default_os(), version, base: `updatecon-platform-${version}` };
+  if (SCRIPT_DLG.os === 'linux' && !linux_installer_ok(version)) SCRIPT_DLG.os = 'windows';
+  script_dialog_render();
+}
+function script_set_os(os) { if (SCRIPT_DLG) { SCRIPT_DLG.os = os; script_dialog_render(); } }
+function script_dialog_render() {
+  const d = SCRIPT_DLG;
+  let dlg = document.getElementById('script-dlg');
+  if (!dlg) {
+    dlg = document.createElement('dialog');
+    dlg.id = 'script-dlg'; dlg.className = 'sdlg';
+    dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });   // a click on the backdrop
+    document.body.appendChild(dlg);
+  }
+  const win = d.os === 'windows';
+  const file = d.base + (win ? '.ps1' : '.sh');
+  const chain = d.kind === 'chain';
+  const href = chain
+    ? `/api/script/chain?os=${d.os}&config_id=${encodeURIComponent(d.cfgId)}&from=${encodeURIComponent(d.fromV)}&to=${encodeURIComponent(d.toV)}`
+    : `/api/script/platform?os=${d.os}&version=${encodeURIComponent(d.version)}`;
+  const linuxOff = !chain && !linux_installer_ok(d.version);
+  const run = win
+    ? `powershell -ExecutionPolicy Bypass -File .\\${file}`
+    : (chain ? `bash ${file}` : `sudo bash ${file}`);
+  const what = chain ? [
+    `Скачает ${d.count} ${ru_plural(d.count, 'файл', 'файла', 'файлов')} обновлений с сервера 1С под вашей учётной записью ИТС. Логин и пароль скрипт спросит при запуске и отправит только на сервер 1С.`,
+    'Сделает выгрузку базы (.dt), чтобы можно было откатиться.',
+    'Поставит обновления по порядку в пакетном режиме конфигуратора и обновит конфигурацию базы данных.',
+    'Запустит базу, чтобы выполнились обработчики обновления. При ошибке остановится и покажет журнал.',
+  ] : [
+    `Войдёт на портал 1С под вашей учётной записью ИТС и скачает дистрибутив платформы ${d.version} (64-bit) для ${win ? 'Windows' : 'Linux'}. Логин и пароль скрипт спросит при запуске.`,
+    win ? 'Установит без вопросов клиент и конфигуратор. С параметром -Server ещё и сервер 1С со службой «Агент сервера».'
+        : 'Установит без вопросов сервер 1С и модули веб-сервера и включит службу в systemd. С параметром --client ещё и клиент с конфигуратором.',
+    'Уже установленные версии платформы не удаляются.',
+  ];
+  const notes = chain ? [
+    'Запускайте на компьютере, где установлена платформа 1С и есть доступ к базе: файловой или на сервере.',
+    'Все пользователи должны выйти из базы. Нужен пользователь базы с административными правами.',
+    'Доработанные конфигурации скрипт не обновит, их обновляют вручную в конфигураторе.',
+    d.partner ? 'Это партнёрское решение: файлы обновлений скачиваются только при подписке на этот продукт.' : '',
+    win ? '' : 'Без графического сеанса нужен xvfb (apt install xvfb).',
+  ] : [
+    win ? 'Запускайте PowerShell от имени администратора. Для распаковки .rar нужен Windows 11 или 7-Zip.'
+        : 'Нужны права root. Скрипт ставит зависимости через apt или dnf.',
+  ];
+  const opts = chain
+    ? (win ? '<code>-Base "C:\\Bases\\Buh"</code> или <code>-Server srv1c -Ref buh</code>, <code>-User</code>, <code>-NoBackup</code>, <code>-DownloadOnly</code> — только скачать файлы.'
+           : '<code>--base /srv/1c/buh</code> или <code>--server srv1c --ref buh</code>, <code>--user</code>, <code>--no-backup</code>, <code>--download-only</code> — только скачать файлы.')
+    : (win ? '<code>-Server</code> — ещё и сервер 1С, <code>-DryRun</code> — только проверить вход на портал, ничего не скачивая.'
+           : '<code>--client</code> — ещё и клиент, <code>--no-service</code> — не включать службу, <code>--dry-run</code> — только проверить вход на портал.');
+  dlg.innerHTML = `<div class="sdlg-body">
+    <div class="sdlg-head">
+      <div><div class="sdlg-title">${chain ? 'Скрипт обновления' : 'Скрипт установки платформы'}</div>
+        <div class="sdlg-sub">${chain ? `${esc_html(d.name)}: <span class="mono">${esc_html(d.fromV)} → ${esc_html(d.toV)}</span>` : `1С:Предприятие <span class="mono">${esc_html(d.version)}</span>`}</div></div>
+      <button type="button" class="sdlg-close" onclick="this.closest('dialog').close()" aria-label="Закрыть">×</button>
+    </div>
+    <div class="sdlg-tabs" role="tablist" aria-label="Операционная система">
+      <button type="button" role="tab" aria-selected="${win}" onclick="script_set_os('windows')">Windows</button>
+      <button type="button" role="tab" aria-selected="${!win}" onclick="script_set_os('linux')"${linuxOff ? ' disabled title="Для Linux — сборки 8.3.20 и новее: в старых нет единого установщика"' : ''}>Linux</button>
+    </div>
+    <div><div class="sdlg-label">Что сделает скрипт</div><ol>${what.map(t => `<li>${t}</li>`).join('')}</ol></div>
+    <div><div class="sdlg-label">Как запустить</div>
+      <div class="sdlg-run"><code id="sdlg-cmd">${esc_html(run)}</code><button type="button" class="btn btn-secondary btn-sm" onclick="script_copy_cmd(this)">Копировать</button></div>
+      <div class="sdlg-opts" style="margin-top:8px">Параметры: ${opts} Без параметров скрипт сам спросит всё нужное.</div>
+    </div>
+    <ul>${notes.filter(Boolean).map(t => `<li>${t}</li>`).join('')}</ul>
+    <div class="sdlg-actions">
+      <a class="btn btn-primary" href="${href}" download="${file}" onclick="goal('${chain ? 'script_chain' : 'script_platform'}')">${icn_dl()} Скачать ${file.slice(-3) === '.sh' ? '.sh' : '.ps1'}</a>
+      <span class="sdlg-note">Скрипт откроется в любом редакторе: в нём нет ничего скрытого.</span>
+    </div>
+  </div>`;
+  if (!dlg.open) dlg.showModal();
+}
+function script_copy_cmd(btn) {
+  const t = document.getElementById('sdlg-cmd').textContent;
+  navigator.clipboard.writeText(t).then(() => { btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1500); })
+    .catch(() => prompt('Скопируйте команду:', t));
 }
 
 /* ================================================================
@@ -3604,7 +3734,7 @@ function platform_builds_html() {
       <td class="os-cell">${os_cell(b.os, i + 1 < l.builds.length ? l.builds[i + 1].os : null)}</td>
       <td>${need.length ? `<span class="pl-need"${tip_attr({ v: `Минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, l: 'последний релиз требует эту сборку',
           s: need.slice().sort(main_cmp).slice(0, 6).map(c => c.name).concat(need.length > 6 ? ['и ещё ' + (need.length - 6)] : []) })} tabindex="0">${need.length}</span>` : ''}</td>
-      <td class="pl-links">${b.notes ? `<a href="${esc_html(b.notes)}" target="_blank" rel="noopener">изменения</a>` : ''}${b.bugs ? `<a href="${esc_html(b.bugs)}" target="_blank" rel="noopener">ошибки</a>` : ''}</td>
+      <td class="pl-links">${/^8\.[35]\./.test(b.v) ? `<button type="button" class="pl-install" onclick="open_platform_script('${b.v}')" title="Скрипт для Windows или Linux: скачает дистрибутив и установит платформу">установить</button>` : ''}${b.notes ? `<a href="${esc_html(b.notes)}" target="_blank" rel="noopener">изменения</a>` : ''}${b.bugs ? `<a href="${esc_html(b.bugs)}" target="_blank" rel="noopener">ошибки</a>` : ''}</td>
     </tr>`;
   }).join('');
   const missing = PL_STATE.build && line_of(PL_STATE.build) === l.line && !l.builds.some(b => b.v === PL_STATE.build)

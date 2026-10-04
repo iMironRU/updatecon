@@ -26,8 +26,9 @@ FROM base AS runtime
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
-# src/admin is static HTML — copy directly from context, no build step needed
+# src/admin is static HTML, src/scripts are script templates — copied as they are
 COPY src/admin ./dist/admin
+COPY src/scripts ./dist/scripts
 COPY package.json ./
 COPY drizzle ./drizzle
 COPY drizzle.config.ts ./

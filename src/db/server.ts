@@ -18,6 +18,8 @@
  *   GET  /api/news?days=30                 -> news feed: releases, platform builds, moves to 8.5, ended ДП
  *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
+ *   GET  /api/script/chain?os=&config_id=&from=&to=  -> script: download + apply an update chain (scripts.ts)
+ *   GET  /api/script/platform?os=&version= -> script: download + install a platform build
  *   GET  /*                                -> static UI (public/)
  *
  * Admin endpoints (cookie session auth via ADMIN_LOGIN / ADMIN_PASSWORD):
@@ -45,7 +47,7 @@
  *   POST /admin/api/tags/refresh           -> recompute automatic tags
  */
 
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyCookie from "@fastify/cookie";
 import fastifyFormbody from "@fastify/formbody";
@@ -55,9 +57,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { request as httpsRequest } from "node:https";
 import { randomBytes } from "node:crypto";
-import { sql, eq, desc, getTableColumns, inArray } from "drizzle-orm";
+import { sql, eq, and, desc, getTableColumns, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { configurations, updateEdges, importRuns, patches, settings, releaseProjects } from "./schema.js";
+import { configurations, updateEdges, importRuns, patches, settings, releaseProjects, versionMeta, platformBuilds } from "./schema.js";
 import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus, CADDY_DISABLED } from "./caddy.js";
 import { TAGS, refreshTags, setManualTags } from "./tags.js";
@@ -66,6 +68,7 @@ import { parseVersion } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
 import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
+import { chainScript, platformScript, linuxInstallerAvailable, type ScriptOs, type ScriptFile } from "./scripts.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
@@ -1063,6 +1066,56 @@ export async function buildServer() {
       String(to),
     );
     return res;
+  });
+
+  // ── Scripts for the user's own machine (scripts.ts) ───────────────────────
+  // Generated per request; the ITS account is asked for when the script runs.
+  const scriptOs = (v: unknown): ScriptOs | null => (v === "windows" || v === "linux" ? v : null);
+  const siteOf = (req: { headers: Record<string, unknown>; protocol: string }) =>
+    `${String(req.headers["x-forwarded-proto"] ?? req.protocol).split(",")[0].trim()}://${String(req.headers.host ?? "localhost")}`;
+  const sendScript = (reply: FastifyReply, f: ScriptFile) => reply
+    .header("Content-Disposition", `attachment; filename="${f.filename}"`)
+    .header("Cache-Control", "no-store")
+    .type(f.contentType)
+    .send(f.body);
+
+  app.get("/api/script/chain", async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const os = scriptOs(q.os);
+    const from = String(q.from ?? "").trim(), to = String(q.to ?? "").trim();
+    if (!os || !from || !to) return reply.code(400).send({ error: "Нужны os (windows или linux), config_id, from и to" });
+    const cfg = await resolveConfig(q, to);
+    if (!cfg) return reply.code(404).send({ error: "Конфигурация не найдена" });
+    const fp = parseVersion(from), tp = parseVersion(to);
+    if (!fp || !tp || fp.segments[0] !== tp.segments[0]) {
+      return reply.code(400).send({ error: "Версии в разных редакциях: переход между редакциями цепочкой обновлений не делается" });
+    }
+    const chain = await findChain(cfg.id, from, to);
+    if (!chain.found || chain.steps.length === 0) return reply.code(404).send({ error: chain.note ?? "Цепочка не найдена" });
+    const [row] = await db.select({ name: configurations.name, displayName: configurations.displayName, templateCode: configurations.templateCode })
+      .from(configurations).where(eq(configurations.id, cfg.id)).limit(1);
+    const meta = await db.select({ version: versionMeta.version, minPlatform: versionMeta.minPlatform }).from(versionMeta)
+      .where(and(eq(versionMeta.configId, cfg.id), inArray(versionMeta.version, chain.steps.map((s) => s.toVersion))));
+    const platformOf = new Map(meta.map((m) => [m.version, (m.minPlatform ?? "").match(/\d+\.\d+\.\d+\.\d+/)?.[0] ?? null]));
+    const slug = (row?.templateCode ?? "").split(/[\\/]/).pop()?.replace(/[^A-Za-z0-9_-]/g, "") || `config${cfg.id}`;
+    return sendScript(reply, chainScript(os, {
+      title: row?.displayName || row?.name || slug,
+      slug, from, to, site: siteOf(req),
+      steps: chain.steps.map((s) => ({ version: s.toVersion, cfuPath: s.cfuPath, platform: platformOf.get(s.toVersion) ?? null })),
+    }));
+  });
+
+  app.get("/api/script/platform", async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const os = scriptOs(q.os);
+    const version = String(q.version ?? "").trim();
+    if (!os || !/^\d+\.\d+\.\d+\.\d+$/.test(version)) return reply.code(400).send({ error: "Нужны os (windows или linux) и version" });
+    const [b] = await db.select({ nick: platformBuilds.nick }).from(platformBuilds).where(eq(platformBuilds.version, version)).limit(1);
+    if (!b || (b.nick !== "Platform83" && b.nick !== "Platform85")) return reply.code(404).send({ error: `Сборки ${version} нет в каталоге платформы` });
+    if (os === "linux" && !linuxInstallerAvailable(version)) {
+      return reply.code(400).send({ error: "Скрипт для Linux есть для сборок 8.3.20 и новее: в старых нет единого установщика" });
+    }
+    return sendScript(reply, platformScript(os, { version, nick: b.nick, site: siteOf(req) }));
   });
 
   // Information only: update packages moving a database to another product or

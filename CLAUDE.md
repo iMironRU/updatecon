@@ -37,6 +37,9 @@ src/db/
   credentials.ts        ITS account / admin password editable in the admin UI (DB wins over .env)
   metrika.ts            Яндекс Метрика counter (admin UI → settings); server.ts serves index.html itself
                         (not @fastify/static) to put the tag in; the page reports SPA hits + goals
+  scripts.ts            scripts for the user's machine (/api/script/chain, /api/script/platform):
+                        apply an update chain in designer batch mode / install a platform build,
+                        PowerShell + bash; templates in src/scripts (copied to dist/scripts like src/admin)
 src/releases/
   solutions.ts          product cards from solutions.1c.ru (industries, base config, …)
   platform.ts           1С:Предприятие builds from releases.1c.ru (dates, OS, notes, bugboard) → platform_builds
@@ -183,6 +186,24 @@ redirects and the session cookie path use `ADMIN_BASE`. `admin_link_public = 0`
 hides the panel link on the public site (`/api/site` then returns null — the
 address is not given away). Forgotten address: `docker compose logs web | grep
 панель`, or delete `admin_path` from settings.
+
+## Scripts for the user's machine (scripts.ts, src/scripts)
+
+The chain script downloads `.cfu` files from downloads.v8.1c.ru with Basic auth
+(the configurator's own way; partner packages need a subscription to that product,
+401 otherwise), dumps the infobase to .dt, then per step `DESIGNER /UpdateCfg
+<cfu> /UpdateDBCfg`, and finally `ENTERPRISE /C "ЗапуститьОбновлениеИнформационнойБазы;
+ЗавершитьРаботуСистемы"`. Linux needs a display, so 1cv8 runs inside `xvfb-run`.
+The platform script logs in to releases.1c.ru through login.1c.ru (CAS form,
+`execution` token), takes `windows64full_<ver>.rar` / `server64_<ver>.zip|.tar.gz`
+from `/version_files`, and the dl0N.1c.ru mirrors from `/version_file`; Windows
+installs the MSI (`/qn`, 1049.mst), Linux runs `setup-full-*.run --mode unattended`
+(8.3.20+ only) and links `srv1cv8-<ver>@.service`. The ITS account is asked for
+at run time (or ITS_LOGIN / ITS_PASSWORD) and never goes into the script or to us;
+curl gets it through `-K -` (stdin), not argv. PowerShell files are sent as UTF-8
+with BOM + CRLF (Windows PowerShell 5.1 reads BOM-less files as ANSI). Portal login,
+file lookup and `.cfu` download were run for real; the 1C batch apply and the
+installers themselves were not (no 1C platform on the dev machine).
 
 ## SQL inside sql`…` templates — escaping gotcha
 

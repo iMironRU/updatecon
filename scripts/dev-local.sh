@@ -58,6 +58,7 @@ docker exec "$PG" pg_isready -U upd -q || { echo "[dev-local] PostgreSQL did not
 echo "[dev-local] building…"
 npm run build --silent
 rm -rf dist/admin && cp -R src/admin dist/admin
+rm -rf dist/scripts && cp -R src/scripts dist/scripts
 
 echo "[dev-local] migrations…"
 node --input-type=module -e '
