@@ -1175,6 +1175,28 @@ export async function buildServer() {
     return sendScript(reply, platformScript(os, { version, site: siteOf(req) }));
   });
 
+  // Short addresses for the platform installer (the same templates, any build):
+  //   irm https://<site>/1c | iex                      Windows; $ver='8.5' before it picks the version
+  //   sudo bash -c "$(curl -fsSL https://<site>/1c.sh)"   Linux; add «-- --version 8.5»
+  // /1c is a tiny loader: it saves /1c.ps1 to %TEMP% and runs it as its own process, so the
+  // script's exit (an error, «already installed») does not close the user's PowerShell window.
+  app.get("/1c", async (req, reply) => {
+    const site = siteOf(req);
+    const loader = [
+      `# Апдейкон: установка платформы 1С:Предприятие. Запуск: irm ${site}/1c | iex`,
+      `# Версия: $ver='8.5' (или '8.3', '8.5.1.1529') перед командой; без неё скрипт спросит.`,
+      `try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch { }`,
+      `$f = Join-Path ([IO.Path]::GetTempPath()) 'install-1c-platform.ps1'`,
+      `Invoke-WebRequest '${site}/1c.ps1' -OutFile $f -UseBasicParsing`,
+      `$a = @(); if ($ver) { $a += @('-Version', "$ver") }`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File $f @a`,
+      ``,
+    ].join("\r\n");
+    return reply.header("Cache-Control", "no-store").type("text/plain; charset=utf-8").send(loader);
+  });
+  app.get("/1c.ps1", async (req, reply) => sendScript(reply, platformScript("windows", { version: "", site: siteOf(req) })));
+  app.get("/1c.sh", async (req, reply) => sendScript(reply, platformScript("linux", { version: "", site: siteOf(req) })));
+
   // Information only: update packages moving a database to another product or
   // edition (the chain calculator never crosses them — locked decision).
   app.get("/api/transitions", async (req) => {
