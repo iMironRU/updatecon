@@ -217,6 +217,10 @@ with BOM + CRLF (Windows PowerShell 5.1 reads BOM-less files as ANSI). Portal lo
 file lookup and `.cfu` download were run for real; the 1C batch apply and the
 installers themselves were not (no 1C platform on the dev machine).
 
+`tools/install-1c-platform.{ps1,sh}` — the same platform template generated with an empty
+version: `-Version` / `--version` takes a build or a line (8.5, 8.3.24 → newest build from
+`/api/platform`), without it the script asks. Regenerate after editing src/scripts.
+
 ## SQL inside sql`…` templates — escaping gotcha
 
 The drizzle `sql` tag receives *cooked* template strings, so TS escapes are

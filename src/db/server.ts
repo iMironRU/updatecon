@@ -1172,7 +1172,7 @@ export async function buildServer() {
     if (os === "linux" && !linuxInstallerAvailable(version)) {
       return reply.code(400).send({ error: "Скрипт для Linux есть для сборок 8.3.20 и новее: в старых нет единого установщика" });
     }
-    return sendScript(reply, platformScript(os, { version, nick: b.nick, site: siteOf(req) }));
+    return sendScript(reply, platformScript(os, { version, site: siteOf(req) }));
   });
 
   // Information only: update packages moving a database to another product or

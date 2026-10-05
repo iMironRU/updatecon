@@ -34,8 +34,7 @@ export interface ChainScriptInput {
 }
 
 export interface PlatformScriptInput {
-  version: string;        // 8.3.27.2342
-  nick: string;           // Platform83 | Platform85
+  version: string;        // 8.3.27.2342; "" — any build, chosen at run time (-Version / --version)
   site: string;
 }
 
@@ -106,17 +105,17 @@ export function chainScript(os: ScriptOs, d: ChainScriptInput): ScriptFile {
 }
 
 export function platformScript(os: ScriptOs, d: PlatformScriptInput): ScriptFile {
-  const file = `updatecon-platform-${d.version}` + (os === "windows" ? ".ps1" : ".sh");
-  const common = { VERSION: d.version, SITE: host(d.site), DATE: today(), FILE: file };
+  const file = (d.version ? `updatecon-platform-${d.version}` : "install-1c-platform") + (os === "windows" ? ".ps1" : ".sh");
+  const common = {
+    VERSION_TITLE: d.version || "(сборка на выбор)",
+    VERSION_DEFAULT: d.version || "скрипт спросит: последняя 8.3, последняя 8.5 или свой номер",
+    SITE: host(d.site), DATE: today(), FILE: file,
+  };
   if (os === "windows") {
-    const body = fill(template("platform.ps1"), {
-      ...common, VERSION_Q: psq(d.version), NICK_Q: psq(d.nick), SITE_Q: psq(d.site),
-    });
+    const body = fill(template("platform.ps1"), { ...common, VERSION_Q: psq(d.version), SITE_Q: psq(d.site) });
     return { filename: file, contentType: "text/plain; charset=utf-8", body: windowsText(body) };
   }
-  const body = fill(template("platform.sh"), {
-    ...common, VERSION_Q: shq(d.version), NICK_Q: shq(d.nick), SITE_Q: shq(d.site),
-  });
+  const body = fill(template("platform.sh"), { ...common, VERSION_Q: shq(d.version), SITE_Q: shq(d.site) });
   return { filename: file, contentType: "text/x-shellscript; charset=utf-8", body };
 }
 

@@ -1,5 +1,5 @@
 <#
-  Апдейкон — установка платформы 1С:Предприятие @@VERSION@@ (64-bit) для Windows
+  Апдейкон — установка платформы 1С:Предприятие @@VERSION_TITLE@@ (64-bit) для Windows
   Сформировано на @@SITE@@ @@DATE@@
 
   Что делает скрипт:
@@ -14,24 +14,23 @@
     powershell -ExecutionPolicy Bypass -File .\@@FILE@@
 
   Параметры:
+    -Version 8.5   какую платформу поставить: номер сборки (8.5.1.1529) или линейка (8.5, 8.3.27) —
+                   тогда последняя сборка этой линейки; без параметра — @@VERSION_DEFAULT@@
     -Server        установить также сервер 1С:Предприятия и службу «Агент сервера»
     -WorkDir "D:\distr"   куда скачать и распаковать дистрибутив
     -DryRun        только войти на портал и найти дистрибутив, ничего не скачивая
   Логин и пароль ИТС можно передать через переменные окружения ITS_LOGIN и ITS_PASSWORD.
   Для распаковки .rar нужен Windows 11 или установленный 7-Zip (7-zip.org).
 #>
-param([switch]$Server, [string]$WorkDir, [switch]$DryRun)
+param([string]$Version, [switch]$Server, [string]$WorkDir, [switch]$DryRun)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
-$Version = @@VERSION_Q@@
-$Nick = @@NICK_Q@@
-$Under = $Version.Replace('.', '_')
-$Major = (($Version -split '\.')[0..1]) -join '.'
 $Site = @@SITE_Q@@
 $UA = '1C+Enterprise/8.3'
+if (-not $Version) { $Version = @@VERSION_Q@@ }
 
 function Say([string]$Text, [string]$Color = 'Gray') { Write-Host $Text -ForegroundColor $Color }
 function Fail([string]$Text) { Write-Host ''; Write-Host "ОШИБКА: $Text" -ForegroundColor Red; exit 1 }
@@ -39,6 +38,34 @@ function Plain([Security.SecureString]$Secure) {
   $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
   try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
+
+# ── Which build ──────────────────────────────────────────────────────────────
+# A line (8.5, 8.3.27) or nothing: the newest build from the Апдейкон catalog.
+$Version = "$Version".Trim()
+if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+  try { $builds = @((Invoke-RestMethod "$Site/api/platform" -UseBasicParsing).builds | Where-Object { $_.v -match '^8\.[35]\.' }) }
+  catch { Fail "Не удалось получить список сборок с ${Site}: $($_.Exception.Message). Укажите номер сборки: -Version 8.5.1.1529" }
+  $newest = { param($prefix) $builds | Where-Object { $_.v -like "$prefix.*" } | Sort-Object { [version]$_.v } -Descending | Select-Object -First 1 -ExpandProperty v }
+  if (-not $Version) {
+    $l83 = & $newest '8.3'; $l85 = & $newest '8.5'
+    Say ''
+    Say 'Какую платформу поставить?'
+    Say "  1 — 8.3, последняя сборка $l83"
+    Say "  2 — 8.5, последняя сборка $l85"
+    Say '  или введите номер сборки (8.3.24.1819) или линейку (8.3.24)'
+    $answer = (Read-Host 'Выбор [1]').Trim()
+    if (-not $answer -or $answer -eq '1') { $Version = $l83 } elseif ($answer -eq '2') { $Version = $l85 } else { $Version = $answer }
+  }
+  if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+    $line = $Version
+    $Version = & $newest $line
+    if (-not $Version) { Fail "В каталоге нет сборок линейки $line. Список: $Site/platform" }
+  }
+}
+if ($Version -notmatch '^8\.[35]\.') { Fail "Скрипт ставит платформы 8.3 и 8.5, а указана $Version" }
+$Under = $Version.Replace('.', '_')
+$Major = (($Version -split '\.')[0..1]) -join '.'
+$Nick = 'Platform' + $Major.Replace('.', '')
 
 Say ''
 Say "Апдейкон: платформа 1С:Предприятие $Version (64-bit) для Windows" 'Cyan'
