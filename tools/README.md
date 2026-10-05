@@ -15,8 +15,7 @@
 PowerShell **от имени администратора**:
 
 ```powershell
-irm https://raw.githubusercontent.com/iMironRU/updatecon/main/tools/install-1c-platform.ps1 -OutFile $env:TEMP\install-1c-platform.ps1
-powershell -ExecutionPolicy Bypass -File $env:TEMP\install-1c-platform.ps1 -Version 8.5
+irm https://raw.githubusercontent.com/iMironRU/updatecon/main/tools/install-1c-platform.ps1 -OutFile $env:TEMP\install-1c-platform.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\install-1c-platform.ps1 -Version 8.5
 ```
 
 Ставит клиент и конфигуратор. Параметры: `-Server` — ещё сервер 1С и служба «Агент сервера»,
@@ -26,8 +25,7 @@ powershell -ExecutionPolicy Bypass -File $env:TEMP\install-1c-platform.ps1 -Vers
 ## Linux
 
 ```bash
-curl -fsSL -o /tmp/install-1c-platform.sh https://raw.githubusercontent.com/iMironRU/updatecon/main/tools/install-1c-platform.sh
-sudo bash /tmp/install-1c-platform.sh --version 8.5
+curl -fsSL -o /tmp/install-1c-platform.sh https://raw.githubusercontent.com/iMironRU/updatecon/main/tools/install-1c-platform.sh && sudo bash /tmp/install-1c-platform.sh --version 8.5
 ```
 
 Ставит сервер 1С и модули веб-сервера и включает службу в systemd (если другая служба сервера 1С
