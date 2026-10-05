@@ -17,11 +17,14 @@
 # Параметры:
 #   --version 8.5   какую платформу поставить: номер сборки (8.5.1.1529) или линейка (8.5, 8.3.27) —
 #                   тогда последняя сборка этой линейки; без параметра — скрипт спросит: последняя 8.3, последняя 8.5 или свой номер
-#   --client        установить также клиент 1С:Предприятия и конфигуратор
-#   --no-server     не устанавливать сервер (только клиент, вместе с --client)
+#   --mode server   что установить: server — сервер 1С и модули веб-сервера, full — сервер,
+#                   клиент и конфигуратор, client — только клиент и конфигуратор; без параметра спросит
+#   --client        то же, что --mode full (сервер и клиент)
+#   --no-server     вместе с --client — только клиент
 #   --no-service    не включать службу сервера в systemd
 #   --no-deps       не ставить зависимости через пакетный менеджер
-#   --workdir DIR   куда скачать и распаковать дистрибутив
+#   --workdir DIR   куда скачать и распаковать дистрибутив (по умолчанию /tmp)
+#   --remove-files / --keep-files   удалить или оставить дистрибутив после установки, не спрашивая
 #   --dry-run       только войти на портал и найти дистрибутив, ничего не скачивая
 # Логин и пароль ИТС можно передать через переменные окружения ITS_LOGIN и ITS_PASSWORD.
 
@@ -31,17 +34,20 @@ VERSION=''
 SITE='https://upd.imiron.ru'
 UA='1C+Enterprise/8.3'
 
-CLIENT=0 SERVER=1 SERVICE=1 DEPS=1 DRY_RUN=0 WORKDIR=''
+CLIENT=0 SERVER=1 SERVICE=1 DEPS=1 DRY_RUN=0 WORKDIR='' MODE='' FILES=
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION=${2:-}; shift 2 ;;
-    --client) CLIENT=1; shift ;;
-    --no-server) SERVER=0; shift ;;
+    --mode) MODE=${2:-}; shift 2 ;;
+    --client) CLIENT=1; MODE=${MODE:-set}; shift ;;
+    --no-server) SERVER=0; MODE=${MODE:-set}; shift ;;
+    --remove-files) FILES=remove; shift ;;
+    --keep-files) FILES=keep; shift ;;
     --no-service) SERVICE=0; shift ;;
     --no-deps) DEPS=0; shift ;;
     --workdir) WORKDIR=${2:-}; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "Неизвестный параметр: $1 (список: --help)" >&2; exit 2 ;;
   esac
 done
@@ -86,6 +92,22 @@ UNDER=$(printf '%s' "$VERSION" | tr . _)
 INSTALL_DIR="/opt/1cv8/x86_64/$VERSION"
 
 head_line "Апдейкон: платформа 1С:Предприятие $VERSION (64-bit) для Linux"
+if [ -z "$MODE" ] && [ "$DRY_RUN" = 0 ]; then
+  echo
+  say "Что установить?"
+  say "  1 — сервер 1С и модули веб-сервера"
+  say "  2 — сервер 1С, клиент и конфигуратор"
+  say "  3 — только клиент и конфигуратор"
+  read -r -p "Выбор [1]: " answer
+  case "$answer" in 2) MODE=full ;; 3) MODE=client ;; *) MODE=server ;; esac
+fi
+case "$MODE" in
+  server) SERVER=1 CLIENT=0 ;;
+  full) SERVER=1 CLIENT=1 ;;
+  client) SERVER=0 CLIENT=1 ;;
+  ''|set) ;;
+  *) die "--mode: server, full или client" ;;
+esac
 [ "$SERVER" = 1 ] || [ "$CLIENT" = 1 ] || die "Нечего устанавливать: --no-server без --client"
 if [ "$DRY_RUN" = 0 ] && [ "$(uname -m)" != x86_64 ]; then die "Скрипт ставит 64-bit платформу для x86_64, а здесь $(uname -m)"; fi
 if [ "$DRY_RUN" = 0 ] && [ "$(id -u)" != 0 ]; then die "Нужны права root: sudo bash $0"; fi
@@ -95,7 +117,7 @@ COMPONENTS=''
 [ "$CLIENT" = 1 ] && COMPONENTS="${COMPONENTS:+$COMPONENTS,}client_full"
 COMPONENTS="$COMPONENTS,ru"
 
-[ -n "$WORKDIR" ] || WORKDIR="$PWD/updatecon-platform-$UNDER"
+[ -n "$WORKDIR" ] || WORKDIR="${TMPDIR:-/tmp}/updatecon-platform-$UNDER"
 mkdir -p "$WORKDIR" || die "Не удалось создать каталог $WORKDIR"
 WORKDIR=$(cd "$WORKDIR" && pwd)
 UNPACKED="$WORKDIR/setup"
@@ -230,4 +252,12 @@ if [ "$SERVER" = 1 ] && [ "$SERVICE" = 1 ]; then
 fi
 
 echo
-ok "Готово. Дистрибутив: $WORKDIR"
+ok "Готово: платформа $VERSION установлена в $INSTALL_DIR"
+if [ -d "$WORKDIR" ]; then
+  size=$(du -sm "$WORKDIR" 2>/dev/null | cut -f1)
+  if [ -z "$FILES" ]; then
+    read -r -p "Удалить скачанный дистрибутив (${size:-?} МБ, $WORKDIR)? (да/нет) " a
+    case "$a" in д|да|Д|Да|y|Y|yes) FILES=remove ;; *) FILES=keep ;; esac
+  fi
+  if [ "$FILES" = remove ]; then rm -rf "$WORKDIR"; say "Дистрибутив удалён."; else say "Дистрибутив: $WORKDIR"; fi
+fi

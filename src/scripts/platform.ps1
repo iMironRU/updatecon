@@ -6,8 +6,10 @@
     1. Входит на портал 1С (releases.1c.ru) под вашей учётной записью ИТС и скачивает
        дистрибутив «Технологическая платформа 1С:Предприятия (64-bit) для Windows».
        Логин и пароль ИТС уходят только на серверы 1С и нигде не сохраняются.
-    2. Распаковывает его и устанавливает без вопросов: толстый и тонкий клиент, конфигуратор.
-    3. С параметром -Server ставит ещё сервер 1С:Предприятия и регистрирует его службой Windows.
+    2. Распаковывает его во временную папку и устанавливает без вопросов то, что выбрано:
+       клиент и конфигуратор, клиент с сервером 1С или только сервер. Сервер регистрируется
+       службой Windows «Агент сервера».
+    3. Спрашивает, удалить ли скачанный дистрибутив или открыть папку с ним.
   Уже установленные версии платформы не удаляются.
 
   Запуск (PowerShell от имени администратора):
@@ -16,13 +18,19 @@
   Параметры:
     -Version 8.5   какую платформу поставить: номер сборки (8.5.1.1529) или линейка (8.5, 8.3.27) —
                    тогда последняя сборка этой линейки; без параметра — @@VERSION_DEFAULT@@
-    -Server        установить также сервер 1С:Предприятия и службу «Агент сервера»
-    -WorkDir "D:\distr"   куда скачать и распаковать дистрибутив
+    -Mode client   что установить: client — клиент и конфигуратор, full — клиент, конфигуратор
+                   и сервер 1С, server — только сервер 1С; без параметра скрипт спросит
+    -Server        то же, что -Mode full
+    -WorkDir "D:\distr"   куда скачать и распаковать дистрибутив (по умолчанию — временная папка)
+    -RemoveFiles / -KeepFiles   удалить или оставить дистрибутив после установки, не спрашивая
     -DryRun        только войти на портал и найти дистрибутив, ничего не скачивая
   Логин и пароль ИТС можно передать через переменные окружения ITS_LOGIN и ITS_PASSWORD.
   Для распаковки .rar нужен Windows 11 или установленный 7-Zip (7-zip.org).
 #>
-param([string]$Version, [switch]$Server, [string]$WorkDir, [switch]$DryRun)
+param(
+  [string]$Version, [ValidateSet('', 'client', 'full', 'server')][string]$Mode = '', [switch]$Server,
+  [string]$WorkDir, [switch]$DryRun, [switch]$RemoveFiles, [switch]$KeepFiles
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -86,6 +94,7 @@ function Web([string]$Uri, $Session) {
     }
   }
 }
+function AskYes([string]$Question) { (Read-Host "$Question (да/нет)") -match '^(д|да|y|yes)$' }
 function Plain([Security.SecureString]$Secure) {
   $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
   try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
@@ -126,16 +135,37 @@ $isAdmin = $false
 try { $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { }
 if (-not $isAdmin -and -not $DryRun) { Fail 'Нужны права администратора: откройте PowerShell через «Запуск от имени администратора» и запустите скрипт снова.' }
 
+# ── What to install ──────────────────────────────────────────────────────────
+if ($Server -and -not $Mode) { $Mode = 'full' }
+if (-not $Mode) {
+  if ($DryRun) { $Mode = 'client' } else {
+    Say ''
+    Say 'Что установить?'
+    Say '  1 — клиент и конфигуратор (рабочее место)'
+    Say '  2 — клиент, конфигуратор и сервер 1С со службой «Агент сервера»'
+    Say '  3 — только сервер 1С со службой «Агент сервера»'
+    switch ((Read-Host 'Выбор [1]').Trim()) { '2' { $Mode = 'full' } '3' { $Mode = 'server' } default { $Mode = 'client' } }
+  }
+}
+$withClient = $Mode -ne 'server'
+$withServer = $Mode -ne 'client'
+Say ("Устанавливаю: " + @{ client = 'клиент и конфигуратор'; full = 'клиент, конфигуратор и сервер 1С'; server = 'сервер 1С' }[$Mode])
+
 $programFiles = $env:ProgramFiles
 if (-not $programFiles) { $programFiles = 'C:\Program Files' }
 $installDir = "$programFiles\1cv8\$Version"
-$installed = Test-Path "$installDir\bin\1cv8.exe"
-if ($installed -and -not $Server) {
+$installed = (Test-Path "$installDir\bin\1cv8.exe") -or (Test-Path "$installDir\bin\ragent.exe")
+if ($installed -and $withServer -and -not (Test-Path "$installDir\bin\ragent.exe")) {
+  Fail "Платформа $Version уже установлена без сервера. Добавьте компонент «Сервер 1С:Предприятия» в «Параметры → Приложения» (Изменить) или удалите эту версию и запустите скрипт снова."
+}
+if ($installed -and -not $withServer) {
   Say "Платформа $Version уже установлена: $installDir" 'Green'
   exit 0
 }
 
-if (-not $WorkDir) { $WorkDir = Join-Path (Get-Location) "updatecon-platform-$Under" }
+$tempDir = $env:TEMP
+if (-not $tempDir) { $tempDir = [IO.Path]::GetTempPath() }
+if (-not $WorkDir) { $WorkDir = Join-Path $tempDir "updatecon-platform-$Under" }
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $WorkDir = (Resolve-Path $WorkDir).Path
 $unpacked = Join-Path $WorkDir 'setup'
@@ -226,9 +256,9 @@ if (-not $installed) {
 
   # ── Install ───────────────────────────────────────────────────────────────
   $servicesBefore = @(Get-Service | Where-Object { $_.Name -like '1C:Enterprise*Server Agent*' } | ForEach-Object { $_.Name })
-  $props = @('DESIGNERALLCLIENTS=1', 'THICKCLIENT=1', 'THINCLIENTFILE=1', 'THINCLIENT=1', 'WEBSERVEREXT=0',
-             'CONFREPOSSERVER=0', 'CONVERTER77=0', 'LANGUAGES=RU')
-  if ($Server) { $props += @('SERVER=1', 'SERVERCLIENT=1') } else { $props += @('SERVER=0', 'SERVERCLIENT=0') }
+  $c = [int]$withClient; $sv = [int]$withServer
+  $props = @("DESIGNERALLCLIENTS=$c", "THICKCLIENT=$c", "THINCLIENTFILE=$c", "THINCLIENT=$c", 'WEBSERVEREXT=0',
+             'CONFREPOSSERVER=0', 'CONVERTER77=0', 'LANGUAGES=RU', "SERVER=$sv", "SERVERCLIENT=$sv")
   $transforms = @('adminstallrelogon.mst', '1049.mst') | Where-Object { Test-Path (Join-Path $msi.DirectoryName $_) }
   $log = Join-Path $WorkDir 'install.log'
   $line = '/i "' + $msi.FullName + '" /qn /norestart'
@@ -238,7 +268,7 @@ if (-not $installed) {
   $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList $line -Wait -PassThru
   if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Fail "Установщик завершился с кодом $($p.ExitCode). Журнал установки: $log" }
   if ($p.ExitCode -eq 3010) { Say 'Установщик просит перезагрузить компьютер после установки.' 'Yellow' }
-  if (-not (Test-Path "$installDir\bin\1cv8.exe")) { Fail "Установщик закончил работу, но $installDir\bin\1cv8.exe не появился. Журнал установки: $log" }
+  if (-not (Test-Path "$installDir\bin")) { Fail "Установщик закончил работу, но папки $installDir\bin нет. Журнал установки: $log" }
   Say "Платформа $Version установлена: $installDir" 'Green'
 } else {
   Say "Платформа $Version уже установлена: $installDir" 'Green'
@@ -246,7 +276,7 @@ if (-not $installed) {
 }
 
 # ── Server agent service ─────────────────────────────────────────────────────
-if ($Server) {
+if ($withServer) {
   $ragent = "$installDir\bin\ragent.exe"
   $services = @(Get-Service | Where-Object { $_.Name -like '1C:Enterprise*Server Agent*' })
   $new = @($services | Where-Object { $servicesBefore -notcontains $_.Name })
@@ -269,5 +299,19 @@ if ($Server) {
   }
 }
 
+# ── The downloaded distribution ──────────────────────────────────────────────
 Say ''
-Say "Готово. Дистрибутив и журнал установки: $WorkDir" 'Green'
+Say "Готово: платформа $Version установлена в $installDir" 'Green'
+if (Test-Path $WorkDir) {
+  $log = Join-Path $WorkDir 'install.log'
+  if (Test-Path $log) { Copy-Item $log (Join-Path $tempDir "updatecon-platform-$Under-install.log") -Force }
+  $sizeMb = [Math]::Round(((Get-ChildItem $WorkDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB)
+  $remove = $RemoveFiles -or (-not $KeepFiles -and (AskYes "Удалить скачанный дистрибутив ($sizeMb МБ, $WorkDir)?"))
+  if ($remove) {
+    Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
+    Say "Дистрибутив удалён. Журнал установки: $(Join-Path $tempDir "updatecon-platform-$Under-install.log")"
+  } else {
+    Say "Дистрибутив и журнал установки: $WorkDir"
+    if (-not $KeepFiles -and (AskYes 'Открыть папку с дистрибутивом?')) { Invoke-Item $WorkDir }
+  }
+}
