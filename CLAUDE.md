@@ -123,6 +123,9 @@ drizzle/                generated migration SQL (committed)
   the folder is not the nick), a guessed `<nick>\<ver>\updsetup.zip` is «файл не
   найден». Until a version is read, the UI links its file list page. `/api/versions`
   returns them classified (`classifyVersionFiles`: update, full, tech, news, order).
+  All versions at once: snapshot workflow input `files_all` runs
+  `node dist/releases/backfill-files.js --minutes 300` (one page at a time, ~3 h for 30k
+  versions, no sizes; the rest is left for the next run).
   Full distributions of some 1C products ask for a one-time code (2FA) on the portal.
 
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,

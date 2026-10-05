@@ -18,6 +18,10 @@ on:
         description: "«Обновить всё» перед выгрузкой (иначе — только пересобрать снимок)"
         type: boolean
         default: true
+      files_all:
+        description: "Дочитать файлы всех версий с releases.1c.ru (долго: до 5 часов)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write              # upload to the `data` release
@@ -29,7 +33,8 @@ concurrency:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # A full read of the versions' files takes hours: GitHub allows a job 360 minutes.
+    timeout-minutes: ${{ inputs.files_all && 350 || 60 }}
     services:
       postgres:
         image: postgres:16-alpine
@@ -48,7 +53,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: ITS account present
-        if: github.event_name == 'schedule' || inputs.import
+        if: github.event_name == 'schedule' || inputs.import || inputs.files_all
         run: |
           if [ -z "$ITS_LOGIN" ] || [ -z "$ITS_PASSWORD" ]; then
             echo "::error::Нет секретов ITS_LOGIN / ITS_PASSWORD (Settings → Secrets and variables → Actions)"
@@ -81,6 +86,11 @@ jobs:
       - name: «Обновить всё»
         if: github.event_name == 'schedule' || inputs.import
         run: node dist/db/pipeline.js
+
+      - name: Files of all versions
+        if: inputs.files_all
+        # 300 min budget; what is left is read by the next run (the nightly one reads 3 per project)
+        run: node dist/releases/backfill-files.js --minutes 300 --pause 250
 
       - name: Dump
         run: node dist/db/snapshot.js create data/snapshot --commit "${GITHUB_SHA::7}"

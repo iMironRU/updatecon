@@ -216,12 +216,22 @@ export async function refreshPrimaryProjects(): Promise<void> {
 // the following runs. A version read with no files (the portal hides it from
 // this account, or it is gone) is tried again after 30 days.
 
+export interface VersionFilesOptions {
+  /** also read the update file's size (one more request per version) */
+  withSize?: boolean;
+  /** stop before this moment (ms since epoch): a long backfill still ends in time */
+  deadline?: number;
+  /** pause between versions, ms — keep the portal unhurried */
+  pauseMs?: number;
+}
+
 export async function syncVersionFilesForConfig(
   session: ReleasesSession,
   configId: number,
   nick: string,
   versions: string[],
   limit = 3,
+  { withSize = true, deadline, pauseMs = 150 }: VersionFilesOptions = {},
 ): Promise<number> {
   if (versions.length === 0) return 0;
   const items = await db
@@ -238,13 +248,14 @@ export async function syncVersionFilesForConfig(
   let read = 0;
 
   for (const item of items) {
+    if (deadline && Date.now() > deadline) break;
     try {
       const html = await session.get(
         `/version_files?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(item.version)}`
       );
       const list = parseVersionFileList(html);
       let size = item.size;
-      if (size == null) {
+      if (size == null && withSize) {
         // Prefer "Дистрибутив обновления" (main update zip, not base install)
         const files = parseVersionFiles(html);
         const updateFile = files.find(f =>
@@ -259,7 +270,7 @@ export async function syncVersionFilesForConfig(
         .set({ files: list, filesNick: nick, filesFetchedAt: new Date(), fileSizeBytes: size ?? null })
         .where(eq(versionMeta.id, item.id));
       read++;
-      await delay(150);
+      await delay(pauseMs);
     } catch {
       // network trouble: not marked as read, so the next run tries again
     }
