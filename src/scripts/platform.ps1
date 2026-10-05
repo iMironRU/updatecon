@@ -34,6 +34,44 @@ if (-not $Version) { $Version = @@VERSION_Q@@ }
 
 function Say([string]$Text, [string]$Color = 'Gray') { Write-Host $Text -ForegroundColor $Color }
 function Fail([string]$Text) { Write-Host ''; Write-Host "ОШИБКА: $Text" -ForegroundColor Red; exit 1 }
+# Download with a progress line (Invoke-WebRequest's own progress bar makes Windows
+# PowerShell many times slower, so it stays off). Throws on HTTP errors.
+function Download([string]$Uri, [string]$Dest, $Cookies, [hashtable]$Headers) {
+  $req = [Net.HttpWebRequest]::Create($Uri)
+  $req.UserAgent = '1C+Enterprise/8.3'
+  $req.AllowAutoRedirect = $true
+  if ($Cookies) { $req.CookieContainer = $Cookies }
+  if ($Headers) { foreach ($k in $Headers.Keys) { $req.Headers[$k] = $Headers[$k] } }
+  $resp = $req.GetResponse()
+  try {
+    $total = $resp.ContentLength
+    $in = $resp.GetResponseStream()
+    $out = [IO.File]::Create($Dest)
+    try {
+      $buf = New-Object byte[] (1MB)
+      $done = 0L; $last = -1000L
+      $sw = [Diagnostics.Stopwatch]::StartNew()
+      $show = {
+        $sec = [Math]::Max($sw.Elapsed.TotalSeconds, 0.001)
+        $speed = $done / 1MB / $sec
+        if ($total -gt 0) {
+          $left = if ($speed -gt 0) { [TimeSpan]::FromSeconds(($total - $done) / 1MB / $speed).ToString('hh\:mm\:ss') } else { '--:--:--' }
+          $line = '  {0,5:N1}%  {1:N0} из {2:N0} МБ  {3:N1} МБ/с  осталось {4}' -f ($done * 100.0 / $total), ($done / 1MB), ($total / 1MB), $speed, $left
+        } else {
+          $line = '  {0:N0} МБ  {1:N1} МБ/с' -f ($done / 1MB), $speed
+        }
+        Write-Host ("`r" + $line.PadRight(70)) -NoNewline
+      }
+      while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+        $out.Write($buf, 0, $n)
+        $done += $n
+        if ($sw.ElapsedMilliseconds - $last -ge 1000) { $last = $sw.ElapsedMilliseconds; & $show }
+      }
+      & $show
+      Write-Host ''
+    } finally { $out.Dispose(); $in.Dispose() }
+  } finally { $resp.Dispose() }
+}
 # A GET to the 1C portal; a dropped connection is tried again twice before giving up.
 function Web([string]$Uri, $Session) {
   for ($try = 1; ; $try++) {
@@ -146,14 +184,15 @@ if (-not $installed) {
       $dest = Join-Path $WorkDir $name
       $done = $false
       foreach ($m in $mirrors) {
-        Say "Скачиваю $name (около 1 ГБ)..."
+        Say "Скачиваю $name..."
         try {
-          Invoke-WebRequest -Uri $m -WebSession $session -UserAgent $UA -OutFile "$dest.part" -UseBasicParsing
+          Download $m "$dest.part" $session.Cookies
           Move-Item "$dest.part" $dest -Force
           $done = $true
           break
         } catch {
           Remove-Item "$dest.part" -ErrorAction SilentlyContinue
+          Write-Host ''
           Say "  Не получилось ($($_.Exception.Message)), пробую зеркало..." 'Yellow'
         }
       }

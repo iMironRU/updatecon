@@ -58,6 +58,44 @@ function Plain([Security.SecureString]$Secure) {
   $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
   try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
+# Download with a progress line (Invoke-WebRequest's own progress bar makes Windows
+# PowerShell many times slower, so it stays off). Throws on HTTP errors.
+function Download([string]$Uri, [string]$Dest, $Cookies, [hashtable]$Headers) {
+  $req = [Net.HttpWebRequest]::Create($Uri)
+  $req.UserAgent = '1C+Enterprise/8.3'
+  $req.AllowAutoRedirect = $true
+  if ($Cookies) { $req.CookieContainer = $Cookies }
+  if ($Headers) { foreach ($k in $Headers.Keys) { $req.Headers[$k] = $Headers[$k] } }
+  $resp = $req.GetResponse()
+  try {
+    $total = $resp.ContentLength
+    $in = $resp.GetResponseStream()
+    $out = [IO.File]::Create($Dest)
+    try {
+      $buf = New-Object byte[] (1MB)
+      $done = 0L; $last = -1000L
+      $sw = [Diagnostics.Stopwatch]::StartNew()
+      $show = {
+        $sec = [Math]::Max($sw.Elapsed.TotalSeconds, 0.001)
+        $speed = $done / 1MB / $sec
+        if ($total -gt 0) {
+          $left = if ($speed -gt 0) { [TimeSpan]::FromSeconds(($total - $done) / 1MB / $speed).ToString('hh\:mm\:ss') } else { '--:--:--' }
+          $line = '  {0,5:N1}%  {1:N0} из {2:N0} МБ  {3:N1} МБ/с  осталось {4}' -f ($done * 100.0 / $total), ($done / 1MB), ($total / 1MB), $speed, $left
+        } else {
+          $line = '  {0:N0} МБ  {1:N1} МБ/с' -f ($done / 1MB), $speed
+        }
+        Write-Host ("`r" + $line.PadRight(70)) -NoNewline
+      }
+      while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+        $out.Write($buf, 0, $n)
+        $done += $n
+        if ($sw.ElapsedMilliseconds - $last -ge 1000) { $last = $sw.ElapsedMilliseconds; & $show }
+      }
+      & $show
+      Write-Host ''
+    } finally { $out.Dispose(); $in.Dispose() }
+  } finally { $resp.Dispose() }
+}
 function AskYes([string]$Question) { (Read-Host "$Question (да/нет)") -match '^(д|да|y|yes)$' }
 
 Say ''
@@ -84,10 +122,13 @@ if ($missing.Count -gt 0) {
     $dest = Join-Path $WorkDir $s.File
     Say ("Скачиваю {0} из {1}: {2}" -f $s.N, $Steps.Count, $s.Version)
     try {
-      Invoke-WebRequest -Uri $s.Url -Headers @{ Authorization = $auth } -UserAgent '1C+Enterprise/8.3' -OutFile "$dest.part" -UseBasicParsing
+      Download $s.Url "$dest.part" $null @{ Authorization = $auth }
     } catch {
+      Write-Host ''
       $code = 0
-      if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+      $ex = $_.Exception
+      while ($ex -and -not $ex.Response -and $ex.InnerException) { $ex = $ex.InnerException }
+      if ($ex.Response) { $code = [int]$ex.Response.StatusCode }
       Remove-Item "$dest.part" -ErrorAction SilentlyContinue
       if ($code -eq 401 -or $code -eq 403) { Fail 'Сервер 1С не отдал файл: неверный логин или пароль ИТС, или у учётной записи нет подписки на обновления этой конфигурации (для партнёрских решений нужна подписка на сам продукт).' }
       Fail ("Не удалось скачать {0}: {1}" -f $s.Url, $_.Exception.Message)
