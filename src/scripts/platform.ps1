@@ -34,6 +34,20 @@ if (-not $Version) { $Version = @@VERSION_Q@@ }
 
 function Say([string]$Text, [string]$Color = 'Gray') { Write-Host $Text -ForegroundColor $Color }
 function Fail([string]$Text) { Write-Host ''; Write-Host "ОШИБКА: $Text" -ForegroundColor Red; exit 1 }
+# A GET to the 1C portal; a dropped connection is tried again twice before giving up.
+function Web([string]$Uri, $Session) {
+  for ($try = 1; ; $try++) {
+    try { return Invoke-WebRequest -Uri $Uri -WebSession $Session -UserAgent $UA -UseBasicParsing }
+    catch {
+      if ($_.Exception.Response -or $try -ge 3) {
+        $hostName = ([uri]$Uri).Host
+        Fail "Нет связи с $hostName ($($_.Exception.Message)). Проверьте интернет, прокси и антивирус: Test-NetConnection $hostName -Port 443 должен ответить TcpTestSucceeded : True."
+      }
+      Say "  Нет связи с порталом 1С, повторяю через 5 секунд ($try из 3)..." 'Yellow'
+      Start-Sleep -Seconds 5
+    }
+  }
+}
 function Plain([Security.SecureString]$Secure) {
   $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
   try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
@@ -104,7 +118,7 @@ if (-not $installed) {
       $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
       $loginUrl = 'https://login.1c.ru/login?service=' + [uri]::EscapeDataString('https://releases.1c.ru/public/security_check')
       Say 'Вхожу на портал 1С...'
-      $page = Invoke-WebRequest -Uri $loginUrl -WebSession $session -UserAgent $UA -UseBasicParsing
+      $page = Web $loginUrl $session
       $execution = [regex]::Match($page.Content, 'name="execution"\s+value="([^"]+)"').Groups[1].Value
       if (-not $execution) { Fail "Страница входа 1С изменилась, скрипт нужно обновить: $Site/platform" }
       $badLogin = 'Портал 1С не принял логин и пароль ИТС. Пароль вводится без отображения: звёздочек должно быть столько, сколько символов. Вставить пароль в это окно можно правой кнопкой мыши (Ctrl+V здесь не работает).'
@@ -117,13 +131,13 @@ if (-not $installed) {
         if ($code -eq 401 -or $code -eq 403) { Fail $badLogin }
         Fail "Портал 1С не ответил на вход: $($_.Exception.Message)"
       }
-      $list = (Invoke-WebRequest -Uri "https://releases.1c.ru/version_files?nick=$Nick&ver=$Version" -WebSession $session -UserAgent $UA -UseBasicParsing).Content
+      $list = (Web "https://releases.1c.ru/version_files?nick=$Nick&ver=$Version" $session).Content
       if ($list -match 'name="execution"') { Fail $badLogin }
       $href = [regex]::Match($list, 'href="(/version_file\?[^"]*windows64full_' + $Under + '\.(?:rar|zip))"').Groups[1].Value
       if (-not $href) { Fail "У сборки $Version на портале нет дистрибутива «Технологическая платформа (64-bit) для Windows»." }
       $href = $href.Replace('&amp;', '&')
       $name = ([uri]::UnescapeDataString($href) -split '[\\/]')[-1]
-      $filePage = (Invoke-WebRequest -Uri ('https://releases.1c.ru' + $href) -WebSession $session -UserAgent $UA -UseBasicParsing).Content
+      $filePage = (Web ('https://releases.1c.ru' + $href) $session).Content
       $mirrors = @([regex]::Matches($filePage, 'href="(https://dl\d*\.1c\.ru/[^"]+)"') | ForEach-Object { $_.Groups[1].Value.Replace('&amp;', '&') } | Select-Object -Unique)
       if ($mirrors.Count -eq 0) { Fail "Не найдена ссылка на скачивание $name, скрипт нужно обновить: $Site/platform" }
       Say "Дистрибутив: $name" 'Green'
