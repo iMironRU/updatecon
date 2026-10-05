@@ -297,7 +297,7 @@ input, select, textarea { font-family: inherit; }
 .config-detail-avatar { width: 60px; height: 60px; border-radius: 14px; display: flex;
   align-items: center; justify-content: center; font-weight: 800; font-size: 16px;
   flex-shrink: 0; font-family: var(--mono); letter-spacing: -1px; }
-.config-detail-info { flex: 1; min-width: 0; }
+.config-detail-info { flex: 1 1 340px; min-width: 0; }   /* the buttons wrap below rather than squeeze the title */
 .config-detail-name { font-size: 24px; font-weight: 800; line-height: 1.2; }
 .config-detail-sub { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
 .config-detail-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
@@ -1029,17 +1029,29 @@ async function loadVersionsForConfig(cfgId) {
     cfg._cfu = data.cfu || {};
     // API returns oldest→newest; reverse for display (newest first)
     const vers = [...(data.versions || [])].reverse();
+    cfg._files = data.files || {};
     cfg.versions = vers.map(function(v) {
       const m = cfg._meta[v] || {};
-      const dl = cfg.nick
-        ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + v +
-          '&path=' + cfg.nick + '%5c' + v.replace(/\./g, '_') + '%5cupdsetup.zip'
-        : '';
+      // releases.1c.ru: a file link needs its real path (it differs per product:
+      // Trade\11_6_1_70\Trade_11_6_1_70_setup1c.zip), read by the import. Until a
+      // version's files are read, its file list page — that link always works.
+      const rf = cfg._files[v];
+      const nick = (rf && rf.nick) || cfg.nick;
+      const rel = p => 'https://releases.1c.ru/version_file?nick=' + encodeURIComponent(rf.nick) + '&ver=' + encodeURIComponent(v) + '&path=' + encodeURIComponent(p);
+      const page = nick ? 'https://releases.1c.ru/version_files?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(v) : '';
+      const dl = rf && rf.update ? rel(rf.update) : page;
+      const docs = {
+        full: rf && rf.full ? rel(rf.full) : '',
+        tech: rf && rf.tech ? rel(rf.tech) : '',
+        news: rf && rf.news ? rel(rf.news) : '',
+        order: rf && rf.order ? rel(rf.order) : '',
+        page,
+      };
       const cfuPath = cfg._cfu[v] || '';
       const dlIts = cfuPath ? 'https://downloads.v8.1c.ru/tmplts/' + cfuPath : '';
       const sizeBytes = m.file_size_bytes || 0;
       const lts = !!(cfg.ltsLine && (v === cfg.ltsLine || v.startsWith(cfg.ltsLine + '.')));
-      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: null, dl, dlIts, lts };
+      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: null, dl, dlIts, lts, ...docs };
     });
     if (cfg.versions.length && !cfg.latestV) {
       cfg.latestV = cfg.versions[0].v;
@@ -1061,17 +1073,21 @@ async function find_configs_by_version_api(ver) {
 
 function chain_response_to_steps(apiResult, cfg) {
   if (!apiResult || !apiResult.found || !apiResult.steps?.length) return null;
-  return apiResult.steps.map(s => ({
-    v: s.toVersion,
-    from: s.fromVersion,
-    cfuPath: s.cfuPath || '',
-    date: cfg?._meta?.[s.toVersion]?.release_date || null,
-    mb: 0,
-    plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
-    req: false,
-    patches: [],
-    dl: '',
-  }));
+  return apiResult.steps.map(s => {
+    const ver = cfg?.versions?.find(x => x.v === s.toVersion);
+    return {
+      v: s.toVersion,
+      from: s.fromVersion,
+      cfuPath: s.cfuPath || '',
+      date: cfg?._meta?.[s.toVersion]?.release_date || null,
+      mb: 0,
+      plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
+      req: false,
+      patches: [],
+      dl: ver?.dl || '',
+      order: ver?.order || '',
+    };
+  });
 }
 
 /* ================================================================
@@ -1478,8 +1494,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     const dot_cls = is_final ? 'final' : (s.req ? 'required' : '');
     const dot_icon = is_final ? icn_check() : (reversed ? display.length - i : i + 1);
     const dl_1c = s.dl || (cfg?.nick
-      ? 'https://releases.1c.ru/version_file?nick=' + cfg.nick + '&ver=' + s.v +
-        '&path=' + cfg.nick + '%5c' + s.v.replace(/\./g,'_') + '%5cupdsetup.zip'
+      ? 'https://releases.1c.ru/version_files?nick=' + encodeURIComponent(cfg.nick) + '&ver=' + encodeURIComponent(s.v)
       : '');
     const dl_its = s.cfuPath
       ? 'https://downloads.v8.1c.ru/tmplts/' + s.cfuPath
@@ -1507,8 +1522,9 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
         </div>
         ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
         <div class="step-actions">
-          ${dl_1c ? `<a href="${dl_1c}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru</a>` : ''}
+          ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru</a>` : ''}
           ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
+          ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления</a>` : ''}
         </div>
       </div>
     </div>`;
@@ -2453,8 +2469,13 @@ function render_config(id) {
       <div class="version-body" id="ver-${id}-${i}">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
           ${ver.plat ? `<span class="step-platform">Платформа ≥ ${ver.plat}</span>` : ''}
-          ${ver.dl ? `<a href="${ver.dl}" target="_blank" class="btn btn-sm btn-secondary" onclick="handle_dl(event,'${ver.dl}')">${icn_dl()} releases.1c.ru</a>` : ''}
-          ${ver.dlIts ? `<a href="${ver.dlIts}" target="_blank" class="btn btn-sm btn-secondary">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
+          ${ver.dl ? `<a href="${ver.dl}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${ver.dl}')">${icn_dl()} ${ver.dl === ver.page ? 'Файлы на releases.1c.ru' : 'Обновление'}</a>` : ''}
+          ${ver.full ? `<a href="${ver.full}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Полный дистрибутив: установка конфигурации и создание новой базы" onclick="handle_dl(event,'${ver.full}')">${icn_dl()} Полный дистрибутив</a>` : ''}
+          ${ver.tech ? `<a href="${ver.tech}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Технологический дистрибутив (для разработчиков)" onclick="handle_dl(event,'${ver.tech}')">${icn_dl()} Технологический</a>` : ''}
+          ${ver.dlIts ? `<a href="${ver.dlIts}" target="_blank" class="btn btn-sm btn-secondary" title="Файл обновления .cfu — как его скачивает конфигуратор">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
+          ${ver.news ? `<a href="${ver.news}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">${icn_link()} Новое в версии</a>` : ''}
+          ${ver.order ? `<a href="${ver.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">${icn_link()} Порядок обновления</a>` : ''}
+          ${ver.page && ver.dl !== ver.page ? `<a href="${ver.page}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Все файлы версии на портале 1С: переходы с других продуктов, ReadMe">${icn_link()} Все файлы</a>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="cfg_build_from_ver('${id}','${ver.v}')">${icn_chevron_r()} Цепочка отсюда</button>
         </div>
         <div id="patches-${id}-${i}"></div>
@@ -2505,6 +2526,7 @@ function render_config(id) {
         ${cfg.infoUrl ? `<a href="${esc_html(cfg.infoUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Общая информация о конфигурации">${icn_link()} ${info_link_label(cfg.infoUrl)}</a>` : ''}
         ${cfg.url_1c ? `<a href="${cfg.url_1c}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icn_link()} На releases.1c.ru</a>` : ''}
         ${cfg.bugsUrl ? `<a href="${esc_html(cfg.bugsUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Известные ошибки и сроки исправления">${icn_link()} Каталог ошибок</a>` : ''}
+        ${(() => { const lv = (cfg.versions || []).find(x => x.full); return lv ? `<a href="${lv.full}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Полный дистрибутив ${esc_html(lv.v)}: установка конфигурации и создание новой базы" onclick="handle_dl(event,'${lv.full}')">${icn_dl()} Полный дистрибутив ${esc_html(lv.v)}</a>` : ''; })()}
         ${cfg.status==='discontinued'?`<span class="badge badge-red" style="padding:8px 14px">${icn_alert()} Поддержка прекращена</span>`:''}
       </div>
     </div>

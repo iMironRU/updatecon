@@ -30,7 +30,7 @@ import { ReleasesSession } from "./fetch-releases.js";
 import { syncSolutions } from "./solutions.js";
 import { refreshTags } from "../db/tags.js";
 import {
-  parseTotalPage, parseProjectPage, parseVersionFiles,
+  parseTotalPage, parseProjectPage, parseVersionFiles, parseVersionFileList,
   parseFileProperties, parsePatchesPage, parseProjectLinks,
   type ReleasesConfig, type VersionRow,
 } from "./parse-releases.js";
@@ -210,52 +210,61 @@ export async function refreshPrimaryProjects(): Promise<void> {
   });
 }
 
-// ── File size fetching ────────────────────────────────────────────────────────
+// ── Version files: the list of a version's files + the update file's size ─────
+// One /version_files page per version, newest first, `limit` per project per
+// run: new releases are read the night they appear, older ones fill in over
+// the following runs. A version read with no files (the portal hides it from
+// this account, or it is gone) is tried again after 30 days.
 
-async function syncFileSizesForConfig(
+export async function syncVersionFilesForConfig(
   session: ReleasesSession,
   configId: number,
   nick: string,
-  limit = 50,
+  versions: string[],
+  limit = 3,
 ): Promise<number> {
-  // Find version_meta rows for this config that have no file_size_bytes yet
-  const rows = await db.execute(sql`
-    SELECT id, version FROM version_meta
-    WHERE config_id = ${configId} AND file_size_bytes IS NULL
-    ORDER BY updated_at DESC
-    LIMIT ${limit}
-  `) as { rows: Array<{ id: number; version: string }> };
-  const items = (rows as any).rows ?? rows;
-  let sized = 0;
+  if (versions.length === 0) return 0;
+  const items = await db
+    .select({ id: versionMeta.id, version: versionMeta.version, size: versionMeta.fileSizeBytes })
+    .from(versionMeta)
+    .where(and(
+      eq(versionMeta.configId, configId),
+      inArray(versionMeta.version, versions),        // this project's versions only: they are read under its nick
+      sql`(${versionMeta.filesFetchedAt} IS NULL OR (coalesce(jsonb_array_length(${versionMeta.files}), 0) = 0
+           AND ${versionMeta.filesFetchedAt} < now() - interval '30 days'))`,
+    ))
+    .orderBy(sql`${versionMeta.releaseDate} DESC NULLS LAST`, sql`${versionMeta.id} DESC`)
+    .limit(limit);
+  let read = 0;
 
   for (const item of items) {
     try {
       const html = await session.get(
         `/version_files?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(item.version)}`
       );
-      const files = parseVersionFiles(html);
-      // Prefer "Дистрибутив обновления" (main update zip, not base install)
-      const updateFile = files.find(f =>
-        f.title.includes("Дистрибутив обновления") && !f.title.includes("базовой")
-      ) ?? files.find(f => f.title.includes("Дистрибутив"));
-
-      if (!updateFile?.propertiesId) continue;
-
-      const propJson = await session.get(`/files/properties/version-files/${updateFile.propertiesId}`);
-      const bytes = parseFileProperties(propJson);
-      if (!bytes) continue;
-
+      const list = parseVersionFileList(html);
+      let size = item.size;
+      if (size == null) {
+        // Prefer "Дистрибутив обновления" (main update zip, not base install)
+        const files = parseVersionFiles(html);
+        const updateFile = files.find(f =>
+          f.title.includes("Дистрибутив обновления") && !f.title.includes("базовой")
+        ) ?? files.find(f => f.title.includes("Дистрибутив"));
+        if (updateFile?.propertiesId) {
+          size = parseFileProperties(await session.get(`/files/properties/version-files/${updateFile.propertiesId}`));
+        }
+      }
       await db
         .update(versionMeta)
-        .set({ fileSizeBytes: bytes })
+        .set({ files: list, filesNick: nick, filesFetchedAt: new Date(), fileSizeBytes: size ?? null })
         .where(eq(versionMeta.id, item.id));
-      sized++;
+      read++;
       await delay(150);
     } catch {
-      // version may not exist on releases.1c.ru — skip silently
+      // network trouble: not marked as read, so the next run tries again
     }
   }
-  return sized;
+  return read;
 }
 
 // ── Patches fetching ──────────────────────────────────────────────────────────
@@ -301,7 +310,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export interface ReleasesImportOptions {
   /** Ignored: /total is always synced (release_projects needs it). Kept for callers. */
   syncTotalPage?: boolean;
-  /** Fetch file sizes for version_meta rows (slow, many pages) */
+  /** Read the versions' file lists and update-file sizes (slow, many pages) */
   syncSizes?: boolean;
   /** Fetch patches for known versions (slow, many pages) */
   syncPatchesData?: boolean;
@@ -416,9 +425,10 @@ export async function runReleasesImport(
     }
 
     if (syncSizes) {
-      const sized = await syncFileSizesForConfig(session, app.id, nick, Math.ceil(sizesLimit / projects.length) + 1);
-      if (sized > 0) log(`    размеры: ${sized} версий`);
-      totalSized += sized;
+      const read = await syncVersionFilesForConfig(session, app.id, nick, rows.map((r) => r.version),
+        Math.max(3, Math.ceil(sizesLimit / projects.length) + 1));
+      if (read > 0) log(`    файлы версий: ${read}`);
+      totalSized += read;
     }
     if (syncPatchesData) {
       await syncPatchesForConfig(session, app.id, nick, rows.map((r) => r.version).slice(-3));
@@ -518,7 +528,7 @@ export async function runReleasesImport(
   const unmatched = projects.length - matched;
   log(
     `Готово: сопоставлено=${matched} (правило=${byRule}, по версиям=${byVersions}, вручную=${byManual}), ` +
-    `не сопоставлено=${unmatched}, метаданных=${metaRows}, размеров=${totalSized}`,
+    `не сопоставлено=${unmatched}, метаданных=${metaRows}, файлов версий=${totalSized}`,
   );
   if (unmatched > 0) log(`Несопоставленные проекты — в админке, вкладка «Сопоставление».`);
 
@@ -530,7 +540,7 @@ export async function runReleasesImport(
     edgesUpserted: metaRows,
     edgesUnchanged: unmatched,
     status: "ok",
-    message: `rule=${byRule} versions=${byVersions} manual=${byManual} unmatched=${unmatched} meta=${metaRows} sizes=${totalSized}`,
+    message: `rule=${byRule} versions=${byVersions} manual=${byManual} unmatched=${unmatched} meta=${metaRows} files=${totalSized}`,
     startedAt,
     finishedAt: new Date(),
   });

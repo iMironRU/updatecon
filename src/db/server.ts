@@ -18,6 +18,7 @@
  *   GET  /api/news?days=30                 -> news feed: releases, platform builds, moves to 8.5, ended ДП
  *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
+ *        (/api/versions also gives each version's releases.1c.ru files: update, full, tech, news, order)
  *   GET  /api/script/chain?os=&config_id=&from=&to=  -> script: download + apply an update chain (scripts.ts)
  *   GET  /api/script/platform?os=&version= -> script: download + install a platform build
  *   GET  /*                                -> static UI (public/)
@@ -76,7 +77,7 @@ import {
 } from "./credentials.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
 import { ReleasesSession } from "../releases/fetch-releases.js";
-import { parsePatchesPage } from "../releases/parse-releases.js";
+import { parsePatchesPage, classifyVersionFiles, type VersionFileKinds } from "../releases/parse-releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -945,19 +946,24 @@ export async function buildServer() {
       byEdition.set(ed, arr);
     }
 
-    // Fetch release_date + min_platform + file_size_bytes from version_meta.
+    // Fetch release_date + min_platform + file_size_bytes from version_meta,
+    // and the version's files on releases.1c.ru (paths for download links).
     const metaRows = await db.execute(sql`
-      SELECT version, release_date::text, min_platform, file_size_bytes
+      SELECT version, release_date::text, min_platform, file_size_bytes, files, files_nick
       FROM version_meta
       WHERE config_id = ${cfg[0].id}
     `);
     const meta: Record<string, { release_date: string | null; min_platform: string | null; file_size_bytes: number | null }> = {};
+    const files: Record<string, VersionFileKinds & { nick: string }> = {};
     for (const r of (metaRows as any).rows ?? metaRows) {
       meta[(r as any).version] = {
         release_date: (r as any).release_date ?? null,
         min_platform: (r as any).min_platform ?? null,
         file_size_bytes: (r as any).file_size_bytes ?? null,
       };
+      if ((r as any).files_nick && Array.isArray((r as any).files) && (r as any).files.length) {
+        files[(r as any).version] = { nick: (r as any).files_nick, ...classifyVersionFiles((r as any).files) };
+      }
     }
 
     // Fetch cfu_path per to_version: pick the edge from the most recent from_version.
@@ -979,6 +985,7 @@ export async function buildServer() {
         .map(([edition, versions]) => ({ edition, versions })),
       meta,
       cfu,
+      files,
     };
   });
 

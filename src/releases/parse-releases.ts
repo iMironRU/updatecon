@@ -208,6 +208,52 @@ export function parseVersionFiles(html: string): VersionFileInfo[] {
   return files;
 }
 
+export interface ReleaseFile { t: string; p: string }
+
+/**
+ * Parse /version_files?nick=…&ver=… → every file of the version: its title on
+ * the page and its path (the `path` parameter, decoded:
+ * "Trade\11_6_1_70\Trade_11_6_1_70_setup1c.zip").
+ */
+export function parseVersionFileList(html: string): ReleaseFile[] {
+  const out: ReleaseFile[] = [];
+  for (const m of html.matchAll(/<a href="(\/version_file\?[^"]*)"[^>]*>\s*([^<]+?)\s*<\/a>/g)) {
+    const raw = m[1].replace(/&amp;/g, "&").match(/[?&]path=([^&]*)/)?.[1];
+    if (!raw) continue;
+    let path = raw;
+    try { path = decodeURIComponent(raw.replace(/\+/g, " ")); } catch { /* keep as is */ }
+    const title = m[2].replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
+    out.push({ t: title, p: path });
+  }
+  return out;
+}
+
+export interface VersionFileKinds {
+  update?: string;   // «Дистрибутив обновления»
+  full?: string;     // «Полный дистрибутив» / «Дистрибутив создания новой базы»
+  tech?: string;     // «Технологический дистрибутив»
+  news?: string;     // «… Новое в версии»
+  order?: string;    // «… Порядок обновления»
+}
+
+/** The files a person looks for, picked from a version's list by their titles. */
+export function classifyVersionFiles(files: ReleaseFile[] | null | undefined): VersionFileKinds {
+  const out: VersionFileKinds = {};
+  for (const f of files ?? []) {
+    const t = f.t;
+    if (!out.update && /^Дистрибутив обновления$/i.test(t)) out.update = f.p;
+    else if (!out.full && /^(Полный дистрибутив|Дистрибутив создания новой базы)$/i.test(t)) out.full = f.p;
+    else if (!out.tech && /^Технологический дистрибутив$/i.test(t)) out.tech = f.p;
+    else if (!out.news && /Новое в версии\s*$/i.test(t)) out.news = f.p;
+    else if (!out.order && /Порядок обновления\s*$/i.test(t)) out.order = f.p;
+  }
+  // Partners sometimes word it differently: fall back to the usual file names.
+  if (!out.update) out.update = files?.find((f) => /updsetup\.(zip|exe)$/i.test(f.p) && !/перехода/i.test(f.t))?.p;
+  if (!out.full) out.full = files?.find((f) => /_setup1c\.zip$|[\\/]setup\.(zip|exe)$/i.test(f.p))?.p;
+  for (const k of Object.keys(out) as (keyof VersionFileKinds)[]) if (!out[k]) delete out[k];
+  return out;
+}
+
 /** Parse /files/properties/version-files/{id} JSON response → size in bytes. */
 export function parseFileProperties(json: string): number | null {
   try {

@@ -99,6 +99,13 @@
       "when": 1790919343067,
       "tag": "0013_goofy_phantom_reporter",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791182833104,
+      "tag": "0014_nostalgic_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }

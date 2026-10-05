@@ -116,6 +116,15 @@ drizzle/                generated migration SQL (committed)
   catalog's `platform` prefers releases.1c.ru's official minimum for its
   newest version (manifests can lag: Клиент ЭДО 2.10 says 8.3, needs 8.5).
 
+- `version_meta.files` / `files_nick` / `files_fetched_at` — the version's files on
+  releases.1c.ru (`/version_files`: title + path) read by the releases import, newest
+  versions first, 3 per project per run. Download links are built only from these
+  paths: they differ per product (`Trade\11_6_1_70\Trade_11_6_1_70_setup1c.zip`,
+  the folder is not the nick), a guessed `<nick>\<ver>\updsetup.zip` is «файл не
+  найден». Until a version is read, the UI links its file list page. `/api/versions`
+  returns them classified (`classifyVersionFiles`: update, full, tech, news, order).
+  Full distributions of some 1C products ask for a one-time code (2FA) on the portal.
+
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on

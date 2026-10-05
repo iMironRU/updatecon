@@ -218,6 +218,13 @@ export const versionMeta = pgTable(
     minPlatform: text("min_platform"),
     // Size of the update file (.zip installer from releases.1c.ru) in bytes
     fileSizeBytes: integer("file_size_bytes"),
+    // The version's files on releases.1c.ru (/version_files): [{ t: title, p: path }],
+    // the project nick they were read under, and when (null = not read yet).
+    // Paths differ per product (Trade\11_6_1_70\Trade_11_6_1_70_setup1c.zip), so
+    // download links are built from these, never guessed.
+    files: jsonb("files").$type<{ t: string; p: string }[]>(),
+    filesNick: text("files_nick"),
+    filesFetchedAt: timestamp("files_fetched_at", { withTimezone: true }),
     source: text("source").notNull().default("releases"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
