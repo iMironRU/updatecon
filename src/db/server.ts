@@ -70,7 +70,7 @@ import { parseVersion, compareVersions } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
 import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
-import { chainScript, platformScript, linuxInstallerAvailable, type ScriptOs, type ScriptFile } from "./scripts.js";
+import { chainScript, platformScript, linuxInstallerAvailable, cfuUrl, type ScriptOs, type ScriptFile } from "./scripts.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
@@ -994,32 +994,48 @@ export async function buildServer() {
     };
   });
 
-  // One version's files on releases.1c.ru with ready links (default: the newest
-  // version). `read: false` — the import has not read this version yet; `links.page`
-  // (the version's file list on the portal) works anyway.
+  // One version's files with ready links: releases.1c.ru (update, full, tech,
+  // news, order, page — read by the import) and the .cfu package from the LST
+  // (cfu, downloads.v8.1c.ru). Default version: the highest one, as the catalog
+  // shows it (not the latest date: an LTS-branch release can come out after the
+  // main one). `read: false` — releases files not read yet, `links.page` works.
+  // A product the portal hides from the data account (1С:ERP) has no releases
+  // data at all: then only `cfu`, with a `note`.
   app.get("/api/files", async (req, reply) => {
     const q = req.query as Record<string, unknown>;
     const wanted = String(q.version ?? "").trim();
     const cfg = await resolveConfig(q, wanted || undefined);
     if (!cfg) return reply.code(404).send({ error: "Конфигурация не найдена: укажите config_id" });
-    const rows = await db.select({
+    const metaRows = await db.select({
       version: versionMeta.version, releaseDate: versionMeta.releaseDate,
       files: versionMeta.files, filesNick: versionMeta.filesNick, filesFetchedAt: versionMeta.filesFetchedAt,
-    }).from(versionMeta).where(and(eq(versionMeta.configId, cfg.id), wanted ? eq(versionMeta.version, wanted) : sql`true`));
-    rows.sort((a, b) => (b.releaseDate ?? "").localeCompare(a.releaseDate ?? "") || compareVersions(b.version, a.version));
-    const row = rows[0];
-    if (!row) return reply.code(404).send({ error: wanted ? `Версии ${wanted} нет в данных releases.1c.ru` : "У конфигурации нет версий на releases.1c.ru" });
-    const nick = row.filesNick || (cfg.releasesHref ? cfg.releasesHref.replace(/^\/project\//, "") : null);
-    if (!nick) return reply.code(404).send({ error: "Конфигурация не связана с проектом на releases.1c.ru" });
-    const list: ReleaseFile[] = Array.isArray(row.files) ? row.files : [];
+    }).from(versionMeta).where(eq(versionMeta.configId, cfg.id));
+    const cfuRows = await db.execute(sql`
+      SELECT DISTINCT ON (to_version) to_version, cfu_path FROM update_edges
+      WHERE config_id = ${cfg.id} ORDER BY to_version, from_version DESC`);
+    const cfuOf = new Map<string, string>(((cfuRows as any).rows ?? cfuRows)
+      .filter((r: any) => r.cfu_path && (cfg.edition === null || parseVersion(r.to_version)?.segments[0] === cfg.edition))
+      .map((r: any) => [r.to_version, r.cfu_path]));
+    const known = new Set<string>([...metaRows.map((r) => r.version), ...cfuOf.keys()]);
+    const version = wanted || [...known].sort((a, b) => compareVersions(b, a))[0];
+    if (!version || !known.has(version)) {
+      return reply.code(404).send({ error: wanted ? `Версии ${wanted} у этой конфигурации нет` : "У конфигурации нет версий" });
+    }
+    const row = metaRows.find((r) => r.version === version);
+    const nick = row?.filesNick || (cfg.releasesHref ? cfg.releasesHref.replace(/^\/project\//, "") : null);
+    const list: ReleaseFile[] = Array.isArray(row?.files) ? row!.files! : [];
+    const links: Record<string, string> = nick ? versionFileLinks(nick, version, classifyVersionFiles(list)) : {};
+    const cfu = cfuOf.get(version);
+    if (cfu) links.cfu = cfuUrl(cfu);
     return {
       config_id: cfg.id,
-      version: row.version,
-      release_date: row.releaseDate,
+      version,
+      release_date: row?.releaseDate ?? null,
       nick,
-      read: row.filesFetchedAt != null,
-      links: versionFileLinks(nick, row.version, classifyVersionFiles(list)),
-      files: list.map((f) => ({ title: f.t, path: f.p, url: releaseFileUrl(nick, row.version, f.p) })),
+      read: row?.filesFetchedAt != null,
+      links,
+      files: nick ? list.map((f) => ({ title: f.t, path: f.p, url: releaseFileUrl(nick, version, f.p) })) : [],
+      ...(nick ? {} : { note: "Этого продукта нет в данных releases.1c.ru: портал не показывает его учётной записи, с которой собираются данные. Есть только файл обновления .cfu (links.cfu)." }),
     };
   });
 
