@@ -223,6 +223,8 @@ export interface VersionFilesOptions {
   deadline?: number;
   /** pause between versions, ms — keep the portal unhurried */
   pauseMs?: number;
+  /** counts the versions that could not be read (left for the next run) */
+  stats?: { failed: number };
 }
 
 export async function syncVersionFilesForConfig(
@@ -231,7 +233,7 @@ export async function syncVersionFilesForConfig(
   nick: string,
   versions: string[],
   limit = 3,
-  { withSize = true, deadline, pauseMs = 150 }: VersionFilesOptions = {},
+  { withSize = true, deadline, pauseMs = 150, stats }: VersionFilesOptions = {},
 ): Promise<number> {
   if (versions.length === 0) return 0;
   const items = await db
@@ -273,6 +275,7 @@ export async function syncVersionFilesForConfig(
       await delay(pauseMs);
     } catch {
       // network trouble: not marked as read, so the next run tries again
+      if (stats) stats.failed++;
     }
   }
   return read;

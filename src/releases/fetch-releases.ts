@@ -17,6 +17,9 @@ const LOGIN_URL =
 // Per-instance cookie jar so multiple Sessions don't share state.
 export class ReleasesSession {
   private jar: Map<string, string> = new Map();
+  // Kept to log in again: the portal session expires after a few hours, and a
+  // long run (the all-versions backfill) outlives it.
+  private creds: { login: string; password: string } | null = null;
 
   private updateJar(setCookieHeaders: string[]): void {
     for (const c of setCookieHeaders) {
@@ -123,10 +126,17 @@ export class ReleasesSession {
     if (r2.status !== 200) {
       throw new Error(`SSO login failed, final status: ${r2.status}`);
     }
+    this.creds = { login, password };
   }
 
   async get(path: string): Promise<string> {
-    const r = await this.follow(`https://releases.1c.ru${path}`);
+    let r = await this.follow(`https://releases.1c.ru${path}`);
+    // Session gone: an error status or the login form instead of the page.
+    if (this.creds && (r.status !== 200 || /name="execution"/.test(r.body))) {
+      this.jar.clear();
+      await this.login(this.creds.login, this.creds.password);
+      r = await this.follow(`https://releases.1c.ru${path}`);
+    }
     if (r.status !== 200) {
       throw new Error(
         `releases.1c.ru GET ${path} returned HTTP ${r.status}`,

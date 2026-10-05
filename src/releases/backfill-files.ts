@@ -44,6 +44,7 @@ async function main() {
     .from(releaseProjects).where(isNotNull(releaseProjects.configId)).orderBy(releaseProjects.nick);
 
   let read = 0;
+  const stats = { failed: 0 };
   for (let i = 0; i < projects.length; i++) {
     if (Date.now() > deadline) { console.log("[files] бюджет времени вышел — остальное дочитает следующий запуск"); break; }
     const p = projects[i];
@@ -54,15 +55,17 @@ async function main() {
       console.log(`[files] [${i + 1}/${projects.length}] ${p.nick}: страница проекта не открылась (${(e as Error).message})`);
       continue;
     }
-    const n = await syncVersionFilesForConfig(session, p.configId!, p.nick, versions, 100_000, { withSize: false, deadline, pauseMs });
+    const failedBefore = stats.failed;
+    const n = await syncVersionFilesForConfig(session, p.configId!, p.nick, versions, 100_000, { withSize: false, deadline, pauseMs, stats });
     read += n;
-    if (n > 0) {
-      const perVersion = (Date.now() - started) / read;
-      console.log(`[files] [${i + 1}/${projects.length}] ${p.nick}: ${n} (всего ${read}, ~${Math.round(perVersion)} мс на версию)`);
+    const failed = stats.failed - failedBefore;
+    if (n > 0 || failed > 0) {
+      const perVersion = read ? Math.round((Date.now() - started) / read) : 0;
+      console.log(`[files] [${i + 1}/${projects.length}] ${p.nick}: ${n}${failed ? `, не открылось ${failed}` : ""} (всего ${read}, ~${perVersion} мс на версию)`);
     }
   }
   const after = await remaining();
-  console.log(`[files] прочитано ${read} за ${Math.round((Date.now() - started) / 60_000)} мин; не прочитано осталось ${after}`);
+  console.log(`[files] прочитано ${read} за ${Math.round((Date.now() - started) / 60_000)} мин, не открылось ${stats.failed}; не прочитано осталось ${after}`);
 }
 
 main()
