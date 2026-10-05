@@ -254,6 +254,24 @@ export function classifyVersionFiles(files: ReleaseFile[] | null | undefined): V
   return out;
 }
 
+const RELEASES = "https://releases.1c.ru";
+
+/** A file of a version on releases.1c.ru: the page with its download links. */
+export function releaseFileUrl(nick: string, version: string, path: string): string {
+  return `${RELEASES}/version_file?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(version)}&path=${encodeURIComponent(path)}`;
+}
+/** All files of a version on releases.1c.ru — a link that always works. */
+export function versionFilesPageUrl(nick: string, version: string): string {
+  return `${RELEASES}/version_files?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(version)}`;
+}
+/** Ready links for the classified files of a version, plus `page`. */
+export function versionFileLinks(nick: string, version: string, kinds: VersionFileKinds): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, p] of Object.entries(kinds)) if (p) out[k] = releaseFileUrl(nick, version, p);
+  out.page = versionFilesPageUrl(nick, version);
+  return out;
+}
+
 /** Parse /files/properties/version-files/{id} JSON response → size in bytes. */
 export function parseFileProperties(json: string): number | null {
   try {

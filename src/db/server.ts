@@ -18,7 +18,8 @@
  *   GET  /api/news?days=30                 -> news feed: releases, platform builds, moves to 8.5, ended ДП
  *   GET  /api/tags                         -> product-line tag dictionary
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
- *        (/api/versions also gives each version's releases.1c.ru files: update, full, tech, news, order)
+ *        (/api/versions also gives each version's releases.1c.ru files: update, full, tech, news, order + links)
+ *   GET  /api/files?config_id=&version=    -> one version's files on releases.1c.ru with ready links
  *   GET  /api/script/chain?os=&config_id=&from=&to=  -> script: download + apply an update chain (scripts.ts)
  *   GET  /api/script/platform?os=&version= -> script: download + install a platform build
  *   GET  /*                                -> static UI (public/)
@@ -65,7 +66,7 @@ import { findChain } from "./chain.js";
 import { setCaddyDomain, getCaddyStatus, CADDY_DISABLED } from "./caddy.js";
 import { TAGS, refreshTags, setManualTags } from "./tags.js";
 import { moreStats, platformCheck, releasesBy, platformInfo, newsEvents } from "./stats.js";
-import { parseVersion } from "../parser/version.js";
+import { parseVersion, compareVersions } from "../parser/version.js";
 import { runImport } from "./import-lst.js";
 import { runFullUpdate } from "./pipeline.js";
 import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
@@ -77,7 +78,7 @@ import {
 } from "./credentials.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
 import { ReleasesSession } from "../releases/fetch-releases.js";
-import { parsePatchesPage, classifyVersionFiles, type VersionFileKinds } from "../releases/parse-releases.js";
+import { parsePatchesPage, classifyVersionFiles, versionFileLinks, releaseFileUrl, type VersionFileKinds, type ReleaseFile } from "../releases/parse-releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -954,7 +955,7 @@ export async function buildServer() {
       WHERE config_id = ${cfg[0].id}
     `);
     const meta: Record<string, { release_date: string | null; min_platform: string | null; file_size_bytes: number | null }> = {};
-    const files: Record<string, VersionFileKinds & { nick: string }> = {};
+    const files: Record<string, VersionFileKinds & { nick: string; links: Record<string, string> }> = {};
     for (const r of (metaRows as any).rows ?? metaRows) {
       meta[(r as any).version] = {
         release_date: (r as any).release_date ?? null,
@@ -962,7 +963,8 @@ export async function buildServer() {
         file_size_bytes: (r as any).file_size_bytes ?? null,
       };
       if ((r as any).files_nick && Array.isArray((r as any).files) && (r as any).files.length) {
-        files[(r as any).version] = { nick: (r as any).files_nick, ...classifyVersionFiles((r as any).files) };
+        const kinds = classifyVersionFiles((r as any).files);
+        files[(r as any).version] = { nick: (r as any).files_nick, ...kinds, links: versionFileLinks((r as any).files_nick, (r as any).version, kinds) };
       }
     }
 
@@ -986,6 +988,38 @@ export async function buildServer() {
       meta,
       cfu,
       files,
+      // the releases.1c.ru project: a version without `files` yet links
+      // https://releases.1c.ru/version_files?nick=<releases_nick>&ver=<version>
+      releases_nick: found.releasesHref ? found.releasesHref.replace(/^\/project\//, "") : null,
+    };
+  });
+
+  // One version's files on releases.1c.ru with ready links (default: the newest
+  // version). `read: false` — the import has not read this version yet; `links.page`
+  // (the version's file list on the portal) works anyway.
+  app.get("/api/files", async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const wanted = String(q.version ?? "").trim();
+    const cfg = await resolveConfig(q, wanted || undefined);
+    if (!cfg) return reply.code(404).send({ error: "Конфигурация не найдена: укажите config_id" });
+    const rows = await db.select({
+      version: versionMeta.version, releaseDate: versionMeta.releaseDate,
+      files: versionMeta.files, filesNick: versionMeta.filesNick, filesFetchedAt: versionMeta.filesFetchedAt,
+    }).from(versionMeta).where(and(eq(versionMeta.configId, cfg.id), wanted ? eq(versionMeta.version, wanted) : sql`true`));
+    rows.sort((a, b) => (b.releaseDate ?? "").localeCompare(a.releaseDate ?? "") || compareVersions(b.version, a.version));
+    const row = rows[0];
+    if (!row) return reply.code(404).send({ error: wanted ? `Версии ${wanted} нет в данных releases.1c.ru` : "У конфигурации нет версий на releases.1c.ru" });
+    const nick = row.filesNick || (cfg.releasesHref ? cfg.releasesHref.replace(/^\/project\//, "") : null);
+    if (!nick) return reply.code(404).send({ error: "Конфигурация не связана с проектом на releases.1c.ru" });
+    const list: ReleaseFile[] = Array.isArray(row.files) ? row.files : [];
+    return {
+      config_id: cfg.id,
+      version: row.version,
+      release_date: row.releaseDate,
+      nick,
+      read: row.filesFetchedAt != null,
+      links: versionFileLinks(nick, row.version, classifyVersionFiles(list)),
+      files: list.map((f) => ({ title: f.t, path: f.p, url: releaseFileUrl(nick, row.version, f.p) })),
     };
   });
 

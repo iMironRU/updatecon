@@ -609,6 +609,14 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
   border-radius: var(--r); padding: 24px; margin-bottom: 20px; }
 .settings-section-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
 .settings-section-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+.api-list { display: grid; gap: 8px; }
+.api-row { background: var(--surface2); border-radius: var(--r-sm); padding: 10px 12px; display: grid; gap: 4px; min-width: 0; }
+.api-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.api-method { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); flex-shrink: 0; }
+.api-path { font-family: var(--mono); font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.api-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.api-desc code { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.api-example { font-family: var(--mono); font-size: 12px; color: var(--accent); overflow-wrap: anywhere; justify-self: start; }
 .alert { display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--r-sm);
   font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
 .alert svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
@@ -1032,21 +1040,14 @@ async function loadVersionsForConfig(cfgId) {
     cfg._files = data.files || {};
     cfg.versions = vers.map(function(v) {
       const m = cfg._meta[v] || {};
-      // releases.1c.ru: a file link needs its real path (it differs per product:
-      // Trade\11_6_1_70\Trade_11_6_1_70_setup1c.zip), read by the import. Until a
-      // version's files are read, its file list page — that link always works.
-      const rf = cfg._files[v];
-      const nick = (rf && rf.nick) || cfg.nick;
-      const rel = p => 'https://releases.1c.ru/version_file?nick=' + encodeURIComponent(rf.nick) + '&ver=' + encodeURIComponent(v) + '&path=' + encodeURIComponent(p);
-      const page = nick ? 'https://releases.1c.ru/version_files?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(v) : '';
-      const dl = rf && rf.update ? rel(rf.update) : page;
-      const docs = {
-        full: rf && rf.full ? rel(rf.full) : '',
-        tech: rf && rf.tech ? rel(rf.tech) : '',
-        news: rf && rf.news ? rel(rf.news) : '',
-        order: rf && rf.order ? rel(rf.order) : '',
-        page,
-      };
+      // releases.1c.ru: ready links from the server, built from the real file paths
+      // the import read (they differ per product). Until a version's files are
+      // read, its file list page — that link always works.
+      const links = (cfg._files[v] || {}).links || {};
+      const nick = data.releases_nick || cfg.nick;
+      const page = links.page || (nick ? 'https://releases.1c.ru/version_files?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(v) : '');
+      const dl = links.update || page;
+      const docs = { full: links.full || '', tech: links.tech || '', news: links.news || '', order: links.order || '', page };
       const cfuPath = cfg._cfu[v] || '';
       const dlIts = cfuPath ? 'https://downloads.v8.1c.ru/tmplts/' + cfuPath : '';
       const sizeBytes = m.file_size_bytes || 0;
@@ -3855,19 +3856,13 @@ function render_settings() {
       <div class="app-install" id="app-install">${install_section_body()}</div>
     </div>
     <div class="settings-section fade-up fade-up-2">
-      <div class="settings-section-title">API эндпоинты</div>
-      <div class="settings-section-sub">Серверная часть Апдейкон</div>
-      <div style="display:flex;flex-direction:column;gap:8px;font-family:var(--mono);font-size:12px">
-        ${[
-          ['GET', '/api/configs', 'Список конфигураций с метаданными'],
-          ['GET', '/api/configs?version=X', 'Конфигурации по версии'],
-          ['GET', '/api/versions?config_id=ID', 'Версии + даты + платформы'],
-          ['GET', '/api/chain?config_id=&from=&to=', 'Построить цепочку обновлений'],
-          ['GET', '/api/stats', 'Статистика базы данных'],
-        ].map(([m,u,d]) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface2);border-radius:var(--r-xs);flex-wrap:wrap">
-          <span style="color:var(--accent);font-weight:700;min-width:40px">${m}</span>
-          <span style="color:var(--text)">${u}</span>
-          <span style="color:var(--text-muted);font-size:12px;margin-left:auto">${d}</span>
+      <div class="settings-section-title">API</div>
+      <div class="settings-section-sub">Открытое HTTP API Апдейкона: JSON (скрипты — текстом), без ключей и регистрации. Нажмите на пример, чтобы открыть ответ.</div>
+      <div class="api-list">
+        ${api_rows().map(r => `<div class="api-row">
+          <div class="api-head"><span class="api-method">GET</span><code class="api-path">${esc_html(r.path)}</code></div>
+          <div class="api-desc">${r.desc}</div>
+          ${r.example ? `<a class="api-example" href="${esc_html(r.example)}" target="_blank" rel="noopener">${esc_html(r.example)}</a>` : ''}
         </div>`).join('')}
       </div>
     </div>
@@ -3882,6 +3877,22 @@ function render_settings() {
       </div>
     </div>` : ''}
   </div>`;
+}
+// The public API, as listed on the Settings page (examples use БП 3.0, id 96).
+function api_rows() {
+  return [
+    { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
+    { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
+    { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
+    { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии на releases.1c.ru с готовыми ссылками: обновление, полный дистрибутив, «Новое в версии», «Порядок обновления» и весь список. Без <code>version</code> — последняя версия. <code>read: false</code> — список ещё не прочитан, работает ссылка <code>links.page</code>.', example: '/api/files?config_id=96' },
+    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку и файл .cfu каждого шага.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/transitions?config_id=<id>', desc: 'Переходы на другие продукты и редакции и с них.', example: '/api/transitions?config_id=96' },
+    { path: '/api/news?days=<дней>', desc: 'Лента событий: релизы, новые сборки платформы, повышение требований, конец длительной поддержки.', example: '/api/news?days=7' },
+    { path: '/api/platform', desc: 'Сборки платформы 8.2, 8.3, 8.5: даты, ОС, ссылки на изменения и ошибки; минимальная платформа конфигураций.', example: '/api/platform' },
+    { path: '/api/stats, /api/stats/more', desc: 'Статистика базы: числа, релизы по годам и дням недели, линейки, разработчики, цепочки.', example: '/api/stats/more' },
+    { path: '/api/script/chain?os=windows|linux&config_id=<id>&from=<версия>&to=<версия>', desc: 'Скрипт обновления по цепочке (PowerShell или bash): скачивает обновления и ставит их на базу.', example: '/api/script/chain?os=linux&config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/script/platform?os=windows|linux&version=<сборка>', desc: 'Скрипт установки платформы: скачивает дистрибутив с портала 1С и устанавливает.', example: '/api/script/platform?os=linux&version=8.3.27.2342' },
+  ];
 }
 function bind_settings() {}
 function set_country(code) {
