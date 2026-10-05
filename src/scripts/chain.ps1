@@ -77,7 +77,7 @@ if ($missing.Count -gt 0) {
   if (-not $itsLogin -or -not $itsPass) {
     Say 'Файлы обновлений скачиваются под учётной записью ИТС (портал 1С).'
     $itsLogin = Read-Host 'Логин ИТС'
-    $itsPass = Plain (Read-Host 'Пароль ИТС' -AsSecureString)
+    $itsPass = Plain (Read-Host 'Пароль ИТС (вставка — правой кнопкой мыши)' -AsSecureString)
   }
   $auth = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($itsLogin + ':' + $itsPass))
   foreach ($s in $missing) {

@@ -99,7 +99,7 @@ if (-not $installed) {
       if (-not $itsLogin -or -not $itsPass) {
         Say 'Дистрибутив скачивается с портала 1С под учётной записью ИТС.'
         $itsLogin = Read-Host 'Логин ИТС'
-        $itsPass = Plain (Read-Host 'Пароль ИТС' -AsSecureString)
+        $itsPass = Plain (Read-Host 'Пароль ИТС (вставка — правой кнопкой мыши)' -AsSecureString)
       }
       $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
       $loginUrl = 'https://login.1c.ru/login?service=' + [uri]::EscapeDataString('https://releases.1c.ru/public/security_check')
@@ -107,10 +107,18 @@ if (-not $installed) {
       $page = Invoke-WebRequest -Uri $loginUrl -WebSession $session -UserAgent $UA -UseBasicParsing
       $execution = [regex]::Match($page.Content, 'name="execution"\s+value="([^"]+)"').Groups[1].Value
       if (-not $execution) { Fail "Страница входа 1С изменилась, скрипт нужно обновить: $Site/platform" }
-      $null = Invoke-WebRequest -Uri $loginUrl -Method Post -WebSession $session -UserAgent $UA -UseBasicParsing -MaximumRedirection 10 `
-        -Body @{ username = $itsLogin; password = $itsPass; execution = $execution; _eventId = 'submit' }
+      $badLogin = 'Портал 1С не принял логин и пароль ИТС. Пароль вводится без отображения: звёздочек должно быть столько, сколько символов. Вставить пароль в это окно можно правой кнопкой мыши (Ctrl+V здесь не работает).'
+      try {
+        $null = Invoke-WebRequest -Uri $loginUrl -Method Post -WebSession $session -UserAgent $UA -UseBasicParsing -MaximumRedirection 10 `
+          -Body @{ username = $itsLogin; password = $itsPass; execution = $execution; _eventId = 'submit' }
+      } catch {
+        $code = 0
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+        if ($code -eq 401 -or $code -eq 403) { Fail $badLogin }
+        Fail "Портал 1С не ответил на вход: $($_.Exception.Message)"
+      }
       $list = (Invoke-WebRequest -Uri "https://releases.1c.ru/version_files?nick=$Nick&ver=$Version" -WebSession $session -UserAgent $UA -UseBasicParsing).Content
-      if ($list -match 'name="execution"') { Fail 'Портал 1С не принял логин и пароль ИТС.' }
+      if ($list -match 'name="execution"') { Fail $badLogin }
       $href = [regex]::Match($list, 'href="(/version_file\?[^"]*windows64full_' + $Under + '\.(?:rar|zip))"').Groups[1].Value
       if (-not $href) { Fail "У сборки $Version на портале нет дистрибутива «Технологическая платформа (64-bit) для Windows»." }
       $href = $href.Replace('&amp;', '&')
