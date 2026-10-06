@@ -37,6 +37,9 @@ src/db/
   credentials.ts        ITS account / admin password editable in the admin UI (DB wins over .env)
   metrika.ts            Яндекс Метрика counter (admin UI → settings); server.ts serves index.html itself
                         (not @fastify/static) to put the tag in; the page reports SPA hits + goals
+  exchanges.ts          обмены/переходы between standard configurations from the 1CExchenge registry
+                        (github.com/iMironRU/1CExchenge data/registry.json, fetched as step 4 of «Обновить
+                        всё»); sides mapped to configurations by product key + edition (KEY_TEMPLATE)
   scripts.ts            scripts for the user's machine (/api/script/chain, /api/script/platform):
                         apply an update chain in designer batch mode / install a platform build,
                         PowerShell + bash; templates in src/scripts (copied to dist/scripts like src/admin)
@@ -148,6 +151,13 @@ owned by the application edition of its own package (template of `cfuPath`
   read-only pass over the LST text (the locked parsers drop source names).
   **Information only** — the user decided transitions are shown ("можно
   перейти"), not chained; locked decision 2 stands.
+- `exchanges` (id = registry link id) / `exchange_formats` (line, version PK) — the
+  1CExchenge registry: synchronisations and migrations «из → в» with mechanism, plan,
+  objects, sources, shippedIn; declared EnterpriseData versions. Replaced whole on each
+  import; the registry is the source of truth (its page holds the matrix, we link to it).
+  Sides outside the catalog (7.7, mobile apps) keep their label, config id null. The
+  config page shows the «Обмены» tab for every configuration, «данных пока нет» without rows.
+
 - `platform_builds` (version PK) — every 8.2/8.3/8.5 platform build from
   releases.1c.ru with its date; for 8.3/8.5 also `os` (win64 win32 linux64
   linux32 arm64 e2k mac — from <h5> groups or, on older pages, file names),

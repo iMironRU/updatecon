@@ -370,6 +370,55 @@ export const transitions = pgTable(
   }),
 );
 
+// Обмены и переходы между типовыми конфигурациями — реестр 1CExchenge
+// (github.com/iMironRU/1CExchenge, data/registry.json), one row per link.
+// Sides are the registry's "product + edition" (not a build); from_config_id /
+// to_config_id are our configuration when the side maps to one (exchanges.ts),
+// null for products outside the catalog (7.7, mobile apps, "прежние программы").
+export const exchanges = pgTable(
+  "exchanges",
+  {
+    id: integer("id").primaryKey(),                       // the registry's link id
+    kind: text("kind").notNull(),                         // синхронизация | переход
+    mechanism: text("mechanism").notNull(),
+    fromProduct: text("from_product").notNull(),
+    fromEdition: text("from_edition"),
+    fromLabel: text("from_label").notNull(),              // "УТ 11.5" — the registry's line label
+    fromConfigId: integer("from_config_id").references(() => configurations.id, { onDelete: "set null" }),
+    toProduct: text("to_product").notNull(),
+    toEdition: text("to_edition"),
+    toLabel: text("to_label").notNull(),
+    toConfigId: integer("to_config_id").references(() => configurations.id, { onDelete: "set null" }),
+    exchangePlan: text("exchange_plan"),
+    task: text("task"),                                   // class.task
+    direction: text("direction"),                         // двусторонняя | односторонняя | перенос
+    actual: text("actual"),                               // актуальная | устаревшая сторона
+    formatVersions: text("format_versions").array(),      // EnterpriseData versions on this link
+    objects: jsonb("objects").$type<Record<string, number>>(),   // content.summary: {"Справочник": 45, …}
+    sources: text("sources").array(),                     // cf | files | releases
+    shippedIn: jsonb("shipped_in").$type<{ path: string; product: string; version: string }[]>(),
+    urls: jsonb("urls").$type<string[]>(),
+    notes: text("notes"),
+  },
+  (t) => ({
+    fromIdx: index("exchanges_from_idx").on(t.fromConfigId),
+    toIdx: index("exchanges_to_idx").on(t.toConfigId),
+  }),
+);
+
+// Declared EnterpriseData format versions per registry line ("БП 3.0").
+export const exchangeFormats = pgTable(
+  "exchange_formats",
+  {
+    line: text("line").notNull(),
+    version: text("version").notNull(),                   // the build the registry scanned
+    configId: integer("config_id").references(() => configurations.id, { onDelete: "set null" }),
+    declared: text("declared").array(),
+    packages: text("packages").array(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.line, t.version] }) }),
+);
+
 export type Configuration = typeof configurations.$inferSelect;
 export type UpdateEdge = typeof updateEdges.$inferSelect;
 export type ImportRun = typeof importRuns.$inferSelect;

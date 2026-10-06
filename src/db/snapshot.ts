@@ -52,6 +52,8 @@ const TABLES: { name: string; order: string }[] = [
   { name: "solutions_info", order: "url" },
   { name: "transitions", order: "id" },
   { name: "platform_builds", order: "version" },
+  { name: "exchanges", order: "id" },
+  { name: "exchange_formats", order: "line, version" },
 ];
 const SERIAL = ["configurations", "update_edges", "version_meta", "patches", "transitions"];
 

@@ -106,6 +106,13 @@
       "when": 1791182833104,
       "tag": "0014_nostalgic_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791315468205,
+      "tag": "0015_sweet_magik",
+      "breakpoints": true
     }
   ]
 }

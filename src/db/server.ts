@@ -20,6 +20,7 @@
  *   GET  /api/transitions?config_id=       -> "переходы" to/from other products/editions
  *        (/api/versions also gives each version's releases.1c.ru files: update, full, tech, news, order + links)
  *   GET  /api/files?config_id=&version=    -> one version's files on releases.1c.ru with ready links
+ *   GET  /api/exchanges[?config_id=]       -> обмены и переходы (the 1CExchenge registry), all or one configuration's
  *   GET  /api/script/chain?os=&config_id=&from=&to=  -> script: download + apply an update chain (scripts.ts)
  *   GET  /api/script/platform?os=&version= -> script: download + install a platform build
  *   GET  /*                                -> static UI (public/)
@@ -72,6 +73,7 @@ import { runFullUpdate } from "./pipeline.js";
 import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
 import { chainScript, platformScript, linuxInstallerAvailable, cfuUrl, type ScriptOs, type ScriptFile } from "./scripts.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
+import { configExchanges, allExchanges, REGISTRY_PAGE } from "./exchanges.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
   checkAdminPassword, setAdminPassword, adminPasswordSource,
@@ -1123,6 +1125,15 @@ export async function buildServer() {
       String(to),
     );
     return res;
+  });
+
+  // ── Обмены и переходы (exchanges.ts, the 1CExchenge registry) ─────────────
+  app.get("/api/exchanges", async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    if (q.config_id == null && q.config == null) return allExchanges();
+    const cfg = await resolveConfig(q);
+    if (!cfg) return reply.code(404).send({ error: "Конфигурация не найдена" });
+    return { config_id: cfg.id, registry: REGISTRY_PAGE, ...(await configExchanges(cfg.id)) };
   });
 
   // ── Scripts for the user's own machine (scripts.ts) ───────────────────────

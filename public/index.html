@@ -186,6 +186,20 @@ input, select, textarea { font-family: inherit; }
 .trans-item a { color: var(--accent); }
 .trans-item .trans-meta { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-top: 1px; }
 .trans-note { font-size: 13px; color: var(--orange); margin-bottom: 14px; }
+.exch-col { margin-bottom: 18px; }
+.exch-list { display: grid; gap: 10px; }
+.exch-row { padding: 8px 0 8px 12px; border-left: 3px solid var(--border); }
+.exch-row.old { opacity: .75; }
+.exch-main { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.exch-main a { color: var(--accent); }
+.exch-arrow { display: inline-block; width: 22px; color: var(--text-muted); font-weight: 400; }
+.exch-meta { color: var(--text-muted); font-size: 12px; margin-top: 2px; line-height: 1.5; }
+.exch-meta .mono { font-family: var(--mono); font-size: 11.5px; }
+.exch-src { color: var(--text-light); }
+.exch-old { color: var(--orange); }
+.exch-formats { font-size: 13px; color: var(--text-muted); margin: 6px 0 14px; line-height: 1.5; }
+.exch-formats b { color: var(--text); }
+.exch-empty { font-size: 14px; color: var(--text-muted); padding: 6px 0 14px; }
 /* config page: key facts + tabs */
 .cfg-facts { display: flex; flex-wrap: wrap; gap: 14px 32px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
 .cfg-editions a { color: var(--accent); }
@@ -2556,6 +2570,7 @@ function render_config(id) {
       ${tabBtn('versions', 'Версии', nVer)}
       ${tabBtn('about', 'О продукте')}
       ${tabBtn('trans', 'Переходы', '', tab !== 'trans')}
+      ${tabBtn('exch', 'Обмены')}
     </div>
 
     ${panel('chain', `<div class="card" style="margin-bottom:32px">
@@ -2592,11 +2607,13 @@ function render_config(id) {
     ${panel('about', about_html(cfg))}
 
     ${panel('trans', `<div id="cfg-transitions" class="card cfg-about">${'<div class="hint">Загрузка…</div>'}</div>`)}
+
+    ${panel('exch', `<div id="cfg-exchanges" class="card cfg-about">${'<div class="hint">Загрузка…</div>'}</div>`)}
   </div>`;
 }
 
 // ── Config page tabs: chain (default) · versions · about · transitions ──
-const CFG_TABS = ['chain', 'versions', 'about', 'trans'];
+const CFG_TABS = ['chain', 'versions', 'about', 'trans', 'exch'];
 function cfg_tab_current() { const t = parse_route().params.tab; return CFG_TABS.includes(t) ? t : 'chain'; }
 function cfg_set_tab(id, tab, focus) {
   document.querySelectorAll('.cfg-tab').forEach(b => {
@@ -2643,7 +2660,51 @@ function about_html(cfg) {
     + `</div></div>`;
 }
 
-function bind_config(id) { load_transitions(id); }
+function bind_config(id) { load_transitions(id); load_exchanges(id); }
+
+// "Обмены": synchronisations and data migrations between standard
+// configurations from the 1CExchenge registry (exchanges.ts). Every
+// configuration has the tab; without data it says so.
+async function load_exchanges(id) {
+  const box = document.getElementById('cfg-exchanges');
+  if (!box) return;
+  const cfg = CONFIGS.find(c => c.id === String(id));
+  let data;
+  try { data = await apiFetch('/api/exchanges', { config_id: id }); }
+  catch (e) { box.innerHTML = '<div class="hint">Не удалось загрузить обмены</div>'; return; }
+  const reg = data.registry || 'https://imiron.ru/1CExchenge/';
+  const src = `<div class="sol-src">Источник — <a href="${esc_html(reg)}" target="_blank" rel="noopener">реестр обменов и переходов типовых конфигураций</a>: сканы полных поставок (файлы обмена, планы обмена и обработки внутри CF, пакеты перехода на портале). Там же матрица «из → в» по всем типовым.</div>`;
+  const cnt = document.getElementById('cfg-cnt-exch');
+  if (!data.links.length) {
+    if (cnt) cnt.textContent = '';
+    box.innerHTML = `<div class="exch-empty">Данных об обменах этой конфигурации пока нет: её поставка ещё не просканирована.</div>${src}`;
+    return;
+  }
+  if (cnt) cnt.textContent = data.links.length;
+  const me = String(id);
+  const other = l => {
+    const o = String(l.from.config_id) === me ? l.to : l.from;
+    return o.config_id ? `<a href="/config/${o.config_id}">${esc_html(o.config_name || o.label)}</a>` : esc_html(o.label);
+  };
+  const arrow = l => {
+    const out = String(l.from.config_id) === me;
+    if (l.direction === 'двусторонняя') return '⇄';
+    return out ? '→' : '←';
+  };
+  const objs = l => l.objects ? Object.entries(l.objects).map(([k, n]) => `${k}: ${n}`).join(', ') : '';
+  const srcText = l => (l.sources || []).map(x => ({ cf: 'внутри CF', files: 'файлы поставки', releases: 'портал 1С' })[x] || x).join(', ');
+  const row = l => `<div class="exch-row${l.actual === 'устаревшая сторона' ? ' old' : ''}">
+      <div class="exch-main"><span class="exch-arrow" title="${l.direction === 'двусторонняя' ? 'двусторонний обмен' : String(l.from.config_id) === me ? 'из этой конфигурации' : 'в эту конфигурацию'}">${arrow(l)}</span>${other(l)}</div>
+      <div class="exch-meta">${esc_html(l.mechanism)}${l.exchange_plan ? ` · план <span class="mono">${esc_html(l.exchange_plan)}</span>` : ''}${l.format_versions && l.format_versions.length ? ` · EnterpriseData ${esc_html(l.format_versions[l.format_versions.length - 1])}` : ''}${l.task ? ` · ${esc_html(l.task)}` : ''}${l.actual === 'устаревшая сторона' ? ' · <span class="exch-old">устаревшая сторона</span>' : ''}</div>
+      ${objs(l) ? `<div class="exch-meta">Объекты: ${esc_html(objs(l))}</div>` : ''}
+      <div class="exch-meta exch-src">${srcText(l)}${l.shipped_in && l.shipped_in.length ? ' · поставка ' + esc_html(l.shipped_in.map(x => `${x.product} ${x.version}`).join(', ')) : ''}${(l.urls || []).map(u => ` · <a href="${esc_html(u)}" target="_blank" rel="noopener">файл на портале</a>`).join('')}</div>
+    </div>`;
+  const sync = data.links.filter(l => l.kind === 'синхронизация'), move = data.links.filter(l => l.kind === 'переход');
+  const col = (title, hint, list) => list.length ? `<div class="exch-col"><div class="trans-col-title">${title} <span>${list.length}</span></div>
+      <div class="trans-col-hint">${hint}</div><div class="exch-list">${list.map(row).join('')}</div></div>` : '';
+  const fmt = data.formats && data.formats.length ? `<div class="exch-formats"><b>EnterpriseData</b> в версии ${esc_html(data.formats[0].version || '')}: объявлены версии формата ${esc_html((data.formats[0].declared || []).join(', '))}${data.formats[0].packages && data.formats[0].packages.length ? `; пакеты в поставке ${esc_html(data.formats[0].packages.join(', '))}` : ''}</div>` : '';
+  box.innerHTML = `${col('Синхронизация', 'регулярный обмен данными между базами', sync)}${col('Переход', 'разовый перенос данных при смене программы или редакции', move)}${fmt}${src}`;
+}
 
 // "Переходы": update packages to/from other products or editions. Information
 // only — chains are still built inside one edition.
@@ -3907,6 +3968,7 @@ function api_rows() {
     { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
     { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку и файл .cfu каждого шага.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
     { path: '/api/transitions?config_id=<id>', desc: 'Переходы на другие продукты и редакции и с них.', example: '/api/transitions?config_id=96' },
+    { path: '/api/exchanges?config_id=<id>', desc: 'Обмены (синхронизация) и переходы (перенос данных) типовых конфигураций по реестру 1CExchenge: механизм, план обмена, объекты, в какой поставке найдено, версии EnterpriseData. Без <code>config_id</code> — все связи.', example: '/api/exchanges?config_id=96' },
     { path: '/api/news?days=<дней>', desc: 'Лента событий: релизы, новые сборки платформы, повышение требований, конец длительной поддержки.', example: '/api/news?days=7' },
     { path: '/api/platform', desc: 'Сборки платформы 8.2, 8.3, 8.5: даты, ОС, ссылки на изменения и ошибки; минимальная платформа конфигураций.', example: '/api/platform' },
     { path: '/api/stats, /api/stats/more', desc: 'Статистика базы: числа, релизы по годам и дням недели, линейки, разработчики, цепочки.', example: '/api/stats/more' },
