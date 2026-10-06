@@ -36,8 +36,9 @@
  *   GET  /admin/api/snapshot               -> published database snapshot vs the one applied here
  *   POST /admin/api/import/snapshot        -> take the published snapshot (snapshot.ts)
  *   GET  /admin/api/logs/:id               -> stored full log of an «Обновить всё» run
- *   POST /admin/api/settings/its           -> save the ITS account (checked on releases.1c.ru first)
- *   DELETE /admin/api/settings/its         -> back to ITS_LOGIN / ITS_PASSWORD from .env
+ *   POST /admin/api/settings/its           -> add an ITS account (checked on releases.1c.ru first), main: true = first
+ *   DELETE /admin/api/settings/its[?login=] -> remove one account / all (back to ITS_LOGIN / ITS_PASSWORD from .env)
+ *   POST /admin/api/settings/its/main      -> make an account the main one
  *   POST /admin/api/settings/admin-password -> change the admin password (current one required)
  *   GET|POST /admin/api/access             -> the panel's address (instead of /admin) and the site's link to it
  *   GET  /api/site                         -> what the public site may show (the panel link, if allowed)
@@ -76,6 +77,7 @@ import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snaps
 import { configExchanges, allExchanges, REGISTRY_PAGE } from "./exchanges.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
+  itsAccountLogins, removeItsAccount, makeItsAccountMain,
   checkAdminPassword, setAdminPassword, adminPasswordSource,
 } from "./credentials.js";
 import { runReleasesImport, refreshPrimaryProjects } from "../releases/import-releases.js";
@@ -382,6 +384,7 @@ export async function buildServer() {
       itsLogin: its.login,
       itsSource: its.source,               // admin | env | none
       itsUnreadable: !!its.unreadable,     // saved in the admin UI, but the DB password changed since
+      itsAccounts: await itsAccountLogins(),   // all usable accounts, the first is the main one
       adminLogin,
       adminPasswordSource: await adminPasswordSource(),
       dbUrl,
@@ -402,28 +405,31 @@ export async function buildServer() {
   });
 
   // ── Admin API: credentials ──────────────────────────────────────────────
+  // Add an account (checked on releases.1c.ru first); `main: true` makes it the main one.
   app.post("/admin/api/settings/its", async (req, reply) => {
-    const { login = "", password = "" } = (req.body as Record<string, string> | undefined) ?? {};
+    const { login = "", password = "", main = false } = (req.body as Record<string, unknown> | undefined) ?? {};
     const l = String(login).trim();
-    let p = String(password);
+    const p = String(password);
     if (!l) return reply.code(400).send({ error: "Укажите логин ИТС" });
-    // Only the login changed: keep the password we already use.
-    if (!p) {
-      const cur = await itsCredentials();
-      if (!cur.password) return reply.code(400).send({ error: "Укажите пароль ИТС" });
-      p = cur.password;
-    }
+    if (!p) return reply.code(400).send({ error: "Укажите пароль ИТС" });
     let ok: boolean;
     try { ok = await verifyItsLogin(l, p); }
     catch (e) { return reply.code(502).send({ error: `Не удалось проверить на releases.1c.ru: ${(e as Error).message}` }); }
     if (!ok) return reply.code(400).send({ error: "releases.1c.ru не принял этот логин и пароль" });
-    const c = await saveItsCredentials(l, p);
-    return { ok: true, login: c.login, source: c.source };
+    const c = await saveItsCredentials(l, p, main === true);
+    return { ok: true, login: c.login, source: c.source, accounts: await itsAccountLogins() };
   });
-
-  app.delete("/admin/api/settings/its", async () => {
-    const c = await clearItsCredentials();
-    return { ok: true, login: c.login, source: c.source };
+  // Remove one account (?login=) or every saved one (back to .env).
+  app.delete("/admin/api/settings/its", async (req) => {
+    const login = String((req.query as any).login ?? "").trim();
+    const c = login ? await removeItsAccount(login) : await clearItsCredentials();
+    return { ok: true, login: c.login, source: c.source, accounts: await itsAccountLogins() };
+  });
+  app.post("/admin/api/settings/its/main", async (req, reply) => {
+    const login = String(((req.body as any) ?? {}).login ?? "").trim();
+    if (!login) return reply.code(400).send({ error: "Укажите логин" });
+    const c = await makeItsAccountMain(login);
+    return { ok: true, login: c.login, source: c.source, accounts: await itsAccountLogins() };
   });
 
   app.post("/admin/api/settings/admin-password", async (req, reply) => {

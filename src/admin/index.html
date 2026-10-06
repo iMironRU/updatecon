@@ -106,6 +106,10 @@ tr:hover td { background: var(--surface2); }
 .path-input input { border: none !important; background: transparent !important; padding-left: 0 !important; min-width: 0; }
 .check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 14px; cursor: pointer; }
 .copy-btn { margin-left: 8px; padding: 1px 8px; font-size: 11px; }
+.its-list { display: grid; gap: 6px; }
+.its-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface2); border-radius: 6px; font-size: 13px; }
+.its-row .mono { flex: 1; }
+.its-main { font-size: 11px; font-weight: 600; color: var(--green); }
 .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .form-msg { font-size: 13px; }
 .form-msg.ok { color: var(--green); } .form-msg.err { color: var(--red); } .form-msg.wait { color: var(--muted); }
@@ -455,14 +459,16 @@ tr.run-all td { background: rgba(88,166,255,.05); }
       </div>
     </div>
 
-    <!-- ITS account: saved here it wins over .env and applies at once (no restart). -->
+    <!-- ITS accounts: saved here they win over .env and apply at once (no restart). The first is the main one. -->
     <div class="card">
       <div class="card-header"><span class="card-title">Доступ к ИТС</span><span class="src-badge" id="its-src"></span></div>
       <div class="card-body">
-        <div class="hint" style="margin:0 0 14px;font-size:12px">Логин портала 1С (releases.1c.ru, downloads.v8.1c.ru) — для импорта обновлений.
-          Перед сохранением проверяется входом на releases.1c.ru; пароль хранится в базе зашифрованным.</div>
-        <div class="alert alert-warn" id="its-unreadable" style="display:none">Сохранённый в админке пароль ИТС больше не читается (сменился пароль базы данных) — введите его заново.</div>
-        <form class="field-row" onsubmit="saveIts(event)" autocomplete="off">
+        <div class="hint" style="margin:0 0 14px;font-size:12px">Учётные записи портала 1С (releases.1c.ru, downloads.v8.1c.ru) для импорта обновлений.
+          Первая — основная; остальные пробуются для продуктов, которых основная не видит (портал скрывает продукты без подписки).
+          Перед сохранением учётка проверяется входом на releases.1c.ru; пароли хранятся в базе зашифрованными.</div>
+        <div class="alert alert-warn" id="its-unreadable" style="display:none">Часть сохранённых паролей ИТС больше не читается (сменился пароль базы данных) — добавьте эти учётки заново.</div>
+        <div id="its-list" class="its-list"></div>
+        <form class="field-row" onsubmit="saveIts(event)" autocomplete="off" style="margin-top:14px">
           <div class="field">
             <label for="cfg-its-login">Логин ИТС</label>
             <input id="cfg-its-login" autocomplete="username" spellcheck="false">
@@ -472,8 +478,8 @@ tr.run-all td { background: rgba(88,166,255,.05); }
             <input id="cfg-its-password" type="password" autocomplete="new-password">
           </div>
           <div class="form-actions">
-            <button class="btn btn-primary" type="submit" id="its-save">Проверить и сохранить</button>
-            <button class="btn btn-ghost" type="button" id="its-reset" onclick="resetIts()" style="display:none">Вернуть из .env</button>
+            <button class="btn btn-primary" type="submit" id="its-save">Проверить и добавить</button>
+            <button class="btn btn-ghost" type="button" id="its-reset" onclick="resetIts()" style="display:none">Убрать все, вернуть из .env</button>
             <span class="form-msg" id="its-msg"></span>
           </div>
         </form>
@@ -742,10 +748,15 @@ async function apiSend(method, path, body) {
   return data;
 }
 function showIts(s) {
-  document.getElementById('cfg-its-login').value = s.itsLogin || '';
-  const pw = document.getElementById('cfg-its-password');
-  pw.value = '';
-  pw.placeholder = s.itsSource === 'none' ? 'не задан' : '•••••••• — оставьте пустым, чтобы не менять';
+  const list = document.getElementById('its-list');
+  const acc = s.itsAccounts || [];
+  if (!acc.length) list.innerHTML = '<div class="hint">Учётных записей нет.</div>';
+  else list.innerHTML = acc.map((l, i) => '<div class="its-row"><span class="mono">' + esc(l) + '</span>' +
+    (i === 0 ? '<span class="its-main">основная</span>' : '<button type="button" class="btn btn-ghost copy-btn" onclick="mainIts(\'' + esc(l) + '\')">сделать основной</button>') +
+    (s.itsSource === 'admin' ? '<button type="button" class="btn btn-ghost copy-btn" onclick="removeIts(\'' + esc(l) + '\')">удалить</button>' : '<span class="hint">из .env</span>') +
+    '</div>').join('');
+  document.getElementById('cfg-its-login').value = '';
+  document.getElementById('cfg-its-password').value = '';
   setSrc('its-src', s.itsSource);
   document.getElementById('its-reset').style.display = s.itsSource === 'admin' ? '' : 'none';
   document.getElementById('its-unreadable').style.display = s.itsUnreadable ? '' : 'none';
@@ -758,13 +769,22 @@ async function saveIts(e) {
   btn.disabled = true; formMsg('its-msg', 'Проверяем вход на releases.1c.ru…', 'wait');
   try {
     await apiSend('POST', '/admin/api/settings/its', { login, password });
-    formMsg('its-msg', '✓ Вход прошёл, учётка сохранена — действует сразу', 'ok');
+    formMsg('its-msg', '✓ Вход прошёл, учётка добавлена — действует сразу', 'ok');
     showIts(await apiFetch('/admin/api/status'));
   } catch (err) { formMsg('its-msg', '✗ ' + err.message, 'err'); }
   finally { btn.disabled = false; }
 }
+async function mainIts(login) {
+  try { await apiSend('POST', '/admin/api/settings/its/main', { login }); showIts(await apiFetch('/admin/api/status')); formMsg('its-msg', '✓ Основная учётка: ' + login, 'ok'); }
+  catch (err) { formMsg('its-msg', '✗ ' + err.message, 'err'); }
+}
+async function removeIts(login) {
+  if (!confirm('Удалить учётку ' + login + '?')) return;
+  try { await apiSend('DELETE', '/admin/api/settings/its?login=' + encodeURIComponent(login)); showIts(await apiFetch('/admin/api/status')); formMsg('its-msg', 'Учётка удалена', 'ok'); }
+  catch (err) { formMsg('its-msg', '✗ ' + err.message, 'err'); }
+}
 async function resetIts() {
-  if (!confirm('Убрать учётку ИТС из админки и вернуться к ITS_LOGIN / ITS_PASSWORD из .env?')) return;
+  if (!confirm('Убрать все учётки ИТС из админки и вернуться к ITS_LOGIN / ITS_PASSWORD из .env?')) return;
   try {
     await apiSend('DELETE', '/admin/api/settings/its');
     formMsg('its-msg', 'Используются значения из .env', 'ok');

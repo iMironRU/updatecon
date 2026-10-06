@@ -3,15 +3,19 @@
  * admin UI. `.env` still works; a value saved in the admin UI wins over it.
  *
  * Stored in `settings`:
- *   its_login            plain
- *   its_password         AES-256-GCM; the key is derived from the database
- *                        password in DATABASE_URL, so a DB dump alone does not
- *                        reveal it (a new DB password = enter it again)
+ *   its_accounts         JSON [{login, password}] — several ITS accounts, the first
+ *                        is the main one; passwords AES-256-GCM, the key derived
+ *                        from the database password in DATABASE_URL, so a DB dump
+ *                        alone does not reveal them (a new DB password = enter again)
+ *   its_login / its_password   the old single account (read as the first entry)
  *   admin_password_hash  scrypt
  *
- * The rest of the code keeps reading process.env.ITS_*: applyItsCredentials()
- * puts the effective values there. The web process calls it on start and after
- * a change; the worker (another process) before each scheduled run.
+ * The rest of the code keeps reading process.env.ITS_* for the main account:
+ * applyItsCredentials() puts it there. The web process calls it on start and
+ * after a change; the worker (another process) before each scheduled run.
+ * Imports that may hit products one account cannot see take allItsAccounts()
+ * and try the others (releases.1c.ru hides unsubscribed products, downloads
+ * answers 401 for partner packages).
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
@@ -58,17 +62,42 @@ async function write(values: Record<string, string | null>) {
 }
 
 export interface ItsCredentials { login: string; password: string; source: "admin" | "env" | "none"; unreadable?: boolean }
+export interface ItsAccount { login: string; password: string }
+
+/** The accounts saved in the admin UI, in order; `unreadable` = some password no longer decrypts. */
+async function savedAccounts(): Promise<{ accounts: ItsAccount[]; unreadable: boolean }> {
+  const s = await read(["its_accounts", "its_login", "its_password"]);
+  let raw: { login: string; password: string }[] = [];
+  if (s.its_accounts) { try { raw = JSON.parse(s.its_accounts); } catch { raw = []; } }
+  else if (s.its_login && s.its_password) raw = [{ login: s.its_login, password: s.its_password }];
+  let unreadable = false;
+  const accounts: ItsAccount[] = [];
+  for (const a of raw) {
+    const password = decrypt(a.password);
+    if (password === null) { unreadable = true; continue; }
+    accounts.push({ login: a.login, password });
+  }
+  return { accounts, unreadable };
+}
 
 export async function itsCredentials(): Promise<ItsCredentials> {
-  const s = await read(["its_login", "its_password"]);
-  if (s.its_login && s.its_password) {
-    const password = decrypt(s.its_password);
-    if (password !== null) return { login: s.its_login, password, source: "admin" };
-    // Saved, but the key changed (new DB password): fall back to .env and say so.
-    return { ...(ENV_ITS.login && ENV_ITS.password ? { ...ENV_ITS, source: "env" as const } : { login: "", password: "", source: "none" as const }), unreadable: true };
-  }
-  if (ENV_ITS.login && ENV_ITS.password) return { ...ENV_ITS, source: "env" };
-  return { login: "", password: "", source: "none" };
+  const { accounts, unreadable } = await savedAccounts();
+  if (accounts.length) return { login: accounts[0].login, password: accounts[0].password, source: "admin", ...(unreadable ? { unreadable } : {}) };
+  // Saved, but the key changed (new DB password): fall back to .env and say so.
+  if (ENV_ITS.login && ENV_ITS.password) return { ...ENV_ITS, source: "env", ...(unreadable ? { unreadable } : {}) };
+  return { login: "", password: "", source: "none", ...(unreadable ? { unreadable } : {}) };
+}
+
+/** Every usable account: the admin UI's list, else the .env one. The first is the main account. */
+export async function allItsAccounts(): Promise<ItsAccount[]> {
+  const { accounts } = await savedAccounts();
+  if (accounts.length) return accounts;
+  if (ENV_ITS.login && ENV_ITS.password) return [{ ...ENV_ITS }];
+  return [];
+}
+/** Logins only, for the admin UI. */
+export async function itsAccountLogins(): Promise<string[]> {
+  return (await allItsAccounts()).map((a) => a.login);
 }
 
 /** Put the effective ITS account into process.env for the import code. */
@@ -96,13 +125,31 @@ export async function verifyItsLogin(login: string, password: string): Promise<b
   return /Выход/.test(page) && !/name="execution"/.test(page);
 }
 
-export async function saveItsCredentials(login: string, password: string) {
-  await write({ its_login: login, its_password: encrypt(password) });
+async function writeAccounts(list: ItsAccount[]) {
+  await write({
+    its_accounts: list.length ? JSON.stringify(list.map((a) => ({ login: a.login, password: encrypt(a.password) }))) : null,
+    its_login: null, its_password: null,
+  });
   return applyItsCredentials();
 }
+/** Add or replace (same login) an account; `main` puts it first. */
+export async function saveItsCredentials(login: string, password: string, main = false) {
+  const list = (await savedAccounts()).accounts.filter((a) => a.login !== login);
+  if (main || list.length === 0) list.unshift({ login, password }); else list.push({ login, password });
+  return writeAccounts(list);
+}
+export async function removeItsAccount(login: string) {
+  return writeAccounts((await savedAccounts()).accounts.filter((a) => a.login !== login));
+}
+export async function makeItsAccountMain(login: string) {
+  const list = (await savedAccounts()).accounts;
+  const i = list.findIndex((a) => a.login === login);
+  if (i > 0) list.unshift(...list.splice(i, 1));
+  return writeAccounts(list);
+}
+/** Forget every saved account: back to ITS_LOGIN / ITS_PASSWORD from .env. */
 export async function clearItsCredentials() {
-  await write({ its_login: null, its_password: null });
-  return applyItsCredentials();
+  return writeAccounts([]);
 }
 
 // ── Admin password ─────────────────────────────────────────────────────────

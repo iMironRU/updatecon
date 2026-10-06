@@ -322,6 +322,9 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export interface ReleasesImportOptions {
+  /** more ITS accounts: the portal's /total is merged over all of them, a project
+   *  page the main account cannot open is read with the account that lists it */
+  extraAccounts?: { login: string; password: string }[];
   /** Ignored: /total is always synced (release_projects needs it). Kept for callers. */
   syncTotalPage?: boolean;
   /** Read the versions' file lists and update-file sizes (slow, many pages) */
@@ -372,6 +375,23 @@ export async function runReleasesImport(
   log("Загрузка списка проектов (/total)...");
   const projects = parseTotalPage(await session.get("/total"));
   log(`Найдено проектов: ${projects.length}`);
+  // Other accounts see other products: merge their /total, remember who lists what.
+  const seenBy = new Map<string, ReleasesSession>();
+  const known = new Set(projects.map((p) => p.href));
+  for (const acc of opts.extraAccounts ?? []) {
+    const extra = new ReleasesSession();
+    try {
+      await extra.login(acc.login, acc.password);
+      const more = parseTotalPage(await extra.get("/total"));
+      let added = 0;
+      for (const p of more) {
+        if (!known.has(p.href)) { known.add(p.href); projects.push(p); seenBy.set(p.href, extra); added++; }
+      }
+      log(`  учётка ${acc.login}: проектов ${more.length}, новых ${added}`);
+    } catch (e) {
+      log(`  ✗ учётка ${acc.login}: ${(e as Error).message}`);
+    }
+  }
 
   const apps = await loadApps();
   const appsById = new Map(apps.map((a) => [a.id, a]));
@@ -463,7 +483,7 @@ export async function runReleasesImport(
 
     let rows: VersionRow[];
     try {
-      const html = await session.get(`${p.href}?allUpdates=true`);
+      const html = await (seenBy.get(p.href) ?? session).get(`${p.href}?allUpdates=true`);
       rows = parseProjectPage(html);
       // Product page (solutions.1c.ru / v8.1c.ru) and bug catalog links —
       // stored for every project, matched or not.

@@ -18,7 +18,7 @@
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { applyItsCredentials } from "./credentials.js";
+import { applyItsCredentials, allItsAccounts } from "./credentials.js";
 import { importRuns } from "./schema.js";
 import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
@@ -112,6 +112,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
       try {
         await runReleasesImport(undefined, undefined, {
           syncTotalPage: true, syncSizes: true, syncPatchesData: false,
+          extraAccounts: (await allItsAccounts()).slice(1),
           onProgress: (cur, tot) => opts.onProgress?.(cur, tot),
           onLog: log, signal: opts.signal,
         });

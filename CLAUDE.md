@@ -34,7 +34,9 @@ src/db/
   snapshot.ts           the data tables as one file (snapshot.ndjson.gz + snapshot.json) published in the
                         `data` GitHub release; installs without an ITS account apply it (worker start, nightly,
                         admin button) in one transaction, keeping settings and manual links/tags
-  credentials.ts        ITS account / admin password editable in the admin UI (DB wins over .env)
+  credentials.ts        ITS accounts (settings.its_accounts, several; the first is the main one and
+                        lands in process.env.ITS_*; allItsAccounts() for the rest — releases import
+                        merges /total over all, manifests retry 401 with the others) / admin password
   metrika.ts            Яндекс Метрика counter (admin UI → settings); server.ts serves index.html itself
                         (not @fastify/static) to put the tag in; the page reports SPA hits + goals
   exchanges.ts          обмены/переходы between standard configurations from the 1CExchenge registry

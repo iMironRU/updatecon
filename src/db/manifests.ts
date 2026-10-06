@@ -20,6 +20,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "./client.js";
+import { allItsAccounts } from "./credentials.js";
 import { packageManifests } from "./schema.js";
 
 const BASE = "https://downloads.v8.1c.ru/tmplts/";
@@ -62,7 +63,9 @@ export async function syncManifests(opts: { onLog?: (msg: string) => void } = {}
     log("Манифесты платформы: ITS_LOGIN / ITS_PASSWORD не заданы — пропуск");
     return null;
   }
-  const auth = "Basic " + Buffer.from(`${login}:${password}`).toString("base64");
+  // The main account first; a package it cannot read (401) is tried with the others.
+  const auths = [{ login, password }, ...(await allItsAccounts()).filter((a) => a.login !== login)]
+    .map((a) => "Basic " + Buffer.from(`${a.login}:${a.password}`).toString("base64"));
 
   // Newest package of every edition that we don't know yet (or should retry).
   const res = await db.execute(sql`
@@ -91,7 +94,8 @@ export async function syncManifests(opts: { onLog?: (msg: string) => void } = {}
   const worker = async () => {
     while (next < dirs.length) {
       const dir = dirs[next++];
-      const r = await fetchManifest(dir, auth);
+      let r = await fetchManifest(dir, auths[0]);
+      for (let i = 1; r.status === "denied" && i < auths.length; i++) r = await fetchManifest(dir, auths[i]);
       stats.fetched++;
       if (r.status === "ok") stats.ok++;
       else if (r.status === "denied") stats.denied++;
