@@ -285,6 +285,10 @@ Omitting the extension fails the typecheck. New files must follow this.
 
 ## Conventions
 
+- **Every change goes through a GitHub issue** (iMironRU/updatecon), even a two-minute
+  fix: `bug` = исправления, `enhancement` = развитие. Reference it in the commit
+  (`#N`), close it after the deploy with a note on what was verified.
+
 - Comments and user-facing strings: Russian where it's domain/UI, English
   for code-internal rationale (matches existing files — keep consistent).
 - No new dependencies without reason; single-stack discipline.
