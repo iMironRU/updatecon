@@ -48,11 +48,13 @@ irm https://raw.githubusercontent.com/iMironRU/updatecon/main/tools/install-1c-p
 curl -fsSL -o /tmp/install-1c-platform.sh https://raw.githubusercontent.com/iMironRU/updatecon/main/tools/install-1c-platform.sh && sudo bash /tmp/install-1c-platform.sh --version 8.5
 ```
 
-Скрипт спросит, что установить: 1 — сервер 1С и модули веб-сервера (служба в systemd включается,
-если другая служба сервера 1С не работает), 2 — сервер, клиент и конфигуратор, 3 — только клиент.
-Без вопросов: `--mode server|full|client`. Дистрибутив скачивается в `/tmp`, после установки скрипт
-спросит, удалить ли его (`--remove-files` / `--keep-files`). Ещё: `--no-service`, `--no-deps`,
-`--dry-run`, `--workdir DIR`. Для Linux — сборки 8.3.20 и новее.
+Так же, как на Windows: обзор установленных версий (`/opt/1cv8/x86_64`) и служб systemd, меню
+«Что сделать?» (обновить линейку, установить 8.5, другая сборка, удалить старые версии, проверка
+портала), состав — сервер и модули веб-сервера / с клиентом / только клиент (`--mode server|full|client`),
+перевод службы `srv1cv8-<версия>@default` на новую сборку (`--move-service` / `--keep-service`),
+сводка с местом в `/opt`, после установки — служба `ras` по запросу (`--ras` / `--no-ras`), удаление
+дистрибутива из `/tmp` (`--remove-files` / `--keep-files`), и снова меню. `--yes` — без подтверждения,
+`--dry-run` — только проверить вход на портал. Для Linux — сборки 8.3.20 и новее.
 
 Уже установленные версии платформы не удаляются. Скрипты генерируются из шаблонов `src/scripts`
 (`platformScript` в `src/db/scripts.ts` с пустой версией) — после правки шаблонов их нужно
