@@ -268,7 +268,7 @@ run_once() {
   fi
 
   # ── Summary ────────────────────────────────────────────────────────────────
-  [ -n "$WORKDIR" ] || WORKDIR="${TMPDIR:-/tmp}"; WORKDIR="${WORKDIR%/}/updatecon-platform-$UNDER"
+  if [ -z "$WORKDIR" ]; then WORKDIR="${TMPDIR:-/tmp}"; WORKDIR="${WORKDIR%/}/updatecon-platform-$UNDER"; fi
   local need=3500 free; free=$(df -Pm /opt 2>/dev/null | awk 'NR==2 {print $4}')
   local other; other=$(active_server_unit "$VERSION")
   head_line "Сводка"
