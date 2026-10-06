@@ -109,6 +109,7 @@ export function platformScript(os: ScriptOs, d: PlatformScriptInput): ScriptFile
   const common = {
     VERSION_TITLE: d.version || "(сборка на выбор)",
     VERSION_DEFAULT: d.version || "скрипт спросит: последняя 8.3, последняя 8.5 или свой номер",
+    VERSION_DEFAULT_NOTE: d.version ? `; без параметра — ${d.version}` : "",
     SITE: host(d.site), DATE: today(), FILE: file,
   };
   if (os === "windows") {
