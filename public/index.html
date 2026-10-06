@@ -610,6 +610,20 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .settings-section-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
 .settings-section-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
 .api-list { display: grid; gap: 8px; }
+/* /install — the platform installer page */
+.ins-cmd { display: flex; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 8px 10px 14px; margin: 10px 0 6px; }
+.ins-cmd code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; overflow-x: auto; white-space: nowrap; }
+.ins-cmd button { flex-shrink: 0; }
+.ins-note { font-size: 13px; color: var(--text-muted); line-height: 1.55; }
+.ins-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.ins-card { background: var(--surface2); border-radius: var(--r-sm); padding: 14px 16px; }
+.ins-card b { display: block; margin-bottom: 4px; }
+.ins-card p { font-size: 13px; color: var(--text-muted); line-height: 1.55; margin: 0; }
+.ins-menu { font-family: var(--mono); font-size: 12.5px; line-height: 1.7; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 16px; white-space: pre; overflow-x: auto; color: var(--text); }
+.ins-params { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 13px; }
+.ins-params code { font-family: var(--mono); font-size: 12px; color: var(--text); background: var(--surface2); padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.ins-params span { color: var(--text-muted); line-height: 1.5; }
+@media (max-width: 560px) { .ins-params { grid-template-columns: 1fr; gap: 2px 0; } .ins-params span { margin-bottom: 8px; } }
 .api-row { background: var(--surface2); border-radius: var(--r-sm); padding: 10px 12px; display: grid; gap: 4px; min-width: 0; }
 .api-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .api-method { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); flex-shrink: 0; }
@@ -824,6 +838,7 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
         </span>
         Сделано в России
       </span>
+      <a href="/install" class="footer-link">Установка платформы</a>
       <a href="https://imiron.ru" target="_blank" rel="noopener" class="footer-link">imiron.ru</a>
       <span class="footer-ver" id="footer-ver">v1.0</span>
     </div>
@@ -1700,6 +1715,10 @@ async function route() {
   else if (path === '/platform') { el.innerHTML = render_platform(); await bind_platform(); }
   else if (path === '/news') { el.innerHTML = render_news(); await bind_news(); }
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
+  else if (path === '/install') {
+    if (!PLATFORM_DATA) { try { PLATFORM_DATA = await apiFetch('/api/platform'); } catch (e) {} }
+    el.innerHTML = render_install();
+  }
   else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
   ROUTE_PATH = path;
   metrika_hit();
@@ -3600,7 +3619,8 @@ const line_of = v => String(v).split('.').slice(0, 3).join('.');
 
 function render_platform() {
   return `<div class="wrap">
-    <div class="page-head"><div class="page-title">Платформа 1С:Предприятие</div></div>
+    <div class="page-head"><div class="page-title">Платформа 1С:Предприятие</div>
+      <a class="btn btn-secondary btn-sm" href="/install" title="Одна команда: скачать дистрибутив с портала 1С и установить">${icn_term()} Установка одной командой</a></div>
     <div id="pl-root">${render_loading('Загрузка сборок платформы...')}</div>
   </div>`;
 }
@@ -3895,6 +3915,95 @@ function api_rows() {
   ];
 }
 function bind_settings() {}
+
+/* ================================================================
+   INSTALL — the platform installer page (/install)
+   ================================================================ */
+function ins_copy(btn, id) {
+  const t = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(t).then(() => { btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1500); })
+    .catch(() => prompt('Скопируйте команду:', t));
+}
+function render_install() {
+  const cur = PLATFORM_DATA && PLATFORM_DATA.current ? PLATFORM_DATA.current : {};
+  const l83 = cur.Platform83 || '8.3.x', l85 = cur.Platform85 || '8.5.x';
+  const site = location.origin;
+  const win = `$ver='8.5'; irm ${site}/1c | iex`;
+  const lin = `sudo bash -c "$(curl -fsSL ${site}/1c.sh)" -- --version 8.5`;
+  return `<div class="wrap" style="max-width:860px">
+    <div class="page-head"><div class="page-title">Установка платформы 1С одной командой</div></div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-sub" style="margin-bottom:14px">Скрипт сам скачивает дистрибутив с портала 1С под вашей учётной записью ИТС и ставит платформу без вопросов. Логин и пароль уходят только на серверы 1С — в скрипт, на этот сайт и куда-либо ещё они не попадают. Скрипт открывается в любом редакторе: в нём нет ничего скрытого.</div>
+      <div class="settings-section-title">Windows</div>
+      <div class="ins-note">PowerShell <b>от имени администратора</b>. <code>$ver='8.5'</code> — какую линейку ставить; без него скрипт покажет меню.</div>
+      <div class="ins-cmd"><code id="ins-win">${esc_html(win)}</code><button class="btn btn-secondary btn-sm" onclick="ins_copy(this,'ins-win')">Копировать</button></div>
+      <div class="settings-section-title" style="margin-top:18px">Linux</div>
+      <div class="ins-note">Debian, Ubuntu, RHEL, Astra и другие с systemd. Ставит сервер 1С и модули веб-сервера; с <code>--mode full</code> ещё и клиент.</div>
+      <div class="ins-cmd"><code id="ins-lin">${esc_html(lin)}</code><button class="btn btn-secondary btn-sm" onclick="ins_copy(this,'ins-lin')">Копировать</button></div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-1">
+      <div class="settings-section-title">Как это выглядит</div>
+      <div class="settings-section-sub">Сначала обзор, потом меню. После каждого действия — снова меню, пока не выбрать «Выход».</div>
+      <div class="ins-menu">Установлено на этом компьютере:
+  8.3.24.1819    клиент, конфигуратор
+  8.3.27.1688    клиент, конфигуратор, сервер (служба работает), COM
+Доступно на портале 1С:
+  8.3  →  ${esc_html(l83)}
+  8.5  →  ${esc_html(l85)}
+
+Что сделать?
+  *1 — Обновить 8.3: 8.3.27.1688 → ${esc_html(l83)}
+   2 — Установить 8.5 (${esc_html(l85)})
+   3 — Установить другую сборку (ввести номер или линейку)
+   4 — Удалить старые версии платформы
+   5 — Только проверить вход на портал 1С
+   6 — Выход</div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-2">
+      <div class="settings-section-title">Что умеет</div>
+      <div class="ins-grid" style="margin-top:14px">
+        <div class="ins-card"><b>Видит, что установлено</b><p>Версии, состав (клиент, сервер), служба «Агент сервера» и её состояние, зарегистрирована ли COM-компонента. Последние сборки 8.3 и 8.5 берёт из каталога этого сайта.</p></div>
+        <div class="ins-card"><b>Обновляет линейку</b><p>Если стоит старая 8.3, первым пунктом предлагает обновить до последней. Состав новой сборки — как у установленной.</p></div>
+        <div class="ins-card"><b>Состав на выбор</b><p>Клиент и конфигуратор; с сервером 1С и службой «Агент сервера»; только сервер. На Linux — сервер, сервер с клиентом, только клиент.</p></div>
+        <div class="ins-card"><b>Переводит службу сервера</b><p>Если на старой сборке работает служба, спросит, перевести ли её на новую. Предупреждает, что сеансы отвалятся.</p></div>
+        <div class="ins-card"><b>Сводка перед стартом</b><p>Сборка и дата выхода, состав, куда ставится, что со службой, свободное место на диске. Только после «Продолжить?» начинается скачивание.</p></div>
+        <div class="ins-card"><b>Скачивание с прогрессом</b><p>Процент, мегабайты, скорость, оставшееся время. Три зеркала 1С, при обрыве — повтор. Дистрибутив — во временную папку.</p></div>
+        <div class="ins-card"><b>После установки — по запросу</b><p>Регистрация COM-компоненты (V83.COMConnector) и консоли администрирования серверов, удаление скачанного дистрибутива.</p></div>
+        <div class="ins-card"><b>Удаление старых версий</b><p>В каждой линейке оставляет новейшую сборку. Версии, на которых работает служба сервера, не трогает.</p></div>
+        <div class="ins-card"><b>Повтор без вопросов</b><p>В конце печатает команду со всеми ответами — её можно запустить на других машинах: ничего спрашивать не будет.</p></div>
+      </div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-3">
+      <div class="settings-section-title">Параметры</div>
+      <div class="settings-section-sub">Всё необязательно: что не задано — скрипт спросит.</div>
+      <div class="ins-params">
+        <code>-Version 8.5</code><span>Номер сборки (8.5.1.1529) или линейка (8.5, 8.3.27) — последняя сборка линейки. На Linux: <code>--version</code>.</span>
+        <code>-Mode client|full|server</code><span>Состав. На Linux: <code>--mode server|full|client</code>.</span>
+        <code>-MoveService / -KeepService</code><span>Перевести службу сервера на новую сборку или оставить.</span>
+        <code>-Com, -Admin</code><span>Зарегистрировать COM-компоненту / консоль администрирования (<code>-NoCom</code>, <code>-NoAdmin</code> — не спрашивать).</span>
+        <code>-RemoveFiles / -KeepFiles</code><span>Удалить или оставить дистрибутив после установки. На Linux: <code>--remove-files</code>, <code>--keep-files</code>.</span>
+        <code>-Yes</code><span>Не спрашивать подтверждение перед установкой.</span>
+        <code>-DryRun</code><span>Только войти на портал и найти дистрибутив, ничего не скачивая. На Linux: <code>--dry-run</code>.</span>
+        <code>ITS_LOGIN, ITS_PASSWORD</code><span>Переменные окружения с учётной записью ИТС — чтобы не вводить вручную.</span>
+      </div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-3">
+      <div class="settings-section-title">Что нужно знать</div>
+      <ul style="margin:12px 0 0 20px;font-size:14px;line-height:1.7;color:var(--text)">
+        <li>Нужна учётная запись ИТС с правом скачивать платформу.</li>
+        <li>Windows: для распаковки .rar нужен Windows 11 (встроенный tar) или установленный 7-Zip. Нужно около 3,5 ГБ на диске.</li>
+        <li>Linux: сборки 8.3.20 и новее (в старых нет единого установщика), 64-bit x86_64, права root.</li>
+        <li>Уже установленные версии платформы не удаляются, пока вы сами не выберете «Удалить старые версии».</li>
+        <li>Скрипт для конкретной сборки — кнопка «установить» у сборки на странице <a href="/platform">Платформа</a>. Там же можно посмотреть список изменений сборки.</li>
+        <li>Исходники: <a href="https://github.com/iMironRU/updatecon/tree/main/tools" target="_blank" rel="noopener">github.com/iMironRU/updatecon/tools</a>.</li>
+      </ul>
+    </div>
+  </div>`;
+}
 function set_country(code) {
   try { localStorage.setItem('uc_country', code); } catch (e) {}
   toast('Моя страна: ' + region_label(code));

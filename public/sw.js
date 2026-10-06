@@ -7,9 +7,9 @@
  * says so). Only the public site is touched — the admin panel (any address),
  * downloads and everything else go straight to the network.
  */
-const CACHE = 'updatecon-v1';
+const CACHE = 'updatecon-v2';
 const SHELL = '/';                                   // every app page is the same index.html
-const APP_PAGE = /^\/(catalog|news|stats|platform|settings|chain|config\/[^/]+)?\/?$/;
+const APP_PAGE = /^\/(catalog|news|stats|platform|settings|install|chain|config\/[^/]+)?\/?$/;
 const API = /^\/api\/(configs|versions|patches|chain|transitions|tags|site|news|platform|platform-check|stats|stats\/more|stats\/releases)$/;
 const STATIC = /^\/(favicon\.svg|manifest\.webmanifest|icons\/.+)$/;
 const FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//;

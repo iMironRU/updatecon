@@ -166,7 +166,7 @@ async function safeAdminImport(source: ImportSource) {
 // session cookie use ADMIN_BASE, so a change applies at once.
 let ADMIN_BASE = "/admin";
 let ADMIN_LINK_PUBLIC = true;   // the public site's Настройки show a link to the panel
-const ADMIN_RESERVED = new Set(["api", "catalog", "config", "chain", "stats", "platform", "settings", "news",
+const ADMIN_RESERVED = new Set(["api", "catalog", "config", "chain", "stats", "platform", "settings", "news", "install", "1c", "1c.ps1", "1c.sh",
   "icons", "favicon.svg", "version.json", "index.html", "assets", "static", "public"]);
 
 function adminRewrite(url: string): string {
