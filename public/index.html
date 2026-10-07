@@ -1792,6 +1792,7 @@ function render_home() {
         return n ? `<a class="plat-callout" href="/catalog?plat=${PLATFORM_NEWEST}">Уже на платформе ${PLATFORM_NEWEST}: ${n} ${n % 10 === 1 && n % 100 !== 11 ? 'конфигурация' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'конфигурации' : 'конфигураций'} →</a>` : ''; })()}
     </div>
     <div id="home-chain-result"></div>
+    <div id="home-extra">
     <div class="stats-banner fade-up fade-up-2">
       <div>
         <div class="stats-banner-title">База данных обновлений Апдейкон</div>
@@ -1812,7 +1813,16 @@ function render_home() {
       </div>
       <div class="catalog-grid">${latest.map(c => config_card_html(c)).join('')}</div>
     </div>` : ''}
+    </div>
   </div>`;
+}
+// While a search result is under the version field (matches, a chosen configuration,
+// a chain) the stats banner and «Последние обновления» are hidden: they read as part of it.
+function home_extra_sync() {
+  const extra = document.getElementById('home-extra');
+  if (!extra) return;
+  const busy = !!document.getElementById('home-matches')?.innerHTML.trim() || !!document.getElementById('home-chain-result')?.innerHTML.trim();
+  extra.hidden = busy;
 }
 function bind_home() {
   const { params } = parse_route();
@@ -1839,13 +1849,16 @@ function home_version_input(ver) {
   if (!el) return;
   delete el.dataset.selected;
   ver_suggest(ver);
-  if (!ver || ver.length < 5) { el.innerHTML = ''; delete el.dataset.found; return; }
+  const chainEl = document.getElementById('home-chain-result');
+  if (chainEl) chainEl.innerHTML = '';
+  if (!ver || ver.length < 5) { el.innerHTML = ''; delete el.dataset.found; home_extra_sync(); return; }
   clearTimeout(_verSearchTimer);
   _verSearchTimer = setTimeout(async () => {
     const found = (await find_configs_by_version_api(ver)).sort(match_sort);
     if (!found.length) {
       delete el.dataset.found;
       el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Версия <code style="font-family:var(--mono)">${ver}</code> не найдена в базе</div>`;
+      home_extra_sync();
       return;
     }
     el.dataset.found = found.map(c=>c.id).join(',');
@@ -1871,6 +1884,7 @@ function home_render_matches(found, ver, all) {
   if (!all && found.length > shown.length) html += `<div class="matched-more" onclick="home_matches_all()">Ещё ${found.length - shown.length} ${plural(found.length - shown.length, 'конфигурация','конфигурации','конфигураций')}</div>`;
   html += `</div>`;
   el.innerHTML = html;
+  home_extra_sync();
 }
 function home_matches_all() {
   const el = document.getElementById('home-matches');
@@ -1886,11 +1900,15 @@ function home_select_config(id, ver) {
   const many = (el.dataset.found || '').split(',').filter(Boolean).length > 1;
   el.innerHTML = `<div class="matched-picked">${type_badge(c.type)}<span>Конфигурация: <strong>${c.name}</strong>${c.edition ? ', ред. ' + c.edition : ''}</span>
     ${many ? `<span class="change" onclick="home_matches_reopen()">изменить</span>` : ''}</div>`;
-  if (many) document.getElementById('inp-target')?.focus();
+  home_extra_sync();
+  // Source chosen, target empty → the chain to the newest version at once.
+  if (!document.getElementById('inp-target')?.value.trim()) home_build_chain();
+  else if (many) document.getElementById('inp-target')?.focus();
 }
 function home_matches_reopen() {
   const el = document.getElementById('home-matches');
   delete el.dataset.selected;
+  document.getElementById('home-chain-result').innerHTML = '';
   home_matches_all();
 }
 // ── version suggestions under the input ──
@@ -1953,6 +1971,7 @@ async function home_build_chain() {
   }
 
   result.innerHTML = `<div class="card card-body">${render_loading('Строим цепочку...')}</div>`;
+  home_extra_sync();
   await Promise.all(configs_to_check.map(c => loadVersionsForConfig(c.id)));
 
   let html = '', reached = false;
