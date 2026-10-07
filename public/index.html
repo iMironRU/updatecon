@@ -349,7 +349,7 @@ input, select, textarea { font-family: inherit; }
 .patch-date { color: var(--text-muted); font-family: var(--mono); min-width: 80px; }
 .patch-title { flex: 1; }
 .version-show-more { text-align: center; padding: 14px; border-top: 1px solid var(--border); }
-.hero { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+.hero { position: relative; z-index: 5; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
   padding: 32px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
 .hero-title { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
 .hero-sub { color: var(--text-muted); margin-bottom: 24px; font-size: 15px; }
@@ -366,6 +366,16 @@ input, select, textarea { font-family: inherit; }
 .matched-config-item.selected .matched-cfg-name { color: var(--accent); }
 .matched-cfg-name { font-size: 13px; font-weight: 600; flex: 1; }
 .matched-cfg-sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.matched-fav svg { width: 13px; height: 13px; fill: currentColor; stroke: none; vertical-align: -2px; }
+.matched-more { padding: 10px 14px; font-size: 12px; color: var(--accent); cursor: pointer; background: var(--surface2); border-top: 1px solid var(--border); }
+.matched-more:hover { text-decoration: underline; }
+.matched-picked { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 8px; flex-wrap: wrap; }
+.matched-picked .change { font-size: 12px; color: var(--accent); cursor: pointer; }
+.ver-field { position: relative; }
+.ver-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 200; margin-top: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 8px 24px rgba(0,0,0,.25); overflow: hidden; max-height: 320px; overflow-y: auto; }
+.ver-suggest-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; cursor: pointer; font-family: var(--mono); font-size: 14px; }
+.ver-suggest-item:hover, .ver-suggest-item.active { background: var(--accent-dim); }
+.ver-suggest-item .n { font-family: inherit; font-size: 12px; color: var(--text-muted); }
 .stats-banner { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-h) 100%);
   border-radius: var(--r-xl); padding: 24px 28px; color: white; margin-bottom: 24px;
   display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
@@ -1754,9 +1764,11 @@ function render_home() {
       <div class="hero-title">Построить цепочку обновлений</div>
       <div class="hero-sub">Введите текущую версию конфигурации 1С — мы найдём путь до актуальной версии</div>
       <div class="chain-builder">
-        <div class="field" style="margin:0">
+        <div class="field ver-field" style="margin:0">
           <label class="label">Текущая версия</label>
-          <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" oninput="home_version_input(this.value)">
+          <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" autocomplete="off" spellcheck="false"
+            oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="setTimeout(ver_suggest_hide, 150)" onfocus="home_version_input(this.value)">
+          <div id="ver-suggest" class="ver-suggest" hidden></div>
         </div>
         <div class="field" style="margin:0">
           <label class="label">Целевая версия <span style="font-weight:400;text-transform:none;font-size:11px">(оставьте пустым — до последней)</span></label>
@@ -1802,43 +1814,111 @@ function bind_home() {
   }
 }
 
-let _verSearchTimer;
+let _verSearchTimer, _verSuggestTimer;
+const MATCH_SHOW = 6;
+function plural(n, one, few, many) { const m = n % 100, d = n % 10; return (m > 10 && m < 20) ? many : d === 1 ? one : (d > 1 && d < 5) ? few : many; }
+const TYPE_RANK = { standard: 1, industry: 2, partner: 3 };
+function match_sort(a, b) {
+  const fa = fav_has(a.id) ? 0 : 1, fb = fav_has(b.id) ? 0 : 1;
+  if (fa !== fb) return fa - fb;
+  const ta = TYPE_RANK[a.type] || 4, tb = TYPE_RANK[b.type] || 4;
+  if (ta !== tb) return ta - tb;
+  return a.name.localeCompare(b.name, 'ru');
+}
 function home_version_input(ver) {
   ver = ver.trim();
   const el = document.getElementById('home-matches');
   if (!el) return;
-  if (!ver || ver.length < 5) { el.innerHTML = ''; return; }
+  delete el.dataset.selected;
+  ver_suggest(ver);
+  if (!ver || ver.length < 5) { el.innerHTML = ''; delete el.dataset.found; return; }
   clearTimeout(_verSearchTimer);
   _verSearchTimer = setTimeout(async () => {
-    const found = await find_configs_by_version_api(ver);
+    const found = (await find_configs_by_version_api(ver)).sort(match_sort);
     if (!found.length) {
+      delete el.dataset.found;
       el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Версия <code style="font-family:var(--mono)">${ver}</code> не найдена в базе</div>`;
       return;
     }
     el.dataset.found = found.map(c=>c.id).join(',');
+    el.dataset.ver = ver;
     // Single match — auto-select silently, no list needed
-    if (found.length === 1) {
-      el.dataset.selected = found[0].id;
-      el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Конфигурация: <strong>${found[0].name}</strong></div>`;
-      return;
-    }
-    let html = `<div class="matched-list">`;
-    html += `<div class="matched-list-header">Версия встречается в ${found.length} конфигурациях — выберите нужную:</div>`;
-    found.forEach(c => {
-      const sub = [c.vendor, c.edition ? 'ред. ' + c.edition : '', c.version_count ? c.version_count + ' версий' : ''].filter(Boolean).join(' · ');
-      html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">
-        ${type_badge(c.type)}
-        <span class="matched-cfg-name">${c.name}</span>
-        <span class="matched-cfg-sub">${sub}</span>
-      </div>`;
-    });
-    html += `</div>`;
-    el.innerHTML = html;
+    if (found.length === 1) { home_select_config(found[0].id, ver); return; }
+    home_render_matches(found, ver, false);
   }, 300);
 }
+function home_render_matches(found, ver, all) {
+  const el = document.getElementById('home-matches');
+  const shown = all ? found : found.slice(0, MATCH_SHOW);
+  let html = `<div class="matched-list">`;
+  html += `<div class="matched-list-header">Версия встречается в ${found.length} конфигурациях — выберите нужную:</div>`;
+  shown.forEach(c => {
+    const sub = [c.vendor, c.edition ? 'ред. ' + c.edition : '', c.version_count ? c.version_count + ' версий' : ''].filter(Boolean).join(' · ');
+    html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">
+      ${fav_has(c.id) ? `<span class="badge badge-yellow matched-fav" title="Мои конфигурации">${ICN_STAR}</span>` : ''}${type_badge(c.type)}
+      <span class="matched-cfg-name">${c.name}</span>
+      <span class="matched-cfg-sub">${sub}</span>
+    </div>`;
+  });
+  if (!all && found.length > shown.length) html += `<div class="matched-more" onclick="home_matches_all()">Ещё ${found.length - shown.length} ${plural(found.length - shown.length, 'конфигурация','конфигурации','конфигураций')}</div>`;
+  html += `</div>`;
+  el.innerHTML = html;
+}
+function home_matches_all() {
+  const el = document.getElementById('home-matches');
+  const found = (el.dataset.found || '').split(',').map(id => CONFIGS.find(c => c.id === id)).filter(Boolean);
+  home_render_matches(found, el.dataset.ver || '', true);
+}
+// After the choice the list collapses to one line: the goal is the file list, not the picker.
 function home_select_config(id, ver) {
-  document.querySelectorAll('.matched-config-item').forEach(el => el.classList.toggle('selected', el.dataset.cfgId === id));
-  document.getElementById('home-matches').dataset.selected = id;
+  const el = document.getElementById('home-matches');
+  const c = CONFIGS.find(x => x.id === String(id));
+  if (!c) return;
+  el.dataset.selected = c.id;
+  const many = (el.dataset.found || '').split(',').filter(Boolean).length > 1;
+  el.innerHTML = `<div class="matched-picked">${type_badge(c.type)}<span>Конфигурация: <strong>${c.name}</strong>${c.edition ? ', ред. ' + c.edition : ''}</span>
+    ${many ? `<span class="change" onclick="home_matches_reopen()">изменить</span>` : ''}</div>`;
+  if (many) document.getElementById('inp-target')?.focus();
+}
+function home_matches_reopen() {
+  const el = document.getElementById('home-matches');
+  delete el.dataset.selected;
+  home_matches_all();
+}
+// ── version suggestions under the input ──
+function ver_suggest(q) {
+  const box = document.getElementById('ver-suggest');
+  if (!box) return;
+  clearTimeout(_verSuggestTimer);
+  if (!/^\d[\d.]{1,}$/.test(q) || q.length < 3) { ver_suggest_hide(); return; }
+  _verSuggestTimer = setTimeout(async () => {
+    let rows = [];
+    try { rows = await apiFetch('/api/versions/suggest', { q }); } catch (e) {}
+    rows = rows.filter(r => r.version !== q);
+    if (!rows.length || document.activeElement?.id !== 'inp-version') { ver_suggest_hide(); return; }
+    box.innerHTML = rows.map(r => `<div class="ver-suggest-item" onmousedown="ver_suggest_pick('${r.version}')"><span>${r.version}</span><span class="n">${r.configs} ${plural(r.configs,'конфигурация','конфигурации','конфигураций')}</span></div>`).join('');
+    box.hidden = false;
+  }, 200);
+}
+function ver_suggest_hide() { const box = document.getElementById('ver-suggest'); if (box) { box.hidden = true; box.innerHTML = ''; } }
+function ver_suggest_pick(v) {
+  const inp = document.getElementById('inp-version');
+  inp.value = v;
+  ver_suggest_hide();
+  home_version_input(v);
+}
+function ver_suggest_key(e) {
+  const box = document.getElementById('ver-suggest');
+  if (!box || box.hidden) return;
+  const items = [...box.querySelectorAll('.ver-suggest-item')];
+  let i = items.findIndex(x => x.classList.contains('active'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    i = e.key === 'ArrowDown' ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
+    items.forEach((x, k) => x.classList.toggle('active', k === i));
+    items[i]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); ver_suggest_pick(items[i].firstChild.textContent); }
+  else if (e.key === 'Escape') ver_suggest_hide();
 }
 async function home_build_chain() {
   const fromV = document.getElementById('inp-version').value.trim();
@@ -3964,6 +4044,7 @@ function api_rows() {
   return [
     { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
     { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
+    { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
     { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
     { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
     { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку и файл .cfu каждого шага.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },

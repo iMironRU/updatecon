@@ -802,6 +802,21 @@ export async function buildServer() {
     });
   });
 
+  // Version suggestions for the home input: distinct versions starting with the
+  // typed prefix (edge targets), newest first, with the number of configurations.
+  app.get("/api/versions/suggest", async (req, reply) => {
+    const q = String((req.query as any).q ?? "").trim();
+    if (!/^\d[\d.]{1,30}$/.test(q)) return reply.code(400).send({ error: "q: префикс версии, например 3.0.1" });
+    const rows = await db.execute(sql`
+      SELECT to_version AS version, count(DISTINCT config_id)::int AS configs
+      FROM update_edges
+      WHERE to_version LIKE ${q + "%"}
+      GROUP BY to_version
+      ORDER BY string_to_array(to_version, '.')::int[] DESC
+      LIMIT 12`);
+    return (rows as any).rows ?? rows;
+  });
+
   app.get("/api/configs", async (req) => {
     const q = String((req.query as any).q ?? "").trim();
     const version = String((req.query as any).version ?? "").trim();
@@ -816,7 +831,6 @@ export async function buildServer() {
           -- the from-side of a cross-edition edge belongs to the previous edition
           AND (c.edition IS NULL OR c.edition::text = split_part(${version}, '.', 1))
         ORDER BY c.name
-        LIMIT 20
       `);
       return (rows as any).rows ?? rows;
     }
