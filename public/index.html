@@ -500,12 +500,13 @@ a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
 /* news */
 .news-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .news-filters .select { width: auto; max-width: 260px; padding: 6px 10px; font-size: 13px; }
-.news-soon { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; margin-bottom: 18px;
+.news-soon { padding: 8px 14px 10px; margin-bottom: 18px;
   border: 1px dashed var(--border-strong); border-radius: var(--r); font-size: 13px; }
-.news-soon-title { font-weight: 700; color: var(--text-muted); margin-right: 4px; }
-.news-soon-item { color: var(--text); padding: 3px 8px; border-radius: var(--r-xs); }
+.news-soon-title { font-weight: 700; color: var(--text-muted); padding: 2px 0 4px; }
+.news-soon-item { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; align-items: baseline; color: var(--text); padding: 3px 8px; margin: 0 -8px; border-radius: var(--r-xs); }
+.news-soon-item > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .news-soon-item:hover { background: var(--surface2); }
-.news-soon-date { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-right: 4px; }
+.news-soon-date { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
 .news-soon .mono, .news-row .mono, .news-hl .mono { font-family: var(--mono); font-size: 12px; }
 .news-day { margin-bottom: 22px; }
 .news-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px;
@@ -524,25 +525,27 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .news-hl-sub { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .news-hl .fav-btn { margin: -4px -4px -4px 0; }
 .news-rows { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); overflow: hidden; }
-.news-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px auto 150px; align-items: center; gap: 10px;
+.news-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 92px auto 150px; align-items: center; gap: 10px;
   padding: 6px 12px 6px 6px; border-top: 1px solid var(--border); font-size: 13px; }
 .news-row:first-child { border-top: none; }
 .news-row:hover { background: var(--surface2); }
-.news-row-name { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-row-main { min-width: 0; }
+.news-row-name { display: block; color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-row-sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-row-sub .mono { font-size: 11px; }
 .news-row-name:hover { color: var(--accent); }
 /* ДП goes before the number: the numbers stay aligned on the right, with or without it */
 .news-row-ver { display: flex; align-items: center; justify-content: flex-end; gap: 6px;
   font-family: var(--mono); font-size: 12px; white-space: nowrap; }
-.news-row-lts { display: flex; justify-content: center; }
+.news-row-lts { display: flex; justify-content: flex-end; }
 .news-row-lts .badge-lts { padding: 1px 7px; font-size: 11px; font-family: 'Golos Text', sans-serif; }
+.news-row-lts .news-hl-kind { margin-top: 0; }
 .news-row-plat { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
 .news-row-plat a { color: var(--text-muted); }
 .news-row-plat a:hover { color: var(--accent); }
 @media (max-width: 640px) {
-  .news-soon { display: block; }
-  .news-soon-item { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px 0; }
-  .news-row { grid-template-columns: 30px minmax(0, 1fr) 34px auto; grid-template-areas: "star name lts ver" "star plat plat plat"; row-gap: 0; }
-  .news-row .fav-btn { grid-area: star; } .news-row-name { grid-area: name; } .news-row-lts { grid-area: lts; } .news-row-ver { grid-area: ver; }
+  .news-row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "star name ver" "star lts plat"; row-gap: 0; }
+  .news-row .fav-btn { grid-area: star; } .news-row-main { grid-area: name; } .news-row-lts { grid-area: lts; justify-content: flex-start; } .news-row-ver { grid-area: ver; }
   .news-row-plat { grid-area: plat; text-align: left; }
 }
 /* platform page */
@@ -3734,10 +3737,15 @@ function news_soon_html() {
 function news_release_row(e, c) {
   const plat = e.platform ? (String(e.platform).match(/\d+\.\d+\.\d+\.\d+/) || [''])[0] : '';
   const lts = c.ltsLine && e.version.startsWith(c.ltsLine + '.');
+  // The notable releases are rows like the rest: the tag in the ДП column, the note under the name.
+  let tag = lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : '', sub = '';
+  if (e.to85) { tag = '<span class="news-hl-kind k85">8.5</span>'; sub = `первый релиз под платформу 8.5, требования: ${esc_html(e.platform || '')}`; }
+  else if (e.first) { tag = '<span class="news-hl-kind knew">новое</span>'; sub = 'новый продукт в каталоге, первый релиз'; }
+  else if (e.raised_from) { tag = '<span class="news-hl-kind kup">платформа ↑</span>'; sub = `требует платформу ≥ <span class="mono">${esc_html(plat)}</span>, предыдущий релиз шёл на <span class="mono">${esc_html(e.raised_from)}</span> — без обновления платформы не встанет`; }
   return `<div class="news-row">
     ${fav_btn(c.id)}
-    <a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a>
-    <span class="news-row-lts">${lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : ''}</span>
+    <div class="news-row-main"><a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a>${sub ? `<div class="news-row-sub">${sub}</div>` : ''}</div>
+    <span class="news-row-lts">${tag}</span>
     <span class="news-row-ver"><span>${esc_html(e.version)}</span></span>
     <span class="news-row-plat">${plat ? `<a href="/platform?build=${plat}" title="Минимальная платформа">≥ ${plat}</a>` : ''}</span>
   </div>`;
@@ -3778,9 +3786,12 @@ function news_render() {
   events.forEach(e => { (days.get(e.date) || days.set(e.date, []).get(e.date)).push(e); });
   let html = '';
   for (const [date, list] of days) {
-    const hl = list.filter(e => e.type !== 'release' || e.first || e.raised_from);
-    const rel = list.filter(e => e.type === 'release' && !e.first && !e.raised_from)
-      .sort((a, b) => main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
+    const hl = list.filter(e => e.type === 'platform_build' || e.type === 'lts_end');
+    const notable = e => (e.to85 ? 0 : e.first ? 1 : e.raised_from ? 2 : 3);
+    // A move to 8.5 is reported next to its release row, not as a second row.
+    const to85 = new Map(list.filter(e => e.type === 'to85').map(e => [e.config_id + ':' + e.version, e]));
+    const rel = list.filter(e => e.type === 'release').map(e => to85.has(e.config_id + ':' + e.version) ? { ...e, to85: true } : e)
+      .sort((a, b) => notable(a) - notable(b) || main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
     const LIMIT = 8, open = NEWS.open[date];
     const shown = open ? rel : rel.slice(0, LIMIT);
     const nRel = list.filter(e => e.type === 'release').length;
