@@ -790,6 +790,7 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
 @media (max-width: 480px) { .wrap { padding: 0 12px; } }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 .fade-up { animation: fadeUp .3s var(--ease) both; }
+.no-anim .fade-up { animation: none; }
 .fade-up-1 { animation-delay: .05s; } .fade-up-2 { animation-delay: .1s; }
 .fade-up-3 { animation-delay: .15s; } .fade-up-4 { animation-delay: .2s; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1760,12 +1761,18 @@ async function route() {
     el.innerHTML = render_loading('Загрузка базы данных...');
     await initData();
   }
+  if (!path.startsWith('/config/')) el.classList.remove('no-anim');
   if (path === '/') { el.innerHTML = render_home(); bind_home(); }
   else if (path === '/catalog') { el.innerHTML = render_catalog(); bind_catalog(); }
   else if (path.startsWith('/config/')) {
     const id = path.split('/')[2];
-    el.innerHTML = render_loading('Загрузка конфигурации...');
+    // Config → config (another edition from the header): keep the page until the data is
+    // here (a placeholder only when it takes a while) and skip the fade-in — no blink.
+    const swap = (ROUTE_PATH || '').startsWith('/config/') && CONFIGS.some(c => c.id === id);
+    const placeholder = setTimeout(() => { el.innerHTML = render_loading('Загрузка конфигурации...'); }, swap ? 300 : 0);
     await loadVersionsForConfig(id);
+    clearTimeout(placeholder);
+    el.classList.toggle('no-anim', swap);
     el.innerHTML = render_config(id);
     bind_config(id);
   }
