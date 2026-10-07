@@ -1144,7 +1144,19 @@ export async function buildServer() {
       String(from),
       String(to),
     );
-    return res;
+    if (!res.steps.length) return res;
+    // Size and date of each step's version (version_meta), for the time estimate.
+    const vers = res.steps.map((st) => st.toVersion);
+    const meta = ((await db.execute(sql`
+      SELECT version, file_size_bytes, release_date::text AS release_date
+      FROM version_meta WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})`)) as any).rows as
+      { version: string; file_size_bytes: number | null; release_date: string | null }[];
+    const byV = new Map(meta.map((m) => [m.version, m]));
+    const steps = res.steps.map((st) => ({
+      ...st, sizeBytes: byV.get(st.toVersion)?.file_size_bytes ?? null, releaseDate: byV.get(st.toVersion)?.release_date ?? null,
+    }));
+    const known = steps.filter((st) => st.sizeBytes != null);
+    return { ...res, steps, totalBytes: known.reduce((a, st) => a + (st.sizeBytes as number), 0), sizesKnown: known.length };
   });
 
   // ── Обмены и переходы (exchanges.ts, the 1CExchenge registry) ─────────────

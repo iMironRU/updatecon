@@ -218,6 +218,7 @@ export const versionMeta = pgTable(
     minPlatform: text("min_platform"),
     // Size of the update file (.zip installer from releases.1c.ru) in bytes
     fileSizeBytes: integer("file_size_bytes"),
+    sizeCheckedAt: timestamp("size_checked_at", { withTimezone: true }),   // the size backfill looked (even when the portal has none)
     // The version's files on releases.1c.ru (/version_files): [{ t: title, p: path }],
     // the project nick they were read under, and when (null = not read yet).
     // Paths differ per product (Trade\11_6_1_70\Trade_11_6_1_70_setup1c.zip), so

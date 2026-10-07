@@ -1,0 +1,1 @@
+ALTER TABLE "version_meta" ADD COLUMN "size_checked_at" timestamp with time zone;

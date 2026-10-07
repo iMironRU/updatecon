@@ -283,6 +283,8 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap; justify-content: space-between; }
 .chain-stat { text-align: center; }
 .chain-stat-val { font-size: 22px; font-weight: 800; color: var(--accent); }
+.chain-speed { background: transparent; color: var(--text-muted); border: none; font: inherit; text-transform: none; cursor: pointer; padding: 0; }
+.chain-speed option { color: var(--text); background: var(--surface); }
 .chain-stat-lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
 .chain-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
@@ -315,7 +317,8 @@ input, select, textarea { font-family: inherit; }
 .config-detail-name { font-size: 24px; font-weight: 800; line-height: 1.2; }
 .config-detail-sub { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
 .config-detail-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.config-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.config-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; margin-top: 4px;
+  flex: 0 0 calc(100% - 80px); }   /* always its own row under the facts, aligned with the text (not beside a short title) */
 .meta-item-label { font-size: 11px; color: var(--text-light); text-transform: uppercase; letter-spacing: .5px; }
 .meta-item-value { font-size: 14px; font-weight: 600; margin-top: 2px; }
 .meta-item-value.mono { font-family: var(--mono); font-size: 13px; }
@@ -778,7 +781,7 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
   .hero { padding: 20px; } .hero-title { font-size: 20px; }
   .chain-builder { grid-template-columns: 1fr; }
   .config-detail-header { flex-direction: column; }
-  .config-detail-actions { width: 100%; }
+  .config-detail-actions { flex-basis: 100%; width: 100%; }
   .stats-banner { flex-direction: column; align-items: flex-start; }
   .stats-banner-action { margin-left: 0; }
   .catalog-grid { grid-template-columns: 1fr; }
@@ -1127,8 +1130,8 @@ function chain_response_to_steps(apiResult, cfg) {
       v: s.toVersion,
       from: s.fromVersion,
       cfuPath: s.cfuPath || '',
-      date: cfg?._meta?.[s.toVersion]?.release_date || null,
-      mb: 0,
+      date: cfg?._meta?.[s.toVersion]?.release_date || s.releaseDate || null,
+      mb: (b => b ? Math.round(b / 1024 / 1024 * 10) / 10 : 0)(cfg?._meta?.[s.toVersion]?.file_size_bytes || s.sizeBytes || 0),
       plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
       req: false,
       patches: [],
@@ -1484,6 +1487,7 @@ function icn(path, extra='') {
 }
 const icn_check   = () => icn('<polyline points="20 6 9 17 4 12"/>');
 const icn_x       = () => icn('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+const icn_ext     = () => icn('<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>');
 const icn_dl      = () => icn('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
 const icn_copy    = () => icn('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>');
 const icn_term    = () => icn('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>');
@@ -1509,7 +1513,25 @@ function render_loading(msg) {
 /* ================================================================
    CHAIN RENDERING
    ================================================================ */
+// Update sizes are known for the newest versions only (read from the portal one
+// by one): a step without one gets the median known size of the configuration («≈»).
+function chain_median_mb(cfg) {
+  const sizes = Object.values(cfg?._meta || {}).map(m => m.file_size_bytes).filter(b => b > 0).sort((a, b) => a - b);
+  if (!sizes.length) return 0;
+  return Math.round(sizes[Math.floor(sizes.length / 2)] / 1024 / 1024 * 10) / 10;
+}
+const SPEED_KEY = 'uc_speed';
+const SPEEDS = [10, 30, 100, 300];   // Мбит/с
+function chain_speed() { try { const v = Number(localStorage.getItem(SPEED_KEY)); return SPEEDS.includes(v) ? v : 30; } catch (e) { return 30; } }
+function set_chain_speed(v) { try { localStorage.setItem(SPEED_KEY, String(v)); } catch (e) {} document.querySelectorAll('[data-chain-time]').forEach(el => el.textContent = chain_time_text(Number(el.dataset.mb), Number(el.dataset.steps), Number(v))); document.querySelectorAll('select.chain-speed').forEach(sel => sel.value = String(v)); }
+// Install: 15–20 min per update (dump, apply, DB update); download: the volume at the chosen speed.
+function chain_time_text(mb, steps, mbit) {
+  const dl = mb ? mb * 8 / mbit / 60 : 0;
+  const fmt = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} ч${r ? ' ' + r + ' мин' : ''}` : `${m} мин`; };
+  return `≈ ${fmt(dl + 15 * steps)} – ${fmt(dl + 20 * steps)}`;
+}
 function render_chain_steps(steps, fromV, cfg, reversed) {
+  const est_mb = chain_median_mb(cfg);
   if (!steps || !steps.length) return `<div class="empty"><p>Обновление не требуется или цепочка не найдена</p></div>`;
   const toV = steps[steps.length - 1].v;
   const blockId = 'chain-' + (cfg?.id||'x') + '-' + fromV.replace(/\./g,'') + '-' + toV.replace(/\./g,'');
@@ -1548,7 +1570,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
       ? 'https://downloads.v8.1c.ru/tmplts/' + s.cfuPath
       : '';
     const mb = s.mb || 0;
-    const mb_str = mb > 0 ? `${mb} МБ` : '';
+    const mb_str = mb > 0 ? `${mb} МБ` : est_mb ? `≈ ${est_mb} МБ` : '';
     const step_label = reversed
       ? (is_final ? 'Текущая версия' : '')
       : (is_final ? 'Целевая версия' : '');
@@ -1562,7 +1584,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
           <div class="step-version">${s.v}</div>
           ${step_label ? `<span class="badge badge-blue">${step_label}</span>` : ''}
           ${s.req && !is_final ? '<span class="badge badge-orange">Обязательный</span>' : ''}
-          ${mb_str ? `<span class="badge badge-gray">${mb_str}</span>` : ''}
+          ${mb_str ? `<span class="badge badge-gray" title="${mb > 0 ? 'Размер дистрибутива обновления' : 'Размер этой версии ещё не прочитан с портала — медиана известных размеров конфигурации'}">${mb_str}</span>` : ''}
         </div>
         ${s.date ? `<div class="step-date">${fmt_date(s.date)}</div>` : ''}
         <div class="step-meta">
@@ -1570,9 +1592,9 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
         </div>
         ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
         <div class="step-actions">
-          ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru</a>` : ''}
-          ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
-          ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления</a>` : ''}
+          ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru ${icn_ext()}</a>` : ''}
+          ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} downloads.v8.1c.ru ${icn_ext()}</a>` : ''}
+          ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления ${icn_ext()}</a>` : ''}
         </div>
       </div>
     </div>`;
@@ -1584,7 +1606,15 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
       <div style="display:flex;gap:24px;flex-wrap:wrap">
         <div class="chain-stat"><div class="chain-stat-val">${steps.length}</div><div class="chain-stat-lbl">Шагов</div></div>
         ${steps[steps.length-1]?.date ? `<div class="chain-stat"><div class="chain-stat-val">${fmt_date(steps[steps.length-1].date)}</div><div class="chain-stat-lbl">Дата релиза</div></div>` : ''}
-        ${(()=>{ const total_mb = steps.reduce((s,x)=>s+(x.mb||0),0); return total_mb>0?`<div class="chain-stat"><div class="chain-stat-val">${Math.round(total_mb*10)/10} МБ</div><div class="chain-stat-lbl">Объём обновлений</div></div>`:''; })()}
+        ${(()=>{
+          const known = steps.filter(x => x.mb > 0).length;
+          const total_mb = Math.round(steps.reduce((s,x)=>s+(x.mb||est_mb||0),0)*10)/10;
+          if (!total_mb) return '';
+          const approx = known < steps.length;
+          const speed = chain_speed();
+          return `<div class="chain-stat" title="${approx ? `Размер известен для ${known} из ${steps.length} шагов, остальное — оценка` : 'Сумма размеров дистрибутивов обновлений'}"><div class="chain-stat-val">${approx ? '≈ ' : ''}${fmt_mb(total_mb)}</div><div class="chain-stat-lbl">Объём обновлений</div></div>
+          <div class="chain-stat" title="Скачивание объёма на выбранной скорости + 15–20 минут на каждое обновление (выгрузка базы, применение, обновление ИБ)"><div class="chain-stat-val" data-chain-time data-mb="${total_mb}" data-steps="${steps.length}">${chain_time_text(total_mb, steps.length, speed)}</div>
+            <div class="chain-stat-lbl">Время · <select class="chain-speed" onchange="set_chain_speed(this.value)" title="Скорость скачивания">${SPEEDS.map(v => `<option value="${v}"${v === speed ? ' selected' : ''}>${v} Мбит/с</option>`).join('')}</select></div></div>`; })()}
       </div>
       <div class="chain-actions">
         ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${toV}')">${icn_share()} Поделиться</button>` : ''}
@@ -4074,7 +4104,7 @@ function api_rows() {
     { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
     { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
     { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
-    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку и файл .cfu каждого шага.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку, файл .cfu, дата и размер (<code>sizeBytes</code>, если прочитан) каждого шага; <code>totalBytes</code> / <code>sizesKnown</code> для оценки времени.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
     { path: '/api/transitions?config_id=<id>', desc: 'Переходы на другие продукты и редакции и с них.', example: '/api/transitions?config_id=96' },
     { path: '/api/exchanges?config_id=<id>', desc: 'Обмены (синхронизация) и переходы (перенос данных) типовых конфигураций по реестру 1CExchenge: механизм, план обмена, объекты, в какой поставке найдено, версии EnterpriseData. Без <code>config_id</code> — все связи.', example: '/api/exchanges?config_id=96' },
     { path: '/api/news?days=<дней>', desc: 'Лента событий: релизы, новые сборки платформы, повышение требований, конец длительной поддержки.', example: '/api/news?days=7' },

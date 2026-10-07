@@ -132,6 +132,12 @@ drizzle/                generated migration SQL (committed)
   `node dist/releases/backfill-files.js --minutes 300` (one page at a time, ~3 h for 30k
   versions, no sizes; the rest is left for the next run).
   Full distributions of some 1C products ask for a one-time code (2FA) on the portal.
+  Update sizes (`file_size_bytes`, the properties JSON of «Дистрибутив обновления») are read
+  by the nightly import for its 3 newest versions and by `backfill-sizes.js` (snapshot input
+  `sizes_all`, newest first, `size_checked_at` marks a look even when the portal has no size).
+  `/api/chain` returns `sizeBytes`/`releaseDate` per step; the UI shows «≈ median of the
+  configuration's known sizes» for the rest and an install time estimate (download at a chosen
+  speed, localStorage uc_speed, + 15–20 min per update).
 
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
