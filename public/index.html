@@ -524,7 +524,7 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .news-hl-sub { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .news-hl .fav-btn { margin: -4px -4px -4px 0; }
 .news-rows { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); overflow: hidden; }
-.news-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto 150px; align-items: center; gap: 10px;
+.news-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px auto 150px; align-items: center; gap: 10px;
   padding: 6px 12px 6px 6px; border-top: 1px solid var(--border); font-size: 13px; }
 .news-row:first-child { border-top: none; }
 .news-row:hover { background: var(--surface2); }
@@ -533,15 +533,16 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 /* ДП goes before the number: the numbers stay aligned on the right, with or without it */
 .news-row-ver { display: flex; align-items: center; justify-content: flex-end; gap: 6px;
   font-family: var(--mono); font-size: 12px; white-space: nowrap; }
-.news-row-ver .badge-lts { padding: 1px 7px; font-size: 11px; font-family: 'Golos Text', sans-serif; }
+.news-row-lts { display: flex; justify-content: center; }
+.news-row-lts .badge-lts { padding: 1px 7px; font-size: 11px; font-family: 'Golos Text', sans-serif; }
 .news-row-plat { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
 .news-row-plat a { color: var(--text-muted); }
 .news-row-plat a:hover { color: var(--accent); }
 @media (max-width: 640px) {
   .news-soon { display: block; }
   .news-soon-item { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px 0; }
-  .news-row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "star name ver" "star plat plat"; row-gap: 0; }
-  .news-row .fav-btn { grid-area: star; } .news-row-name { grid-area: name; } .news-row-ver { grid-area: ver; }
+  .news-row { grid-template-columns: 30px minmax(0, 1fr) 34px auto; grid-template-areas: "star name lts ver" "star plat plat plat"; row-gap: 0; }
+  .news-row .fav-btn { grid-area: star; } .news-row-name { grid-area: name; } .news-row-lts { grid-area: lts; } .news-row-ver { grid-area: ver; }
   .news-row-plat { grid-area: plat; text-align: left; }
 }
 /* platform page */
@@ -3736,7 +3737,8 @@ function news_release_row(e, c) {
   return `<div class="news-row">
     ${fav_btn(c.id)}
     <a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a>
-    <span class="news-row-ver">${lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : ''}<span>${esc_html(e.version)}</span></span>
+    <span class="news-row-lts">${lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : ''}</span>
+    <span class="news-row-ver"><span>${esc_html(e.version)}</span></span>
     <span class="news-row-plat">${plat ? `<a href="/platform?build=${plat}" title="Минимальная платформа">≥ ${plat}</a>` : ''}</span>
   </div>`;
 }
