@@ -885,7 +885,9 @@ export async function buildServer() {
         SELECT version, release_date, min_platform
         FROM version_meta
         WHERE config_id = c.id AND release_date IS NOT NULL
-        ORDER BY release_date DESC
+        -- the highest number, not the newest date: an LTS-branch update (УТ 11.5.27.95)
+        -- can come out after the new branch's release (11.6.1.70)
+        ORDER BY CASE WHEN version ~ '^[0-9]+(\\.[0-9]+)*$' THEN string_to_array(version, '.')::bigint[] END DESC NULLS LAST, release_date DESC
         LIMIT 1
       ) vm ON true
       LEFT JOIN LATERAL (
@@ -908,7 +910,7 @@ export async function buildServer() {
                (SELECT min(m[2]) FROM regexp_matches(min_platform, '(^|[^0-9.])(8\\.[0-9]+)\\.[0-9]', 'g') AS m) AS gen
         FROM version_meta
         WHERE config_id = c.id AND min_platform IS NOT NULL
-        ORDER BY release_date DESC NULLS LAST
+        ORDER BY CASE WHEN version ~ '^[0-9]+(\\.[0-9]+)*$' THEN string_to_array(version, '.')::bigint[] END DESC NULLS LAST, release_date DESC NULLS LAST
         LIMIT 1
       ) vp ON true
       LEFT JOIN LATERAL (
