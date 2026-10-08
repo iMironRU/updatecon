@@ -237,6 +237,11 @@ tr.run-all td { background: rgba(88,166,255,.05); }
             <div class="hint">Задаётся в .env — применяется без перезапуска воркера.</div>
           </div>
           <div class="field">
+            <label>Push-подписчики</label>
+            <input id="s-push" readonly>
+            <div class="hint">Браузеры, включившие уведомления о релизах «Моих конфигураций» (Настройки сайта). Рассылка после применения снапшота и «Обновить всё».</div>
+          </div>
+          <div class="field">
             <label>Учётка ИТС</label>
             <input id="s-its" readonly>
           </div>
@@ -713,6 +718,7 @@ async function loadDash() {
     document.getElementById('s-date').textContent = lr ? fmtDate(lr.finishedAt) : '—';
     document.getElementById('s-status').innerHTML = lr ? badge(lr.status) + ' ' + (lr.message||'').slice(0,60) : '';
     document.getElementById('s-cron').value = status.cron;
+    document.getElementById('s-push').value = String(status.pushSubscribers ?? 0);
     document.getElementById('s-its').value = status.itsSource === 'none' ? 'не задана — Настройки → Доступ к ИТС' : status.itsLogin + ' (' + (status.itsSource === 'admin' ? 'из админки' : 'из .env') + ')';
     document.getElementById('hdr-user').textContent = status.adminLogin;
 

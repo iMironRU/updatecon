@@ -32,6 +32,10 @@ function key(): Buffer {
   try { pw = decodeURIComponent(new URL(process.env.DATABASE_URL ?? "").password); } catch { /* no URL */ }
   return createHash("sha256").update("updatecon/settings/" + pw).digest();
 }
+/** Settings secrets (ITS passwords, VAPID private key) — AES-GCM under a key derived from the DB password. */
+export function sealSecret(text: string): string { return encrypt(text); }
+export function openSecret(stored: string): string | null { return decrypt(stored); }
+
 function encrypt(text: string): string {
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", key(), iv);

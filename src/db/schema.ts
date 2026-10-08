@@ -25,6 +25,7 @@ import {
   date,
   primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * An application edition: one configuration template (catalog folder in
@@ -456,3 +457,23 @@ export const platformBuilds = pgTable(
     lineIdx: index("platform_builds_line_idx").on(t.line),
   }),
 );
+
+/**
+ * push_subscriptions — Web Push subscriptions of the site's visitors («Мои
+ * конфигурации» → «Уведомлять о релизах»). `config_ids` is the subscriber's
+ * favourites at the time of the last sync; `seen` = {config_id: version} the
+ * subscriber was last told about, so a run notifies only what is newer.
+ * Never in a snapshot (it is this install's own audience).
+ */
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  endpoint: text("endpoint").primaryKey(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  configIds: integer("config_ids").array().notNull().default(sql`'{}'::int[]`),
+  seen: jsonb("seen").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+  userAgent: text("user_agent"),
+  failures: integer("failures").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+});

@@ -43,6 +43,12 @@ src/db/
   exchanges.ts          обмены/переходы between standard configurations from the 1CExchenge registry
                         (github.com/iMironRU/1CExchenge data/registry.json, fetched as step 4 of «Обновить
                         всё»); sides mapped to configurations by product key + edition (KEY_TEMPLATE)
+  push.ts               Web Push «Уведомлять о релизах моих конфигураций»: VAPID keys made once into
+                        settings (private sealed), push_subscriptions (endpoint, favourites, seen
+                        {config_id: version}); notifyReleases() after a snapshot apply / «Обновить всё»
+                        (worker + admin) sends what is newer than `seen`; 404/410 or 5 failures delete.
+                        sw.js shows the notification and opens data.url. iOS: installed PWA only.
+                        Not in snapshots. Library: web-push.
   scripts.ts            scripts for the user's machine (/api/script/chain, /api/script/platform):
                         apply an update chain in designer batch mode / install a platform build,
                         PowerShell + bash; templates in src/scripts (copied to dist/scripts like src/admin)
@@ -61,7 +67,8 @@ public/index.html       single-file UI (vanilla JS, no build); /news is computed
                         server falls back to index.html; old /#/… links are rewritten on load
 public/sw.js            PWA service worker: network first, cache fallback for the public pages and
                         GET /api/* (offline answers carry X-Updatecon-Offline: 1 → the page's
-                        «Нет связи» bar); never touches the admin panel. Bump CACHE when sw.js changes
+                        «Нет связи» bar; 5xx counts as no network); push + notificationclick;
+                        never touches the admin panel. Bump CACHE when sw.js changes
 public/manifest.webmanifest, public/icons/   install manifest + icons (rendered from icons/*.svg)
 drizzle/                generated migration SQL (committed)
 ```

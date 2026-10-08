@@ -74,6 +74,7 @@ import { runFullUpdate } from "./pipeline.js";
 import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
 import { chainScript, platformScript, linuxInstallerAvailable, cfuUrl, type ScriptOs, type ScriptFile } from "./scripts.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
+import { vapidKeys, validSubscription, saveSubscription, removeSubscription, sendTest, subscriptionCount, notifyReleases } from "./push.js";
 import { configExchanges, allExchanges, REGISTRY_PAGE } from "./exchanges.js";
 import {
   applyItsCredentials, itsCredentials, verifyItsLogin, saveItsCredentials, clearItsCredentials,
@@ -127,6 +128,7 @@ async function safeAdminImport(source: ImportSource) {
         onLog: (msg) => addImportLog(source, msg),
         onProgress: (cur, tot) => { importProgress[source] = { current: cur, total: tot }; },
       });
+      await notifyReleases((m) => addImportLog(source, `[push] ${m}`)).catch((e) => addImportLog(source, `[push] ошибка: ${(e as Error).message}`));
     } else if (source === "all") {
       // Progress goes to the bar; the log keeps the per-project results.
       await runFullUpdate({
@@ -135,6 +137,7 @@ async function safeAdminImport(source: ImportSource) {
         onProgress: (cur, tot) => { importProgress[source] = { current: cur, total: tot }; },
         signal: ac.signal,
       });
+      await notifyReleases((m) => addImportLog(source, `[push] ${m}`)).catch((e) => addImportLog(source, `[push] ошибка: ${(e as Error).message}`));
     } else if (source === "lst") {
       await runImport(undefined, { onLog: (msg) => addImportLog(source, msg) });
     } else {
@@ -385,6 +388,7 @@ export async function buildServer() {
       itsSource: its.source,               // admin | env | none
       itsUnreadable: !!its.unreadable,     // saved in the admin UI, but the DB password changed since
       itsAccounts: await itsAccountLogins(),   // all usable accounts, the first is the main one
+      pushSubscribers: await subscriptionCount().catch(() => 0),
       adminLogin,
       adminPasswordSource: await adminPasswordSource(),
       dbUrl,
@@ -1162,6 +1166,28 @@ export async function buildServer() {
   });
 
   // ── Обмены и переходы (exchanges.ts, the 1CExchenge registry) ─────────────
+  // ── Web Push: «Уведомлять о релизах моих конфигураций» ──────────────────
+  app.get("/api/push/key", async () => ({ key: (await vapidKeys()).publicKey }));
+  app.post("/api/push/subscribe", async (req, reply) => {
+    const b = (req.body ?? {}) as { subscription?: unknown; config_ids?: unknown };
+    if (!validSubscription(b.subscription)) return reply.code(400).send({ error: "subscription: endpoint и keys {p256dh, auth}" });
+    const ids = Array.isArray(b.config_ids) ? b.config_ids.map(Number) : [];
+    const n = await saveSubscription(b.subscription, ids, req.headers["user-agent"]);
+    return { ok: true, configs: n };
+  });
+  app.delete("/api/push/subscribe", async (req, reply) => {
+    const endpoint = String(((req.body ?? {}) as { endpoint?: string }).endpoint ?? (req.query as any).endpoint ?? "");
+    if (!endpoint) return reply.code(400).send({ error: "endpoint" });
+    await removeSubscription(endpoint);
+    return { ok: true };
+  });
+  app.post("/api/push/test", async (req, reply) => {
+    const endpoint = String(((req.body ?? {}) as { endpoint?: string }).endpoint ?? "");
+    if (!endpoint) return reply.code(400).send({ error: "endpoint" });
+    const r = await sendTest(endpoint);
+    return r === "ok" ? { ok: true } : reply.code(r === "unknown" ? 404 : 502).send({ ok: false, error: r === "unknown" ? "подписка не найдена — подпишитесь заново" : r === "gone" ? "подписка больше не действует" : "служба уведомлений не приняла сообщение" });
+  });
+
   app.get("/api/exchanges", async (req, reply) => {
     const q = req.query as Record<string, unknown>;
     if (q.config_id == null && q.config == null) return allExchanges();

@@ -19,6 +19,7 @@ import { db } from "./client.js";
 import { runFullUpdate } from "./pipeline.js";
 import { applyItsCredentials } from "./credentials.js";
 import { syncSnapshot } from "./snapshot.js";
+import { notifyReleases } from "./push.js";
 import { refreshTags } from "./tags.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -44,10 +45,12 @@ async function safeImport(trigger: "scheduled" | "on-start") {
     if (c.source === "none") {
       const r = await syncSnapshot();
       console.log(`[worker] snapshot: ${r.status} — ${r.message}`);
+      if (r.status === "applied") await notifyReleases();
       return;
     }
     const r = await runFullUpdate({ trigger });
     console.log(`[worker] update ${r.status}: ${r.summary}`);
+    await notifyReleases();
   } catch (e) {
     console.error("[worker] update error:", (e as Error).message);
   }
@@ -88,6 +91,7 @@ async function main() {
       if (c.source === "none") {
         const r = await syncSnapshot();
         console.log(`[worker] snapshot on start: ${r.status} — ${r.message}`);
+        if (r.status === "applied") await notifyReleases();
       }
     } catch (e) {
       console.error("[worker] snapshot on start failed:", (e as Error).message);

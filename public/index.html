@@ -957,6 +957,85 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
 
+/* ── Web Push: «Уведомлять о релизах моих конфигураций» ──
+   The subscription lives in the browser (pushManager) and on the server with the
+   favourite ids; every change of favourites re-sends them. On iPhone it works only
+   for the app installed on the home screen (iOS 16.4+). */
+const PUSH_KEY = 'uc_push';   // '1' when this browser subscribed — resend favourites on change
+function push_supported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+function push_ios_needs_install() {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return ios && !app_standalone();
+}
+function b64_to_u8(s) { const b = atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+async function push_subscription() {
+  if (!push_supported()) return null;
+  try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
+}
+async function push_send(sub) {
+  const r = await fetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: sub.toJSON(), config_ids: [...FAV].map(Number) }) });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function push_enable() {
+  if (!push_supported()) { toast('Этот браузер не поддерживает уведомления'); return; }
+  if (push_ios_needs_install()) { toast('На iPhone — только из приложения на экране «Домой»'); return; }
+  if (!FAV.size) { toast('Сначала добавьте конфигурации в «Мои» (звёздочка)'); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Уведомления запрещены в браузере'); push_render(); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await apiFetch('/api/push/key');
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64_to_u8(key) });
+    await push_send(sub);
+    try { localStorage.setItem(PUSH_KEY, '1'); } catch (e) {}
+    toast('Уведомления включены'); goal('push_on');
+  } catch (e) { toast('Не удалось включить: ' + (e.message || e)); }
+  push_render();
+}
+async function push_disable() {
+  const sub = await push_subscription();
+  if (sub) {
+    try { await fetch('/api/push/subscribe', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch (e) {}
+    try { await sub.unsubscribe(); } catch (e) {}
+  }
+  try { localStorage.removeItem(PUSH_KEY); } catch (e) {}
+  toast('Уведомления выключены');
+  push_render();
+}
+async function push_test() {
+  const sub = await push_subscription();
+  if (!sub) { toast('Подписки нет'); return; }
+  try {
+    const r = await fetch('/api/push/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+    const j = await r.json().catch(() => ({}));
+    toast(r.ok ? 'Отправлено — уведомление придёт через пару секунд' : ('Не отправлено: ' + (j.error || r.status)));
+  } catch (e) { toast('Не отправлено: ' + e.message); }
+}
+// Favourites changed → the server gets the new list (only when subscribed here).
+async function push_sync_favs() {
+  let on = false; try { on = localStorage.getItem(PUSH_KEY) === '1'; } catch (e) {}
+  if (!on) return;
+  const sub = await push_subscription();
+  if (sub) push_send(sub).catch(() => {});
+}
+async function push_section_body() {
+  if (!push_supported()) return '<div class="app-install-text">Этот браузер не поддерживает push-уведомления.</div>';
+  if (push_ios_needs_install()) return '<div class="app-install-text">На iPhone и iPad уведомления работают только из приложения, добавленного на экран «Домой» (iOS 16.4 и новее). Установите Апдейкон — пункт выше — и включите уведомления уже в нём.</div>';
+  const sub = await push_subscription();
+  const denied = Notification.permission === 'denied';
+  if (sub) return `<div class="app-install-text"><b>Уведомления включены.</b> Придут, когда выйдет новый релиз любой из ${FAV.size} ${plural(FAV.size, 'конфигурации', 'конфигураций', 'конфигураций')} в «Моих». Список обновляется сам при изменении звёздочек.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" onclick="push_test()">Проверить</button><button class="btn btn-ghost btn-sm" onclick="push_disable()">Выключить</button></div>`;
+  if (denied) return '<div class="app-install-text">Уведомления запрещены для этого сайта в настройках браузера. Разрешите их там и вернитесь сюда.</div>';
+  return `<div class="app-install-text"><b>Сообщать о новых релизах</b> конфигураций из «Моих» — одно уведомление в день выхода, со ссылкой на цепочку.${FAV.size ? '' : ' Сначала отметьте конфигурации звёздочкой.'}</div>
+    <button class="btn btn-primary" onclick="push_enable()"${FAV.size ? '' : ' disabled'}>Включить уведомления</button>`;
+}
+async function push_render() {
+  const el = document.getElementById('push-section');
+  if (el) el.innerHTML = await push_section_body();
+}
+
 function nick_from_href(href) {
   return href ? href.replace('/project/', '') : '';
 }
@@ -3661,6 +3740,7 @@ function fav_toggle(e, id) {
   });
   toast(on ? '★ Добавлено в «Мои конфигурации»' : 'Убрано из «Моих конфигураций»');
   if (on) goal('fav');
+  push_sync_favs();
   if (ROUTE_PATH === '/news' && NEWS.mine) news_render();
   if (ROUTE_PATH === '/catalog' && CAT && CAT.fav) apply_filters();
   return false;
@@ -4114,6 +4194,11 @@ function render_settings() {
       <div class="settings-section-sub">Апдейкон устанавливается на компьютер и телефон как обычное приложение</div>
       <div class="app-install" id="app-install">${install_section_body()}</div>
     </div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Уведомления</div>
+      <div class="settings-section-sub">Push о релизах «Моих конфигураций» — на телефон и компьютер, без почты и регистрации</div>
+      <div class="app-install" id="push-section"><div class="app-install-text">…</div></div>
+    </div>
     <div class="settings-section fade-up fade-up-2">
       <div class="settings-section-title">API</div>
       <div class="settings-section-sub">Открытое HTTP API Апдейкона: JSON (скрипты — текстом), без ключей и регистрации. Нажмите на пример, чтобы открыть ответ.</div>
@@ -4142,6 +4227,7 @@ function api_rows() {
   return [
     { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
     { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
+    { path: '/api/push/key · POST /api/push/subscribe', desc: 'Web Push: публичный VAPID-ключ и подписка {subscription, config_ids} на релизы выбранных конфигураций (страница делает это сама кнопкой «Включить уведомления»).', example: '/api/push/key' },
     { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
     { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
     { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
@@ -4155,7 +4241,7 @@ function api_rows() {
     { path: '/api/script/platform?os=windows|linux&version=<сборка>', desc: 'Скрипт установки платформы: скачивает дистрибутив с портала 1С и устанавливает.', example: '/api/script/platform?os=linux&version=8.3.27.2342' },
   ];
 }
-function bind_settings() {}
+function bind_settings() { push_render(); }
 
 /* ================================================================
    INSTALL — the platform installer page (/install)

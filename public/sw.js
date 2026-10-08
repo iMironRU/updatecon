@@ -7,7 +7,7 @@
  * says so). Only the public site is touched — the admin panel (any address),
  * downloads and everything else go straight to the network.
  */
-const CACHE = 'updatecon-v3';
+const CACHE = 'updatecon-v4';
 const SHELL = '/';                                   // every app page is the same index.html
 const APP_PAGE = /^\/(catalog|news|stats|platform|settings|install|chain|config\/[^/]+)?\/?$/;
 const API = /^\/api\/(configs|versions|patches|chain|transitions|tags|site|news|platform|platform-check|stats|stats\/more|stats\/releases)$/;
@@ -76,4 +76,24 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (FONTS.test(req.url)) e.respondWith(staleWhileRevalidate(req));
+});
+
+// ── Web Push («Уведомлять о релизах моих конфигураций») ──
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  const title = d.title || 'Апдейкон';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: d.body || '', icon: '/icons/icon-192.png', badge: '/icons/icon-192.png',
+    tag: d.tag || 'updatecon', renotify: true, data: { url: d.url || '/' },
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    const open = list.find((c) => c.url.startsWith(self.location.origin));
+    if (open) return open.navigate ? open.navigate(url).then((c) => c && c.focus()) : open.focus();
+    return self.clients.openWindow(url);
+  }));
 });
