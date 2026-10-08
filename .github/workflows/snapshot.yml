@@ -6,7 +6,8 @@ name: Database snapshot
 #   1. continue from the published snapshot (ids, and /config/<id> links on
 #      snapshot-fed installs, stay the same);
 #   2. «Обновить всё» with the ITS account from the repository secrets
-#      ITS_LOGIN / ITS_PASSWORD;
+#      ITS_LOGIN / ITS_PASSWORD (+ ITS_ACCOUNTS: a JSON list [{login, password}] of extra
+#      accounts for products the main one cannot see — ERP, Управление холдингом);
 #   3. dump, compare with the published one (a broken import must not replace
 #      good data), upload.
 on:
@@ -54,6 +55,7 @@ jobs:
       DATABASE_URL: postgres://upd:upd@localhost:5432/upd
       ITS_LOGIN: ${{ secrets.ITS_LOGIN }}
       ITS_PASSWORD: ${{ secrets.ITS_PASSWORD }}
+      ITS_ACCOUNTS: ${{ secrets.ITS_ACCOUNTS }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: ITS account present

@@ -88,12 +88,29 @@ export async function itsCredentials(): Promise<ItsCredentials> {
   return { login: "", password: "", source: "none", ...(unreadable ? { unreadable } : {}) };
 }
 
-/** Every usable account: the admin UI's list, else the .env one. The first is the main account. */
+// Extra accounts from the environment: ITS_ACCOUNTS='[{"login":"…","password":"…"}]' —
+// the snapshot workflow gets them from a repository secret (products one account
+// cannot see: ERP, Управление холдингом). Never the main account, never logged.
+function envExtraAccounts(): ItsAccount[] {
+  const raw = process.env.ITS_ACCOUNTS?.trim();
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) throw new Error("не массив");
+    return list.filter((a) => a && typeof a.login === "string" && typeof a.password === "string" && a.login && a.password)
+      .map((a) => ({ login: String(a.login).trim(), password: String(a.password) }));
+  } catch (e) {
+    console.warn(`[its] ITS_ACCOUNTS не разобран (${(e as Error).message}) — ожидается JSON-массив {login, password}`);
+    return [];
+  }
+}
+
+/** Every usable account: the admin UI's list, else the .env one, plus ITS_ACCOUNTS. The first is the main account. */
 export async function allItsAccounts(): Promise<ItsAccount[]> {
   const { accounts } = await savedAccounts();
-  if (accounts.length) return accounts;
-  if (ENV_ITS.login && ENV_ITS.password) return [{ ...ENV_ITS }];
-  return [];
+  const out: ItsAccount[] = accounts.length ? [...accounts] : (ENV_ITS.login && ENV_ITS.password ? [{ ...ENV_ITS }] : []);
+  for (const a of envExtraAccounts()) if (!out.some((x) => x.login.toLowerCase() === a.login.toLowerCase())) out.push(a);
+  return out;
 }
 /** Logins only, for the admin UI. */
 export async function itsAccountLogins(): Promise<string[]> {

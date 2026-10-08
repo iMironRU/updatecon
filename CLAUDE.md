@@ -35,7 +35,8 @@ src/db/
                         `data` GitHub release; installs without an ITS account apply it (worker start, nightly,
                         admin button) in one transaction, keeping settings and manual links/tags
   credentials.ts        ITS accounts (settings.its_accounts, several; the first is the main one and
-                        lands in process.env.ITS_*; allItsAccounts() for the rest — releases import
+                        lands in process.env.ITS_*; allItsAccounts() for the rest, plus env ITS_ACCOUNTS
+                        (JSON [{login,password}], the snapshot workflow's secret) — releases import
                         merges /total over all, manifests retry 401 with the others) / admin password
   metrika.ts            Яндекс Метрика counter (admin UI → settings); server.ts serves index.html itself
                         (not @fastify/static) to put the tag in; the page reports SPA hits + goals
