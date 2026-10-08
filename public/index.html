@@ -1049,12 +1049,26 @@ function adapt_config(row) {
 }
 
 let _initPromise = null;
+let INIT_FAILED = false;
+// Three tries with a pause (the server restarting behind the proxy answers 5xx for a few
+// seconds; a phone wakes up without network). Then the page says so and offers a retry.
 async function initData() {
   if (CONFIGS_LOADED) return;
   if (_initPromise) return _initPromise;   // one load, every caller waits for it
-  _initPromise = initDataOnce().finally(() => { _initPromise = null; });
+  _initPromise = (async () => {
+    for (const pause of [1000, 3000, 6000, 0]) {
+      await initDataOnce();
+      if (CONFIGS_LOADED || !pause) break;
+      await new Promise(r => setTimeout(r, pause));
+    }
+    INIT_FAILED = !CONFIGS_LOADED;
+  })().finally(() => { _initPromise = null; });
   return _initPromise;
 }
+async function init_retry() { INIT_FAILED = false; await route(); }
+// Back online or back to the app → one more try without a tap.
+window.addEventListener('online', () => { if (INIT_FAILED) init_retry(); });
+document.addEventListener('visibilitychange', () => { if (INIT_FAILED && document.visibilityState === 'visible') init_retry(); });
 async function initDataOnce() {
   try {
     const [rows, stats, tags] = await Promise.all([
@@ -1764,6 +1778,13 @@ async function route() {
   if (!CONFIGS_LOADED) {
     el.innerHTML = render_loading('Загрузка базы данных...');
     await initData();
+    if (!CONFIGS_LOADED) {
+      el.innerHTML = `<div class="wrap"><div class="empty" style="padding-top:48px"><div class="empty-title">Не удалось загрузить данные</div>
+        <div class="empty-sub">Сервер не ответил или нет связи. Повторим сами, когда появится сеть — или нажмите кнопку.</div>
+        <button class="btn btn-primary" style="margin-top:16px" onclick="init_retry()">Повторить</button></div></div>`;
+      ROUTE_PATH = path;
+      return;
+    }
   }
   if (!path.startsWith('/config/')) el.classList.remove('no-anim');
   if (path === '/') { el.innerHTML = render_home(); bind_home(); }

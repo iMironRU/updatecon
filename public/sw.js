@@ -7,7 +7,7 @@
  * says so). Only the public site is touched — the admin panel (any address),
  * downloads and everything else go straight to the network.
  */
-const CACHE = 'updatecon-v2';
+const CACHE = 'updatecon-v3';
 const SHELL = '/';                                   // every app page is the same index.html
 const APP_PAGE = /^\/(catalog|news|stats|platform|settings|install|chain|config\/[^/]+)?\/?$/;
 const API = /^\/api\/(configs|versions|patches|chain|transitions|tags|site|news|platform|platform-check|stats|stats\/more|stats\/releases)$/;
@@ -36,15 +36,22 @@ function markOffline(res) {
 // The network; if it fails or takes longer than `ms`, the cached copy (marked
 // as offline). Nothing cached — keep waiting for the network: a slow answer
 // is better than none.
+// A server error (5xx: the app restarting behind the proxy) counts as no network too.
 async function networkFirst(req, key, ms) {
   const cache = await caches.open(CACHE);
-  const net = fetch(req).then((res) => { if (res.ok) cache.put(key, res.clone()); return res; });
+  const net = fetch(req).then((res) => {
+    if (res.ok) { cache.put(key, res.clone()); return res; }
+    if (res.status >= 500) throw new Error('HTTP ' + res.status);
+    return res;
+  });
   net.catch(() => {});
   try {
     return await Promise.race([net, timeout(ms)]);
-  } catch {
+  } catch (e) {
     const hit = await cache.match(key);
-    return hit ? markOffline(hit) : net;
+    if (hit) return markOffline(hit);
+    // nothing cached: the network's own answer, whatever it is
+    return net.catch(() => fetch(req));
   }
 }
 
