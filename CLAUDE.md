@@ -147,6 +147,12 @@ drizzle/                generated migration SQL (committed)
   configuration's known sizes» for the rest and an install time estimate (download at a chosen
   speed, localStorage uc_speed, + 15–20 min per update).
 
+- `patches` (uuid unique → config_id, version, title = the portal's name EF_…, description,
+  patch_date) — «исправления» from releases.1c.ru `/patches/total?nick=&ver=`, read by the
+  releases import for versions of the last 180 days (6 newest per project), upsert by uuid.
+  `/api/chain` steps carry `patches` + `patchesUrl` (the portal's page of that version — single
+  patch pages redirect to login); `/api/patches` lazy-fetches with an ITS account.
+
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on

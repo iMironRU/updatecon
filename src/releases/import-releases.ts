@@ -31,7 +31,7 @@ import { syncSolutions } from "./solutions.js";
 import { refreshTags } from "../db/tags.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles, parseVersionFileList,
-  parseFileProperties, parsePatchesPage, parseProjectLinks,
+  parseFileProperties, parsePatchesPage, parseProjectLinks, parseDate,
   type ReleasesConfig, type VersionRow,
 } from "./parse-releases.js";
 
@@ -283,6 +283,8 @@ export async function syncVersionFilesForConfig(
 
 // ── Patches fetching ──────────────────────────────────────────────────────────
 
+// The version's patches («исправления»): one page per version, newest versions of
+// the last half-year only (patches are issued for current versions), upsert by uuid.
 async function syncPatchesForConfig(
   session: ReleasesSession,
   configId: number,
@@ -299,14 +301,8 @@ async function syncPatchesForConfig(
       for (const p of patchList) {
         await db
           .insert(patches)
-          .values({
-            configId,
-            version: ver,
-            uuid: p.uuid,
-            title: p.title ?? null,
-            patchDate: p.patchDate ?? null,
-          })
-          .onConflictDoNothing();
+          .values({ configId, version: ver, uuid: p.uuid, title: p.title ?? null, description: p.description ?? null, patchDate: p.patchDate ?? null })
+          .onConflictDoUpdate({ target: patches.uuid, set: { title: p.title ?? null, description: p.description ?? null, patchDate: p.patchDate ?? null } });
         total++;
       }
       await delay(150);
@@ -315,6 +311,16 @@ async function syncPatchesForConfig(
     }
   }
   return total;
+}
+/** Versions worth a patches page: released in the last 180 days, newest first, at most `max`. */
+function patchVersions(rows: VersionRow[], max = 6): string[] {
+  const since = Date.now() - 180 * 86400_000;
+  return rows
+    .map((r) => ({ v: r.version, d: r.releaseDate ? Date.parse((/^\d{4}-/.test(r.releaseDate) ? r.releaseDate : parseDate(r.releaseDate)) ?? "") : NaN }))   // the rows carry ISO dates already
+    .filter((x) => x.d >= since)
+    .sort((a, b) => b.d - a.d)
+    .slice(0, max)
+    .map((x) => x.v);
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -426,7 +432,7 @@ export async function runReleasesImport(
       .onConflictDoUpdate({ target: releaseProjects.nick, set: meta });
   }
 
-  let byRule = 0, byVersions = 0, byManual = 0, metaRows = 0, totalSized = 0;
+  let byRule = 0, byVersions = 0, byManual = 0, metaRows = 0, totalSized = 0, totalPatches = 0;
   const linkedNicks = new Set<string>();
   const taken = new Set<number>();          // apps that got a project this run
   const fetchedNicks: string[] = [];
@@ -465,7 +471,9 @@ export async function runReleasesImport(
       totalSized += read;
     }
     if (syncPatchesData) {
-      await syncPatchesForConfig(session, app.id, nick, rows.map((r) => r.version).slice(-3));
+      const n = await syncPatchesForConfig(session, app.id, nick, patchVersions(rows));
+      if (n > 0) log(`    патчи: ${n}`);
+      totalPatches += n;
     }
   };
 
@@ -562,7 +570,7 @@ export async function runReleasesImport(
   const unmatched = projects.length - matched;
   log(
     `Готово: сопоставлено=${matched} (правило=${byRule}, по версиям=${byVersions}, вручную=${byManual}), ` +
-    `не сопоставлено=${unmatched}, метаданных=${metaRows}, файлов версий=${totalSized}`,
+    `не сопоставлено=${unmatched}, метаданных=${metaRows}, файлов версий=${totalSized}, патчей=${totalPatches}`,
   );
   if (unmatched > 0) log(`Несопоставленные проекты — в админке, вкладка «Сопоставление».`);
 

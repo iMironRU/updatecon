@@ -251,7 +251,8 @@ export const patches = pgTable(
       .references(() => configurations.id),
     version: text("version").notNull(),           // version this patch applies to
     uuid: text("uuid").notNull(),                  // releases.1c.ru patch UUID
-    title: text("title"),                          // patch description/name
+    title: text("title"),                          // patch name on the portal (EF_00_00945951)
+    description: text("description"),              // what it fixes (the portal's «Описание»)
     patchDate: date("patch_date"),                 // date of fix
     downloadKey: text("download_key"),             // key for download URL
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true })

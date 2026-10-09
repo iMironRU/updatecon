@@ -111,7 +111,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
       const errs = errorsBefore();
       try {
         await runReleasesImport(undefined, undefined, {
-          syncTotalPage: true, syncSizes: true, syncPatchesData: false,
+          syncTotalPage: true, syncSizes: true, syncPatchesData: true,
           extraAccounts: (await allItsAccounts()).slice(1),
           onProgress: (cur, tot) => opts.onProgress?.(cur, tot),
           onLog: log, signal: opts.signal,

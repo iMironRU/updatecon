@@ -350,7 +350,15 @@ input, select, textarea { font-family: inherit; }
   font-size: 12px; color: var(--text-primary); text-decoration: none; }
 .patch-row:hover { color: var(--accent); }
 .patch-date { color: var(--text-muted); font-family: var(--mono); min-width: 80px; }
-.patch-title { flex: 1; }
+.patch-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.patch-title .mono { font-family: var(--mono); font-size: 12px; }
+.patch-all { color: var(--accent); }
+.step-patches { margin-top: 8px; font-size: 13px; }
+.step-patches-head { background: none; border: none; padding: 0; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.step-patches-head:hover { color: var(--accent); }
+.step-patches-head svg { width: 12px; height: 12px; transition: transform .15s; }
+.step-patches-head.open svg { transform: rotate(90deg); }
+.step-patches .patches-list { margin-top: 6px; padding-left: 16px; }
 .version-show-more { text-align: center; padding: 14px; border-top: 1px solid var(--border); }
 .hero { position: relative; z-index: 5; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
   padding: 32px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
@@ -1232,7 +1240,8 @@ function chain_response_to_steps(apiResult, cfg) {
       mb: (b => b ? Math.round(b / 1024 / 1024 * 10) / 10 : 0)(cfg?._meta?.[s.toVersion]?.file_size_bytes || s.sizeBytes || 0),
       plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
       req: false,
-      patches: [],
+      patches: s.patches || [],
+      patchesUrl: s.patchesUrl || '',
       dl: ver?.dl || '',
       order: ver?.order || '',
     };
@@ -1628,6 +1637,23 @@ function chain_time_text(mb, steps, mbit) {
   const fmt = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} ч${r ? ' ' + r + ' мин' : ''}` : `${m} мин`; };
   return `≈ ${fmt(dl + 15 * steps)} – ${fmt(dl + 20 * steps)}`;
 }
+// The version's patches («исправления» on releases.1c.ru): a line with the count and the
+// newest date, the list unfolds; every link leads to the portal's page of this version.
+function step_patches_html(s) {
+  const list = s.patches || [];
+  if (!list.length) return '';
+  const last = list[0].patch_date ? fmt_date(list[0].patch_date) : '';
+  const id = 'sp-' + Math.random().toString(36).slice(2, 8);
+  return `<div class="step-patches">
+    <button type="button" class="step-patches-head" onclick="const b=document.getElementById('${id}'); b.hidden=!b.hidden; this.classList.toggle('open', !b.hidden)" title="Исправления, выпущенные для этой версии">
+      ${icn_chevron_r()} Патчи: <b>${list.length}</b>${last ? ` · последний ${last}` : ''}</button>
+    <div id="${id}" class="patches-list" hidden>
+      ${list.map(p => `<a href="${s.patchesUrl || '#'}" target="_blank" rel="noopener" class="patch-row" title="${esc_html(p.description || '')}">
+        <span class="patch-date">${p.patch_date ? fmt_date(p.patch_date) : ''}</span>
+        <span class="patch-title"><span class="mono">${esc_html(p.title || p.uuid.slice(0, 8))}</span>${p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : ''}</span></a>`).join('')}
+      ${s.patchesUrl ? `<a href="${s.patchesUrl}" target="_blank" rel="noopener" class="patch-row patch-all">${icn_link()} Все патчи версии на releases.1c.ru ${icn_ext()}</a>` : ''}
+    </div></div>`;
+}
 function render_chain_steps(steps, fromV, cfg, reversed) {
   const est_mb = chain_median_mb(cfg);
   if (!steps || !steps.length) return `<div class="empty"><p>Обновление не требуется или цепочка не найдена</p></div>`;
@@ -1694,6 +1720,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
           ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} downloads.v8.1c.ru ${icn_ext()}</a>` : ''}
           ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления ${icn_ext()}</a>` : ''}
         </div>
+        ${step_patches_html(s)}
       </div>
     </div>`;
   });
@@ -1703,6 +1730,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     <div class="chain-summary">
       <div style="display:flex;gap:24px;flex-wrap:wrap">
         <div class="chain-stat"><div class="chain-stat-val">${steps.length}</div><div class="chain-stat-lbl">Шагов</div></div>
+        ${(() => { const n = steps.reduce((a, x) => a + ((x.patches || []).length), 0); return n ? `<div class="chain-stat" title="Исправления, выпущенные для версий цепочки"><div class="chain-stat-val">${n}</div><div class="chain-stat-lbl">Патчей</div></div>` : ''; })()}
         ${steps[steps.length-1]?.date ? `<div class="chain-stat"><div class="chain-stat-val">${fmt_date(steps[steps.length-1].date)}</div><div class="chain-stat-lbl">Дата релиза</div></div>` : ''}
         ${(()=>{
           const known = steps.filter(x => x.mb > 0).length;
@@ -3031,6 +3059,7 @@ async function load_version_patches(cfgId, verIdx) {
   const el2 = document.getElementById(patchesElId);
   if (el2) el2.innerHTML = render_patches(cfgId, verIdx, ver.patches);
 }
+function cfg_nick(cfgId) { const c = CONFIGS.find(x => x.id === String(cfgId)); return (c && (c.nick || nick_from_href(c.url_1c || ''))) || ''; }
 function render_patches(cfgId, verIdx, patchList) {
   if (!patchList || patchList.length === 0) return '';
   var last = patchList[0];
@@ -3041,8 +3070,10 @@ function render_patches(cfgId, verIdx, patchList) {
   for (var i = 0; i < patchList.length; i++) {
     var p = patchList[i];
     var pDate = p.patch_date ? fmt_date(p.patch_date) : '';
-    var pTitle = p.title || p.uuid;
-    links += '<a href="https://releases.1c.ru/patches/' + p.uuid + '" target="_blank" class="patch-row">' +
+    var pTitle = '<span class="mono">' + esc_html(p.title || p.uuid.slice(0, 8)) + '</span>' + (p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : '');
+    var nick = cfg_nick(cfgId);
+    var href = nick ? 'https://releases.1c.ru/patches/total?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(CONFIGS.find(function(c){ return c.id === String(cfgId); }).versions[verIdx].v) : '#';
+    links += '<a href="' + href + '" target="_blank" rel="noopener" class="patch-row" title="' + esc_html(p.description || '') + '">' +
       (pDate ? '<span class="patch-date">' + pDate + '</span>' : '') +
       '<span class="patch-title">' + pTitle + '</span>' +
       '</a>';
@@ -4231,7 +4262,7 @@ function api_rows() {
     { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
     { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
     { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
-    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку, файл .cfu, дата и размер (<code>sizeBytes</code>, если прочитан) каждого шага; <code>totalBytes</code> / <code>sizesKnown</code> для оценки времени.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку, файл .cfu, дата, размер (<code>sizeBytes</code>, если прочитан) и патчи (<code>patches</code>, <code>patchesUrl</code>) каждого шага; <code>totalBytes</code> / <code>sizesKnown</code> для оценки времени.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
     { path: '/api/transitions?config_id=<id>', desc: 'Переходы на другие продукты и редакции и с них.', example: '/api/transitions?config_id=96' },
     { path: '/api/exchanges?config_id=<id>', desc: 'Обмены (синхронизация) и переходы (перенос данных) типовых конфигураций по реестру 1CExchenge: механизм, план обмена, объекты, в какой поставке найдено, версии EnterpriseData. Без <code>config_id</code> — все связи.', example: '/api/exchanges?config_id=96' },
     { path: '/api/news?days=<дней>', desc: 'Лента событий: релизы, новые сборки платформы, повышение требований, конец длительной поддержки.', example: '/api/news?days=7' },

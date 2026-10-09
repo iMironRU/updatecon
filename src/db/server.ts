@@ -1079,7 +1079,7 @@ export async function buildServer() {
 
     // 2. Query DB first.
     const dbRows = await db.execute(sql`
-      SELECT uuid, title, patch_date::text, download_key
+      SELECT uuid, title, description, patch_date::text, download_key
       FROM patches
       WHERE config_id = ${configId} AND version = ${String(ver)}
       ORDER BY patch_date DESC NULLS LAST
@@ -1107,6 +1107,7 @@ export async function buildServer() {
             version: String(ver),
             uuid: p.uuid,
             title: p.title ?? null,
+            description: p.description ?? null,
             patchDate: p.patchDate ?? null,
             downloadKey: null as string | null,
           }));
@@ -1115,6 +1116,7 @@ export async function buildServer() {
             patches: parsed.map((p) => ({
               uuid: p.uuid,
               title: p.title ?? null,
+              description: p.description ?? null,
               patch_date: p.patchDate,
               download_key: null,
             })),
@@ -1158,8 +1160,16 @@ export async function buildServer() {
       FROM version_meta WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})`)) as any).rows as
       { version: string; file_size_bytes: number | null; release_date: string | null }[];
     const byV = new Map(meta.map((m) => [m.version, m]));
+    // The versions' patches («исправления»), newest first; the portal page lists them per version.
+    const prows = ((await db.execute(sql`
+      SELECT version, uuid, title, description, patch_date::text AS patch_date FROM patches
+      WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})
+      ORDER BY patch_date DESC NULLS LAST, id DESC`)) as any).rows as { version: string; uuid: string; title: string | null; description: string | null; patch_date: string | null }[];
+    const nick = cfg.releasesHref ? cfg.releasesHref.replace(/^\/project\//, "") : null;
     const steps = res.steps.map((st) => ({
       ...st, sizeBytes: byV.get(st.toVersion)?.file_size_bytes ?? null, releaseDate: byV.get(st.toVersion)?.release_date ?? null,
+      patches: prows.filter((p) => p.version === st.toVersion).map(({ version: _v, ...p }) => p),
+      patchesUrl: nick ? `https://releases.1c.ru/patches/total?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(st.toVersion)}` : null,
     }));
     const known = steps.filter((st) => st.sizeBytes != null);
     return { ...res, steps, totalBytes: known.reduce((a, st) => a + (st.sizeBytes as number), 0), sizesKnown: known.length };

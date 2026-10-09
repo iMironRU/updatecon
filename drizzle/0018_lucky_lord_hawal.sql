@@ -1,0 +1,1 @@
+ALTER TABLE "patches" ADD COLUMN "description" text;

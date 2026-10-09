@@ -31,7 +31,8 @@ export interface VersionFileInfo {
 export interface PatchInfo {
   uuid: string;
   patchDate: string | null;  // ISO "YYYY-MM-DD"
-  title?: string;
+  title?: string;            // the portal's name (EF_00_00945951)
+  description?: string;      // what it fixes
 }
 
 // Planned versions are 3-segment ("3.0.207"): parser/version.ts only knows
@@ -283,15 +284,23 @@ export function parseFileProperties(json: string): number | null {
   }
 }
 
-/** Parse /patches/total?nick=X&ver=Y — returns patch list. */
+/** Parse /patches/total?nick=X&ver=Y — the version's patches: name, what it fixes, date.
+ *  A row: checkbox value=<uuid>, td.nameColumn (EF_00_00945951), pre.descriptionColumn, td.dateColumn. */
 export function parsePatchesPage(html: string): PatchInfo[] {
   const patches: PatchInfo[] = [];
-  // Each row: onclick with uuid + dateColumn cell
-  const rowRe = /onclick="[^"]*\/patches\/([a-f0-9-]{36})"[\s\S]*?<td class="dateColumn">([^<]+)<\/td>/g;
-  for (const m of html.matchAll(rowRe)) {
+  const body = html.split(/id="patches-list-table-body"/)[1] ?? "";
+  const unesc = (t: string) => t.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+  for (const row of body.split(/<tr\b/).slice(1)) {
+    const uuid = row.match(/class\s*=\s*"download-flag"\s+value="([a-f0-9-]{36})"/)?.[1]
+      ?? row.match(/\/patches\/([a-f0-9-]{36})/)?.[1];
+    if (!uuid) continue;
+    const name = row.match(/class\s*=\s*"nameColumn[^"]*"\s*>\s*([^<\s][^<]*?)\s*</)?.[1]?.trim();
+    const desc = row.match(/<pre class="descriptionColumn">([\s\S]*?)<\/pre>/)?.[1];
+    const date = row.match(/<td class="dateColumn">([^<]+)<\/td>/)?.[1]?.trim();
     patches.push({
-      uuid: m[1],
-      patchDate: parseDate(m[2].trim()),
+      uuid, title: name ? unesc(name) : undefined,
+      description: desc ? unesc(desc).replace(/\r/g, "").trim().slice(0, 2000) : undefined,
+      patchDate: date ? parseDate(date) : null,
     });
   }
   return patches;
