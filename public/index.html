@@ -283,6 +283,9 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap; justify-content: space-between; }
 .chain-stat { text-align: center; }
 .chain-stat-val { font-size: 22px; font-weight: 800; color: var(--accent); }
+.step-note-plat { color: var(--accent); background: var(--accent-dim); display: flex; flex-wrap: wrap; line-height: 1.5; }
+.step-note-plat svg { width: 14px; height: 14px; flex: none; } .step-note-plat a { color: inherit; text-decoration: underline; } .step-note-plat .mono { font-family: var(--mono); }
+.chain-plat-input { width: 140px; padding: 4px 8px; font-size: 14px; text-align: center; }
 .chain-speed { background: transparent; color: var(--text-muted); border: none; font: inherit; text-transform: none; cursor: pointer; padding: 0; }
 .chain-speed option { color: var(--text); background: var(--surface); }
 .chain-stat-lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
@@ -1674,13 +1677,28 @@ function chain_median_mb(cfg) {
 const SPEED_KEY = 'uc_speed';
 const SPEEDS = [10, 30, 100, 300];   // Мбит/с
 function chain_speed() { try { const v = Number(localStorage.getItem(SPEED_KEY)); return SPEEDS.includes(v) ? v : 30; } catch (e) { return 30; } }
-function set_chain_speed(v) { try { localStorage.setItem(SPEED_KEY, String(v)); } catch (e) {} document.querySelectorAll('[data-chain-time]').forEach(el => el.textContent = chain_time_text(Number(el.dataset.mb), Number(el.dataset.steps), Number(v))); document.querySelectorAll('select.chain-speed').forEach(sel => sel.value = String(v)); }
-// Install: 15–20 min per update (dump, apply, DB update); download: the volume at the chosen speed.
-function chain_time_text(mb, steps, mbit) {
+function set_chain_speed(v) { try { localStorage.setItem(SPEED_KEY, String(v)); } catch (e) {} document.querySelectorAll('[data-chain-time]').forEach(el => el.textContent = chain_time_text(el.dataset.sizes, Number(el.dataset.plat), Number(v))); document.querySelectorAll('select.chain-speed').forEach(sel => sel.value = String(v)); }
+// Time: download of the volume at the chosen speed + applying each update, weighted by its
+// size (dump, /UpdateCfg, /UpdateDBCfg, handlers grow with the package: 10–40 min, 15 when the
+// size is unknown) + 20–40 min for every platform upgrade the chain needs.
+function step_minutes(mb) { return mb > 0 ? Math.min(40, Math.max(10, 8 + mb / 20)) : 15; }
+function chain_time_text(sizes, platUps, mbit) {
+  const list = Array.isArray(sizes) ? sizes : String(sizes || '').split(',').filter(Boolean).map(Number);
+  const mb = list.reduce((a, b) => a + (b || 0), 0);
   const dl = mb ? mb * 8 / mbit / 60 : 0;
+  const inst = list.reduce((a, b) => a + step_minutes(b), 0);
   const fmt = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} ч${r ? ' ' + r + ' мин' : ''}` : `${m} мин`; };
-  return `≈ ${fmt(dl + 15 * steps)} – ${fmt(dl + 20 * steps)}`;
+  return `≈ ${fmt(dl + inst * 0.8 + platUps * 20)} – ${fmt(dl + inst * 1.3 + platUps * 40)}`;
 }
+// The user's platform build (shared with the stats page's check, localStorage uc_platform):
+// steps whose minimum is above it get a «обновите платформу» item.
+function chain_set_platform(v, blockId) {
+  v = v.trim();
+  try { if (v) localStorage.setItem(PC_KEY, v); else localStorage.removeItem(PC_KEY); } catch (e) {}
+  const st = CHAIN_RENDER_STATE[blockId]; const el = document.getElementById(blockId);
+  if (st && el) el.outerHTML = render_chain_steps(st.steps, st.fromV, st.cfg, st.reversed);
+}
+function plat_build(req) { return (String(req || '').match(/\d+\.\d+\.\d+\.\d+/g) || []).sort(platform_cmp_v)[0] || ''; }
 // «Что нового» of the step's version: a teaser line, the full text loads on demand.
 function step_news_html(s, cfg) {
   if (!s.news || !cfg) return '';
@@ -1728,6 +1746,14 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
   const toV = steps[steps.length - 1].v;
   const blockId = 'chain-' + (cfg?.id||'x') + '-' + fromV.replace(/\./g,'') + '-' + toV.replace(/\./g,'');
   CHAIN_RENDER_STATE[blockId] = { steps, fromV, cfg, reversed: !!reversed };
+  // Platform upgrades along the way: from the user's build, each step whose minimum is higher.
+  const myPlat = pc_saved();
+  let curPlat = myPlat, platUps = 0;
+  steps.forEach(s => {
+    const req = plat_build(s.plat);
+    s._platUp = (myPlat && req && platform_cmp_v(req, curPlat) > 0) ? req : '';
+    if (s._platUp) { curPlat = req; platUps++; }
+  });
 
   const display = reversed ? [...steps].reverse() : steps;
   const startLabel = reversed ? 'Целевая версия' : 'Текущая версия';
@@ -1783,6 +1809,8 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
           ${s.plat ? `<span class="step-platform">Платформа &ge; ${s.plat}</span>` : ''}
         </div>
         ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
+        ${s._platUp ? `<div class="step-note step-note-plat">${icn_alert()} Перед этим шагом обновите платформу до <b class="mono">${s._platUp}</b> — у вас ${esc_html(myPlat)}.
+          <a href="/platform?build=${encodeURIComponent(s._platUp)}">Сборки</a> · <a href="/install">Установка платформы</a></div>` : ''}
         <div class="step-actions">
           ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru ${icn_ext()}</a>` : ''}
           ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} downloads.v8.1c.ru ${icn_ext()}</a>` : ''}
@@ -1808,8 +1836,9 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
           const approx = known < steps.length;
           const speed = chain_speed();
           return `<div class="chain-stat" title="${approx ? `Размер известен для ${known} из ${steps.length} шагов, остальное — оценка` : 'Сумма размеров дистрибутивов обновлений'}"><div class="chain-stat-val">${approx ? '≈ ' : ''}${fmt_mb(total_mb)}</div><div class="chain-stat-lbl">Объём обновлений</div></div>
-          <div class="chain-stat" title="Скачивание объёма на выбранной скорости + 15–20 минут на каждое обновление (выгрузка базы, применение, обновление ИБ)"><div class="chain-stat-val" data-chain-time data-mb="${total_mb}" data-steps="${steps.length}">${chain_time_text(total_mb, steps.length, speed)}</div>
-            <div class="chain-stat-lbl">Время · <select class="chain-speed" onchange="set_chain_speed(this.value)" title="Скорость скачивания">${SPEEDS.map(v => `<option value="${v}"${v === speed ? ' selected' : ''}>${v} Мбит/с</option>`).join('')}</select></div></div>`; })()}
+          <div class="chain-stat" title="Скачивание объёма на выбранной скорости + применение каждого обновления (10–40 мин по размеру, 15 без размера)${platUps ? ` + обновление платформы (${platUps})` : ''}"><div class="chain-stat-val" data-chain-time data-sizes="${steps.map(x => x.mb || est_mb || 0).join(',')}" data-plat="${platUps}">${chain_time_text(steps.map(x => x.mb || est_mb || 0), platUps, speed)}</div>
+            <div class="chain-stat-lbl">Время · <select class="chain-speed" onchange="set_chain_speed(this.value)" title="Скорость скачивания">${SPEEDS.map(v => `<option value="${v}"${v === speed ? ' selected' : ''}>${v} Мбит/с</option>`).join('')}</select></div></div>
+          <div class="chain-stat chain-plat" title="Ваша сборка платформы: шаги, которым нужна выше, получат пункт «обновите платформу», время учтёт её установку"><input class="input input-mono chain-plat-input" value="${esc_html(myPlat)}" placeholder="8.3.24.1691" inputmode="decimal" aria-label="Ваша платформа" onchange="chain_set_platform(this.value, '${blockId}')"><div class="chain-stat-lbl">Ваша платформа${platUps ? ` · обновить ${platUps} ${plural(platUps, 'раз', 'раза', 'раз')}` : myPlat ? ' · хватает' : ''}</div></div>`; })()}
       </div>
       <div class="chain-actions">
         ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${toV}')">${icn_share()} Поделиться</button>` : ''}
@@ -1827,11 +1856,6 @@ function toggle_chain_dir(blockId) {
   if (!el) return;
   const newHtml = render_chain_steps(s.steps, s.fromV, s.cfg, !s.reversed);
   el.outerHTML = newHtml;
-}
-function est_time(steps) {
-  const mins = steps * 30;
-  if (mins < 60) return `${mins} мин`;
-  return `${Math.floor(mins/60)} ч ${mins%60} мин`;
 }
 function handle_dl(e, url) {
   if (!url) { e.preventDefault(); toast('Ссылка для скачивания не указана'); return; }

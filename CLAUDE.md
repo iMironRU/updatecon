@@ -151,7 +151,10 @@ drizzle/                generated migration SQL (committed)
   `sizes_all`, newest first, `size_checked_at` marks a look even when the portal has no size).
   `/api/chain` returns `sizeBytes`/`releaseDate` per step; the UI shows «≈ median of the
   configuration's known sizes» for the rest and an install time estimate (download at a chosen
-  speed, localStorage uc_speed, + 15–20 min per update).
+  speed, localStorage uc_speed, + 10–40 min per update weighted by size, 15 unknown, + 20–40 min per
+  platform upgrade). The user's platform build (localStorage uc_platform, shared with the stats
+  page check) is typed in the chain summary; a step whose minimum is above the current build
+  gets a «обновите платформу до X» item (/platform?build=, /install).
 
 - `patches` (uuid unique → config_id, version, title = the portal's name EF_…, description,
   patch_date) — «исправления» from releases.1c.ru `/patches/total?nick=&ver=`, read by the
