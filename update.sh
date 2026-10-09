@@ -117,29 +117,91 @@ else
   warn "Не удалось обновить Caddyfile — продолжаем с текущим"
 fi
 
+# ── Резервная копия базы ──────────────────────────────────────────────────────
+# Перед сменой образа (миграции) — дамп в backups/, храним последние 7.
+# Данные сами восстановимы из снимка, но настройки и подписки — только отсюда.
+BACKUP_DIR="${UPDATECON_BACKUPS:-$PROJECT_DIR/backups}"
+if [ -n "$($DC ps -q db 2>/dev/null)" ]; then
+  mkdir -p "$BACKUP_DIR"
+  BACKUP="$BACKUP_DIR/updatecon-$(date +%Y%m%d-%H%M%S).sql.gz"
+  if $DC exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' 2>> "$LOG_FILE" | gzip > "$BACKUP" && [ -s "$BACKUP" ]; then
+    log "Копия базы: $BACKUP ($(du -h "$BACKUP" | cut -f1))"
+    ls -1t "$BACKUP_DIR"/updatecon-*.sql.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
+  else
+    rm -f "$BACKUP"; warn "Копия базы не снята — продолжаем"
+  fi
+fi
+
+# ── Запоминаем, к чему откатываться ───────────────────────────────────────────
+WEB_CID="$($DC ps -q web 2>/dev/null || true)"
+OLD_IMAGE_REF=""; OLD_IMAGE_ID=""
+if [ -n "$WEB_CID" ]; then
+  OLD_IMAGE_REF="$(docker inspect --format '{{.Config.Image}}' "$WEB_CID" 2>/dev/null || true)"
+  OLD_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$WEB_CID" 2>/dev/null || true)"
+fi
+for f in docker-compose.yml docker-compose.proxy.yml Caddyfile; do
+  [ -f "$f" ] && cp -f "$f" "$f.prev"
+done
+
 run_spin "Скачиваем образ из ghcr.io" $DC pull
 
 run_spin "Перезапускаем сервисы" $DC up -d
 
 # ── Проверка ──────────────────────────────────────────────────────────────────
 # WEB_PORT пустой когда используется Caddy (трафик идёт через :80).
-# Проверяем: сначала через Caddy (:80), затем прямой порт.
+# Проверяем: сначала через Caddy (:80), затем прямой порт. До 60 секунд: образ
+# стартует с миграциями.
 WEB_PORT_RAW="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d= -f2 || true)"
+_healthy() {
+  curl -fsS --max-time 5 "http://localhost:80/api/health" >> "$LOG_FILE" 2>&1 && return 0
+  [ -n "$WEB_PORT_RAW" ] && curl -fsS --max-time 5 "http://localhost:${WEB_PORT_RAW}/api/health" >> "$LOG_FILE" 2>&1 && return 0
+  return 1
+}
+_wait_healthy() {
+  local i
+  for i in $(seq 1 20); do
+    _healthy && return 0
+    # the container died (a crash on start) — no point waiting the full minute
+    [ -n "$($DC ps -q web 2>/dev/null)" ] && [ "$($DC ps --status running -q web 2>/dev/null | wc -l)" = "0" ] && [ "$i" -gt 3 ] && return 1
+    sleep 3
+  done
+  return 1
+}
 printf "  ${CYAN}⠋${NC}  Ждём веб-сервер..."
 OK=0
-for i in $(seq 1 20); do
-  curl -fsS "http://localhost:80/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }
-  if [ -n "$WEB_PORT_RAW" ]; then
-    curl -fsS "http://localhost:${WEB_PORT_RAW}/api/health" >> "$LOG_FILE" 2>&1 && { OK=1; break; }
+# UPDATECON_FAIL_TEST=1 — проверка отката без поломки: считаем, что сервер не ответил.
+if [ "${UPDATECON_FAIL_TEST:-}" != "1" ] && _wait_healthy; then OK=1; fi
+
+if [ "$OK" = "1" ]; then
+  printf "\r  ${GREEN}✓${NC}  Веб-сервер отвечает   \n"
+  rm -f docker-compose.yml.prev docker-compose.proxy.yml.prev Caddyfile.prev
+  echo
+  echo -e "${GREEN}${BOLD}  ✓  Апдейкон обновлён.${NC}"
+  echo
+  rm -f "$LOG_FILE"
+  exit 0
+fi
+
+# ── Откат ─────────────────────────────────────────────────────────────────────
+printf "\r  ${RED}✗${NC}  Веб-сервер не ответил за минуту   \n"
+echo "      последние строки журнала web:" >&2
+$DC logs --tail 15 web 2>&1 | sed 's/^/      /' >&2 || true
+if [ -n "$OLD_IMAGE_ID" ] && [ -n "$OLD_IMAGE_REF" ]; then
+  echo
+  warn "Откатываем на прежний образ ${OLD_IMAGE_ID:7:12}"
+  for f in docker-compose.yml docker-compose.proxy.yml Caddyfile; do
+    [ -f "$f.prev" ] && mv -f "$f.prev" "$f"
+  done
+  docker tag "$OLD_IMAGE_ID" "$OLD_IMAGE_REF" >> "$LOG_FILE" 2>&1 || true
+  $DC up -d >> "$LOG_FILE" 2>&1 || true
+  if _wait_healthy; then
+    log "Прежняя версия работает. Новая не поднялась — лог: $LOG_FILE"
+    warn "Следующий запуск update.sh снова скачает новый образ. Если новая версия мигрировала базу, копия: ${BACKUP:-нет}"
+  else
+    err "Откат не помог — проверьте: $DC logs web. Копия базы: ${BACKUP:-нет}"
   fi
-  sleep 3
-done
-[ "$OK" = "1" ] \
-  && printf "\r  ${GREEN}✓${NC}  Веб-сервер отвечает   \n" \
-  || printf "\r  ${YELLOW}!${NC}  Не ответил — проверьте: %s logs web\n" "$DC"
-
+else
+  err "Нечего откатывать (прежний образ не найден) — проверьте: $DC logs web"
+fi
 echo
-echo -e "${GREEN}${BOLD}  ✓  Апдейкон обновлён.${NC}"
-echo
-
-rm -f "$LOG_FILE"
+exit 1

@@ -294,12 +294,15 @@ Manager, nginx, Traefik) — `.env` gets `COMPOSE_FILE=docker-compose.proxy.yml`
 `updatecon:3000` and listens on 127.0.0.1:WEB_PORT; the admin UI shows «внешний
 прокси» instead of the Caddy form. Optional nightly app update:
 `/etc/cron.d/updatecon` (03:30) runs the newest update.sh with UPDATECON_DIR;
-`AUTO_UPDATE=1` tells the admin UI. update.sh / manage.sh / uninstall.sh work in
+`AUTO_UPDATE=1` tells the admin UI. update.sh dumps the database first (backups/, 7 kept;
+`UPDATECON_BACKUPS` for another folder), remembers the running image, waits up to 60 s for
+/api/health and otherwise rolls back (compose files + the previous image tag) and exits 1;
+`UPDATECON_FAIL_TEST=1` exercises the rollback. update.sh / manage.sh / uninstall.sh work in
 both modes (docker compose reads COMPOSE_FILE from .env — never pass `-f`).
 Worker reads the ITS account (admin UI or `.env`); without one it applies the
 published snapshot. The production install (upd.send2me.ru) is a standard
 proxy-mode install at /opt/updatecon behind Nginx Proxy Manager, updated with its
-refresh.sh (no nightly app update) — see the memory note.
+refresh.sh = git pull + update.sh (no nightly app update) — see the memory note.
 
 ## Module resolution gotcha — IMPORTANT
 
