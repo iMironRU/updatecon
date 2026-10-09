@@ -302,7 +302,7 @@ async function syncPatchesForConfig(
         await db
           .insert(patches)
           .values({ configId, version: ver, uuid: p.uuid, title: p.title ?? null, description: p.description ?? null, patchDate: p.patchDate ?? null })
-          .onConflictDoUpdate({ target: patches.uuid, set: { title: p.title ?? null, description: p.description ?? null, patchDate: p.patchDate ?? null } });
+          .onConflictDoUpdate({ target: [patches.configId, patches.version, patches.uuid], set: { title: p.title ?? null, description: p.description ?? null, patchDate: p.patchDate ?? null } });
         total++;
       }
       await delay(150);

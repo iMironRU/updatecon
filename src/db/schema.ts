@@ -260,7 +260,8 @@ export const patches = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    patchUq: uniqueIndex("patches_uuid_uq").on(t.uuid),
+    // the same patch (uuid) is issued for several configurations and versions (БП, БП базовая, КОРП)
+    patchUq: uniqueIndex("patches_config_version_uuid_uq").on(t.configId, t.version, t.uuid),
     configVersionIdx: index("patches_config_version_idx").on(t.configId, t.version),
   }),
 );
