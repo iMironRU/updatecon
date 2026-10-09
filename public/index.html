@@ -1073,12 +1073,9 @@ function adapt_config(row) {
   const gn = row.group_name || '';
   const templateCode = row.template_code || '';
   const vendorDir = templateCode.split('/')[0].toLowerCase();
-  // Type from the releases.1c.ru group; without one, guess from the template's vendor folder.
-  const cfgType = /Конфигурации проекта/i.test(gn) ? 'partner'
-                : /Отраслевые решения/i.test(gn)   ? 'industry'
-                : gn                                ? 'standard'
-                : vendorDir === '1c'                ? 'standard'
-                : 'partner';
+  // Type from the releases.1c.ru group when the project is linked; the rest is settled by
+  // assign_types() after the catalog is loaded (sibling editions, 1С:Решения, vendor folder).
+  const cfgType = type_from_group(gn) || type_from_name(row.name, templateCode) || null;
   const isLatestEdition = row.is_latest_edition !== false;
   return {
     id,
@@ -1166,6 +1163,7 @@ async function initDataOnce() {
     ]);
     TAG_DICT = tags || [];
     CONFIGS = rows.map(adapt_config);
+    assign_types(CONFIGS);
     assign_levels(CONFIGS);
     CONFIGS.forEach(c => { c.stale = is_stale(c); });
     CONFIGS_LOADED = true;
@@ -1326,6 +1324,35 @@ function level_stem(templateCode) {
   var parts = (templateCode || '').toLowerCase().split('/');
   var t = parts.pop().replace(/(corp|prof|base)(?=[a-z0-9_]*$)/, '');
   return parts.join('/') + '/' + t;
+}
+// Kind of product: typical 1C / industry / partner / code library / developer tool.
+function type_from_group(gn) {
+  if (!gn) return null;
+  if (/конфигурации проекта/i.test(gn)) return 'partner';
+  if (/отраслев/i.test(gn)) return 'industry';
+  if (/библиотек/i.test(gn)) return 'library';
+  if (/технологическ/i.test(gn)) return 'tech';
+  if (/типовые|международн/i.test(gn)) return 'standard';
+  return null;
+}
+// Standard libraries and developer tools are recognisable by name even without a portal group.
+function type_from_name(name, templateCode) {
+  const n = name || '', t = (templateCode || '').toLowerCase();
+  if (/^Библиотека(Стандартных|Электронных|Подключаемого|Интернет|Регламентированной|Технологии)|^(БСП|БЭД|БПО|БИП|БРО|БТС)\b/.test(n) || /^1c\/(ssl|led|pel|bip|bro|bts)\b/.test(t)) return 'library';
+  if (/^(АвтоматизированнаяПроверкаКонфигураций|КонвертацияДанных|ТестЦентр|СценарноеТестирование|1СКлиентТестирования)/.test(n) || /^1c\/(acc|conversion|testcenter)\b/.test(t)) return 'tech';
+  return null;
+}
+// Without a portal group (older editions, unlinked projects): the type of a sibling edition of
+// the same template, else 1С:Решения («1С-Совместно» = industry), else the vendor folder.
+function assign_types(configs) {
+  var byTpl = {};
+  configs.forEach(function(c) { if (c.type && c.groupName && !byTpl[c.templateKey]) byTpl[c.templateKey] = c.type; });
+  configs.forEach(function(c) {
+    if (c.type) return;
+    c.type = byTpl[c.templateKey]
+      || (/совместно/i.test(c.sol.kind) ? 'industry' : /типовой/i.test(c.sol.kind) ? 'standard' : null)
+      || (c.templateKey.split('/')[0] === '1c' ? 'standard' : 'partner');
+  });
 }
 function assign_levels(configs) {
   var byTpl = {};
@@ -1504,11 +1531,11 @@ function region_label(r) {
   return labels[r] || r;
 }
 function type_label(t) {
-  return { standard: 'Типовая', partner: 'Партнёрская', industry: 'Отраслевая' }[t] || t;
+  return { standard: 'Типовая', partner: 'Партнёрская', industry: 'Отраслевая', library: 'Библиотека', tech: 'Технологическая' }[t] || t;
 }
 function type_badge(t) {
-  const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green' }[t] || 'badge-gray';
-  const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry() };
+  const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green', library: 'badge-gray', tech: 'badge-gray' }[t] || 'badge-gray';
+  const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry(), library: icn_copy(), tech: icn_term() };
   return `<span class="badge ${cls} badge-link"${fattr('type', t, 'Показать все: ' + type_label(t))}>${icons[t]||''} ${type_label(t)}</span>`;
 }
 // Where the releases.1c.ru "Общая информация о конфигурации" link points to.
@@ -2607,9 +2634,9 @@ function render_facets() {
   set('f-orgs', org.html); showGroup('g-orgs', org);
 
   const typeCnt = count_by(catalog_filter(base, 'types'), c => [c.type]);
-  set('f-types', ['standard', 'industry', 'partner']
-    .map(t => facet_chip('types', t, { standard: 'Типовые', industry: 'Отраслевые', partner: 'Партнёрские' }[t], typeCnt.get(t) || 0,
-      { standard: 'Типовые решения фирмы 1С', industry: 'Отраслевые решения (1С и партнёры)', partner: 'Конфигурации партнёров' }[t])).join(''));
+  set('f-types', ['standard', 'industry', 'partner', 'library', 'tech'].filter(t => typeCnt.get(t) || CAT.types.includes(t))
+    .map(t => facet_chip('types', t, { standard: 'Типовые', industry: 'Отраслевые', partner: 'Партнёрские', library: 'Библиотеки', tech: 'Технологические' }[t], typeCnt.get(t) || 0,
+      { standard: 'Типовые решения фирмы 1С', industry: 'Отраслевые решения (1С и партнёры)', partner: 'Конфигурации партнёров', library: 'Стандартные библиотеки для разработчиков (БСП, БЭД…)', tech: 'Инструменты разработчика: проверка конфигураций, конвертация данных' }[t])).join(''));
 
   // Разработчик — ~300 of them: search box, top 8, "show all"; selected ones always visible.
   // Keyed by the cleaned name, case-insensitively ("1С-Рарус" = "1С-РАРУС").
