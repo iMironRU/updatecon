@@ -43,12 +43,19 @@ src/db/
   exchanges.ts          обмены/переходы between standard configurations from the 1CExchenge registry
                         (github.com/iMironRU/1CExchenge data/registry.json, fetched as step 4 of «Обновить
                         всё»); sides mapped to configurations by product key + edition (KEY_TEMPLATE)
+  events.ts             the release journal (release_events): recordEvents() = step 5 of «Обновить всё»
+                        writes new facts once (unique type+key, the data's own date, attributes frozen:
+                        first release, raised_from via SQL plat_min(), branch = an older line updated,
+                        patches, platform builds, to85, lts_end; first run fills 180 days); journal(days)
+                        feeds /api/news (stats.ts newsEvents falls back to computing when the table is
+                        empty). In snapshots. Patches are grouped per config/version/day in the feed.
   push.ts               Web Push «Уведомлять о релизах моих конфигураций»: VAPID keys made once into
-                        settings (private sealed), push_subscriptions (endpoint, favourites, seen
-                        {config_id: version}); notifyReleases() after a snapshot apply / «Обновить всё»
-                        (worker + admin) sends what is newer than `seen`; 404/410 or 5 failures delete.
-                        sw.js shows the notification and opens data.url. iOS: installed PWA only.
-                        Not in snapshots. Library: web-push.
+                        settings (private sealed), push_subscriptions (endpoint, favourites,
+                        last_event_id = journal cursor); notifyReleases() after a snapshot apply /
+                        «Обновить всё» (worker + admin) sends the journal entries after the cursor
+                        (releases, ДП-branch updates, patches of the favourites); the cursor moves only
+                        on delivery; 404/410 or 5 failures delete. sw.js shows the notification and
+                        opens data.url. iOS: installed PWA only. Not in snapshots. Library: web-push.
   scripts.ts            scripts for the user's machine (/api/script/chain, /api/script/platform):
                         apply an update chain in designer batch mode / install a platform build,
                         PowerShell + bash; templates in src/scripts (copied to dist/scripts like src/admin)
@@ -61,8 +68,7 @@ src/releases/
   chain.ts              findChain(): recursive-CTE shortest path
   server.ts             Fastify API + serves public/
   worker.ts             migrate -> optional immediate import -> cron
-public/index.html       single-file UI (vanilla JS, no build); /news is computed from the data by stats.ts
-                        newsEvents (no event log yet); «Мои конфигурации» = config ids in localStorage uc_fav;
+public/index.html       single-file UI (vanilla JS, no build); /news reads the release journal (events.ts); «Мои конфигурации» = config ids in localStorage uc_fav;
                         clean paths (/config/96) via the History API,
                         server falls back to index.html; old /#/… links are rewritten on load
 public/sw.js            PWA service worker: network first, cache fallback for the public pages and

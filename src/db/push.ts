@@ -4,9 +4,10 @@
  * The page subscribes through the service worker (sw.js `push` event shows the
  * notification, `notificationclick` opens the page) and sends us the
  * subscription with its favourite config ids (/api/push/subscribe). After every
- * data change (snapshot applied, «Обновить всё») notifyReleases() compares each
- * subscriber's `seen` {config_id: version} with the newest versions and sends
- * one notification per subscriber with what is new. VAPID keys are made once
+ * data change (snapshot applied, «Обновить всё») notifyReleases() reads the
+ * release journal (release_events) after each subscriber's cursor
+ * (last_event_id): releases, branch (ДП) updates and patches of its
+ * configurations, one notification per subscriber. VAPID keys are made once
  * and kept in settings (the private one sealed like the ITS passwords).
  * Endpoints answering 404/410 (unsubscribed) are deleted; five failures in a row
  * delete too.
@@ -52,33 +53,13 @@ export function validSubscription(x: unknown): x is SubscriptionInput {
     && !!s.keys && typeof s.keys.p256dh === "string" && typeof s.keys.auth === "string" && s.keys.p256dh.length < 200 && s.keys.auth.length < 100;
 }
 
-/** Newest version per configuration (highest number with a release date, else the LST's highest edge target). */
-async function latestVersions(ids: number[]): Promise<Map<number, string>> {
-  const out = new Map<number, string>();
-  if (!ids.length) return out;
-  const rows = ((await db.execute(sql`
-    SELECT c.id,
-      COALESCE(
-        (SELECT version FROM version_meta vm WHERE vm.config_id = c.id AND vm.release_date IS NOT NULL AND vm.version ~ '^[0-9]+(\\.[0-9]+)*$'
-           ORDER BY string_to_array(vm.version, '.')::bigint[] DESC LIMIT 1),
-        (SELECT to_version FROM update_edges ue WHERE ue.config_id = c.id AND ue.to_version ~ '^[0-9]+(\\.[0-9]+)*$'
-           ORDER BY string_to_array(ue.to_version, '.')::bigint[] DESC LIMIT 1)
-      ) AS v
-    FROM configurations c WHERE c.id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)) as any).rows as { id: number; v: string | null }[];
-  for (const r of rows) if (r.v) out.set(Number(r.id), r.v);
-  return out;
-}
-
-/** Save (or refresh) a subscription with the subscriber's favourites; `seen` starts at today's versions. */
+/** Save (or refresh) a subscription with the subscriber's favourites; a new one starts at the journal's end. */
 export async function saveSubscription(sub: SubscriptionInput, configIds: number[], userAgent?: string) {
   const ids = [...new Set(configIds.filter((n) => Number.isInteger(n) && n > 0))].slice(0, MAX_IDS);
-  const latest = await latestVersions(ids);
-  const existing = (await db.select({ seen: pushSubscriptions.seen }).from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, sub.endpoint)))[0];
-  const seen: Record<string, string> = {};
-  for (const id of ids) seen[id] = existing?.seen?.[id] ?? latest.get(id) ?? "";
-  const row = { p256dh: sub.keys.p256dh, auth: sub.keys.auth, configIds: ids, seen, userAgent: userAgent?.slice(0, 300) ?? null, failures: 0, updatedAt: new Date() };
-  await db.insert(pushSubscriptions).values({ endpoint: sub.endpoint, ...row })
-    .onConflictDoUpdate({ target: pushSubscriptions.endpoint, set: row });
+  const lastId = Number(((await db.execute(sql`SELECT coalesce(max(id), 0)::int AS n FROM release_events`)) as any).rows[0].n);
+  const row = { p256dh: sub.keys.p256dh, auth: sub.keys.auth, configIds: ids, userAgent: userAgent?.slice(0, 300) ?? null, failures: 0, updatedAt: new Date() };
+  await db.insert(pushSubscriptions).values({ endpoint: sub.endpoint, ...row, lastEventId: lastId })
+    .onConflictDoUpdate({ target: pushSubscriptions.endpoint, set: row });   // an existing cursor stays
   return ids.length;
 }
 
@@ -117,50 +98,55 @@ export async function sendTest(endpoint: string): Promise<"ok" | "gone" | "error
   return send(row, { title: "Апдейкон", body: "Уведомления работают: так придёт сообщение о новом релизе.", url: "/news?mine=1", tag: "test" });
 }
 
-export interface NotifyResult { subscribers: number; notified: number; releases: number; gone: number }
+export interface NotifyResult { subscribers: number; notified: number; events: number; gone: number }
 
-/** Tell every subscriber about releases newer than what they were told about. */
+interface Ev { id: number; type: string; config_id: number; version: string; data: Record<string, any> }
+
+/** Tell every subscriber about the journal entries after its cursor: releases, branch updates, patches. */
 export async function notifyReleases(log: (m: string) => void = (m) => console.log(`[push] ${m}`)): Promise<NotifyResult> {
   const subs = await db.select().from(pushSubscriptions);
-  const res: NotifyResult = { subscribers: subs.length, notified: 0, releases: 0, gone: 0 };
+  const res: NotifyResult = { subscribers: subs.length, notified: 0, events: 0, gone: 0 };
   if (!subs.length) return res;
+  const minId = Math.min(...subs.map((s) => s.lastEventId));
   const ids = [...new Set(subs.flatMap((s) => s.configIds))];
-  const latest = await latestVersions(ids);
+  if (!ids.length) return res;
+  const events = ((await db.execute(sql`
+    SELECT id, type, config_id, version, data FROM release_events
+    WHERE id > ${minId} AND type IN ('release', 'patch') AND config_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+    ORDER BY id`)) as any).rows as Ev[];
+  const maxId = Number(((await db.execute(sql`SELECT coalesce(max(id), 0)::int AS n FROM release_events`)) as any).rows[0].n);
   const names = new Map<number, string>();
-  if (ids.length) {
-    const rows = ((await db.execute(sql`SELECT id, coalesce(display_name, name) AS name FROM configurations
-      WHERE id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)) as any).rows as { id: number; name: string }[];
-    for (const r of rows) names.set(Number(r.id), r.name);
-  }
-  const newer = (a: string, b: string) => {   // a > b by numeric segments
-    const x = a.split(".").map(Number), y = b.split(".").map(Number);
-    for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? 0) - (y[i] ?? 0); if (d) return d > 0; }
-    return false;
-  };
+  const nrows = ((await db.execute(sql`SELECT id, coalesce(display_name, name) AS name FROM configurations
+    WHERE id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)) as any).rows as { id: number; name: string }[];
+  for (const r of nrows) names.set(Number(r.id), r.name);
+
   for (const s of subs) {
-    const fresh: { id: number; v: string }[] = [];
-    const seen = { ...s.seen };
-    for (const id of s.configIds) {
-      const v = latest.get(id);
-      if (!v) continue;
-      const was = seen[id];
-      if (!was || newer(v, was)) { if (was) fresh.push({ id, v }); seen[id] = v; }   // no `was`: first sight, nothing to tell
+    const mine = events.filter((e) => e.id > s.lastEventId && s.configIds.includes(Number(e.config_id)));
+    if (!mine.length) {
+      if (maxId > s.lastEventId) await db.update(pushSubscriptions).set({ lastEventId: maxId }).where(eq(pushSubscriptions.endpoint, s.endpoint));
+      continue;
     }
-    if (!fresh.length) { if (JSON.stringify(seen) !== JSON.stringify(s.seen)) await db.update(pushSubscriptions).set({ seen }).where(eq(pushSubscriptions.endpoint, s.endpoint)); continue; }
-    const lines = fresh.slice(0, 4).map((f) => `${names.get(f.id) ?? "#" + f.id} — ${f.v}`);
-    if (fresh.length > 4) lines.push(`и ещё ${fresh.length - 4}`);
+    const rel = mine.filter((e) => e.type === "release");
+    const patches = new Map<string, number>();   // "config:version" → count
+    for (const e of mine) if (e.type === "patch") { const k = `${e.config_id}:${e.version}`; patches.set(k, (patches.get(k) ?? 0) + 1); }
+    const lines: string[] = [];
+    for (const e of rel.slice(0, 4)) lines.push(`${names.get(Number(e.config_id)) ?? "#" + e.config_id} — ${e.version}${e.data?.branch ? " (ветка ДП)" : ""}${e.data?.raised_from ? ", платформа ↑" : ""}`);
+    if (rel.length > 4) lines.push(`и ещё релизов: ${rel.length - 4}`);
+    for (const [k, c] of [...patches].slice(0, 3)) { const [cid, v] = k.split(":"); lines.push(`${names.get(Number(cid)) ?? "#" + cid} ${v}: ${c} ${c === 1 ? "исправление" : c < 5 ? "исправления" : "исправлений"}`); }
+    if (patches.size > 3) lines.push(`и ещё патчей: ${patches.size - 3}`);
+    const one = rel.length === 1 && patches.size === 0;
     const payload: Payload = {
-      title: fresh.length === 1 ? "Новый релиз" : `Новых релизов: ${fresh.length}`,
+      title: one ? "Новый релиз" : rel.length ? `Новых релизов: ${rel.length}${patches.size ? ", патчи" : ""}` : "Новые патчи",
       body: lines.join("\n"),
-      url: fresh.length === 1 ? `/config/${fresh[0].id}` : "/news?mine=1",
+      url: one ? `/config/${rel[0].config_id}` : patches.size === 1 && !rel.length ? `/config/${[...patches.keys()][0].split(":")[0]}` : "/news?mine=1",
       tag: "releases",
     };
     const r = await send(s, payload);
     if (r === "gone") { res.gone++; continue; }
-    if (r !== "ok") continue;   // not delivered: `seen` stays, the next run tries again
-    res.notified++; res.releases += fresh.length;
-    await db.update(pushSubscriptions).set({ seen }).where(eq(pushSubscriptions.endpoint, s.endpoint));
+    if (r !== "ok") continue;   // not delivered: the cursor stays, the next run tries again
+    res.notified++; res.events += mine.length;
+    await db.update(pushSubscriptions).set({ lastEventId: maxId }).where(eq(pushSubscriptions.endpoint, s.endpoint));
   }
-  log(`подписчиков ${res.subscribers}, уведомлено ${res.notified} (релизов ${res.releases}), отписалось ${res.gone}`);
+  log(`подписчиков ${res.subscribers}, уведомлено ${res.notified} (событий ${res.events}), отписалось ${res.gone}`);
   return res;
 }

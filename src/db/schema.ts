@@ -478,4 +478,32 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+  lastEventId: integer("last_event_id").notNull().default(0),   // release_events cursor: told up to here
 });
+
+/**
+ * release_events — the journal the news feed and push notifications read.
+ * Facts are recorded once, when an import first sees them (recordEvents, step 5
+ * of «Обновить всё»), with the data's own date and the attributes as they were
+ * then; nothing is recomputed or deleted later, so a notable release stays
+ * notable and a subscriber is told exactly once. `key` makes recording
+ * idempotent. In snapshots (ids follow the publisher).
+ */
+export const releaseEvents = pgTable(
+  "release_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    type: text("type").notNull(),            // release | patch | platform_build | to85 | lts_end
+    key: text("key").notNull(),              // release: config:version; patch: config:version:uuid; …
+    configId: integer("config_id"),
+    version: text("version"),
+    date: date("date").notNull(),            // the event's own date (release / patch / build / lts end)
+    data: jsonb("data").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    keyUq: uniqueIndex("release_events_type_key_uq").on(t.type, t.key),
+    dateIdx: index("release_events_date_idx").on(t.date),
+    configIdx: index("release_events_config_idx").on(t.configId, t.id),
+  }),
+);

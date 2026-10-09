@@ -24,6 +24,7 @@ import { runImport } from "./import-lst.js";
 import { runReleasesImport } from "../releases/import-releases.js";
 import { syncPlatform } from "../releases/platform.js";
 import { syncExchanges } from "./exchanges.js";
+import { recordEvents } from "./events.js";
 
 const KEEP_LOGS = 30;   // full logs of the latest runs; older rows keep the summary only
 
@@ -84,7 +85,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
   log(`Обновление данных (${{ manual: "вручную", scheduled: "по расписанию", "on-start": "при запуске" }[opts.trigger]})`);
 
   // ── Step 1: LST ───────────────────────────────────────────────────────────
-  log("━━━ Шаг 1 из 4 · Список обновлений (LST, downloads.v8.1c.ru) ━━━");
+  log("━━━ Шаг 1 из 5 · Список обновлений (LST, downloads.v8.1c.ru) ━━━");
   let t0 = Date.now();
   try {
     await runImport(undefined, { onLog: log });
@@ -102,7 +103,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
     log("⛔ Прервано — шаг 2 не запускался");
     steps.push({ name: "releases.1c.ru", status: "cancelled", ms: 0 });
   } else {
-    log("━━━ Шаг 2 из 4 · Сайт релизов (releases.1c.ru) и 1С:Решения ━━━");
+    log("━━━ Шаг 2 из 5 · Сайт релизов (releases.1c.ru) и 1С:Решения ━━━");
     t0 = Date.now();
     if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
       log("⚠ ITS_LOGIN / ITS_PASSWORD не заданы — шаг пропущен");
@@ -132,7 +133,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
     if (!steps.some((s) => s.status === "cancelled")) log("⛔ Прервано — шаги 3 и 4 не запускались");
     steps.push({ name: "платформа", status: "cancelled", ms: 0 });
   } else {
-    log("━━━ Шаг 3 из 4 · Платформа 1С:Предприятие (releases.1c.ru) ━━━");
+    log("━━━ Шаг 3 из 5 · Платформа 1С:Предприятие (releases.1c.ru) ━━━");
     t0 = Date.now();
     if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
       log("⚠ ITS_LOGIN / ITS_PASSWORD не заданы — шаг пропущен");
@@ -152,7 +153,7 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
   if (opts.signal?.aborted) {
     steps.push({ name: "обмены", status: "cancelled", ms: 0 });
   } else {
-    log("━━━ Шаг 4 из 4 · Реестр обменов и переходов (github.com/iMironRU/1CExchenge) ━━━");
+    log("━━━ Шаг 4 из 5 · Реестр обменов и переходов (github.com/iMironRU/1CExchenge) ━━━");
     t0 = Date.now();
     try {
       await syncExchanges({ onLog: log });
@@ -160,6 +161,19 @@ export async function runFullUpdate(opts: PipelineOptions): Promise<{ status: st
     } catch (e) {
       log(`✗ Обмены: ${(e as Error).message}`);
       steps.push({ name: "обмены", status: "error", ms: Date.now() - t0 });
+    }
+  }
+
+  // ── Step 5: the release journal (news + push read it) ────────────────────
+  if (!opts.signal?.aborted) {
+    log("━━━ Шаг 5 из 5 · Журнал событий (новости, уведомления) ━━━");
+    t0 = Date.now();
+    try {
+      await recordEvents({ onLog: log });
+      steps.push({ name: "события", status: "ok", ms: Date.now() - t0 });
+    } catch (e) {
+      log(`✗ События: ${(e as Error).message}`);
+      steps.push({ name: "события", status: "error", ms: Date.now() - t0 });
     }
   }
 

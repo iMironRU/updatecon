@@ -54,8 +54,9 @@ const TABLES: { name: string; order: string }[] = [
   { name: "platform_builds", order: "version" },
   { name: "exchanges", order: "id" },
   { name: "exchange_formats", order: "line, version" },
+  { name: "release_events", order: "id" },
 ];
-const SERIAL = ["configurations", "update_edges", "version_meta", "patches", "transitions"];
+const SERIAL = ["configurations", "update_edges", "version_meta", "patches", "transitions", "release_events"];
 
 export interface SnapshotMeta {
   format: 1;

@@ -10,6 +10,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "./client.js";
+import { journal, eventsCount } from "./events.js";
 
 const CACHE_MS = 30 * 60 * 1000;
 const rowsOf = <T>(r: unknown): T[] => ((r as any).rows ?? r) as T[];
@@ -331,7 +332,10 @@ export async function platformInfo(): Promise<PlatformInfo> {
 // new platform builds, products moving to 8.5, ended long-term support.
 
 export interface NewsEvent {
-  type: "release" | "platform_build" | "to85" | "lts_end";
+  type: "release" | "patch" | "platform_build" | "to85" | "lts_end";
+  id?: number;
+  branch?: boolean;                   // an update to an older branch (the ДП line) while a newer one exists
+  count?: number; titles?: string[];  // patch: how many that day, what they fix
   date: string;                       // YYYY-MM-DD
   config_id?: number;
   version?: string;
@@ -349,6 +353,9 @@ const lowest = (req: string | null | undefined): Plat | null => {
 
 export async function newsEvents(days: number): Promise<{ days: number; events: NewsEvent[] }> {
   const d = Math.max(1, Math.min(180, Math.round(days)));
+  // The journal (release_events) is the source once it exists; an install that has not
+  // imported or applied a snapshot with it yet gets the computed feed below.
+  if (await eventsCount() > 0) return { days: d, events: await journal(d) as NewsEvent[] };
   const [rel, builds, to85, lts] = await Promise.all([
     db.execute(sql`
       WITH v AS (

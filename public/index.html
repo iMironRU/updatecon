@@ -532,6 +532,12 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .news-hl-text { flex: 1; min-width: 0; color: inherit; font-size: 14px; line-height: 1.5; }
 .news-hl-sub { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .news-hl .fav-btn { margin: -4px -4px -4px 0; }
+.news-patches { margin-top: 8px; }
+.news-patches-head { background: none; border: none; padding: 4px 0; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.news-patches-head:hover { color: var(--accent); }
+.news-patches-head svg { width: 12px; height: 12px; transition: transform .15s; }
+.news-patches-head.open svg { transform: rotate(90deg); }
+.news-patches .news-rows { margin-top: 6px; }
 .news-rows { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); overflow: hidden; }
 .news-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 92px auto 150px; align-items: center; gap: 10px;
   padding: 6px 12px 6px 6px; border-top: 1px solid var(--border); font-size: 13px; }
@@ -550,6 +556,8 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .news-row-lts .news-hl-kind { margin-top: 0; }
 .news-row-plat { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
 .news-row-plat a { color: var(--text-muted); }
+.news-row-ver a { color: inherit; }
+.news-row-ver a:hover { color: var(--accent); }
 .news-row-plat a:hover { color: var(--accent); }
 @media (max-width: 640px) {
   .news-row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "star name ver" "star lts plat"; row-gap: 0; }
@@ -3807,7 +3815,7 @@ function fav_toggle(e, id) {
 /* ================================================================
    NEWS VIEW — what happened, by day, from the data we already have
    ================================================================ */
-const NEWS = { days: 30, data: null, mine: false, country: true, typical: false, line: '', open: {} };
+const NEWS = { days: 30, data: null, mine: false, country: true, typical: false, line: '', open: {}, openPat: {} };
 const RU_WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 const RU_MONTHS_PREP = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
 const RU_MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
@@ -3897,7 +3905,8 @@ function news_release_row(e, c) {
   const plat = e.platform ? (String(e.platform).match(/\d+\.\d+\.\d+\.\d+/) || [''])[0] : '';
   const lts = c.ltsLine && e.version.startsWith(c.ltsLine + '.');
   // The notable releases are rows like the rest: the tag in the ДП column, the note under the name.
-  let tag = lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>' : '', sub = '';
+  let tag = lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>'
+    : e.branch ? '<span class="badge badge-gray" title="Обновление предыдущей ветки — есть более новая">ветка</span>' : '', sub = '';
   if (e.to85) { tag = '<span class="news-hl-kind k85">8.5</span>'; sub = `первый релиз под платформу 8.5, требования: ${esc_html(e.platform || '')}`; }
   else if (e.first) { tag = '<span class="news-hl-kind knew">новое</span>'; sub = 'новый продукт в каталоге, первый релиз'; }
   else if (e.raised_from) { tag = '<span class="news-hl-kind kup">платформа ↑</span>'; sub = `требует платформу ≥ <span class="mono">${esc_html(plat)}</span>, предыдущий релиз шёл на <span class="mono">${esc_html(e.raised_from)}</span> — без обновления платформы не встанет`; }
@@ -3907,6 +3916,31 @@ function news_release_row(e, c) {
     <span class="news-row-lts">${tag}</span>
     <span class="news-row-ver"><span>${esc_html(e.version)}</span></span>
     <span class="news-row-plat">${plat ? `<a href="/platform?build=${plat}" title="Минимальная платформа">≥ ${plat}</a>` : ''}</span>
+  </div>`;
+}
+// A day's patches of one version: one row, the count and what the first ones fix.
+function news_patch_row(e, c) {
+  const n = e.count || 1;
+  const nick = c.nick || nick_from_href(c.url_1c || '');
+  const href = nick ? 'https://releases.1c.ru/patches/total?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(e.version) : '/config/' + c.id;
+  const sub = n + ' ' + ru_plural(n, 'исправление', 'исправления', 'исправлений') + ((e.titles || []).length ? ': ' + esc_html(e.titles[0]) : '');
+  return `<div class="news-row news-row-patch">
+    ${fav_btn(c.id)}
+    <div class="news-row-main"><a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a><div class="news-row-sub" title="${esc_html((e.titles || []).join('\n'))}">${sub}</div></div>
+    <span class="news-row-lts"><span class="badge badge-gray" title="Исправления (патчи) к версии">патчи</span></span>
+    <span class="news-row-ver"><a href="${href}" target="_blank" rel="noopener" title="Патчи версии на releases.1c.ru">${esc_html(e.version)}</a></span>
+    <span class="news-row-plat"></span>
+  </div>`;
+}
+// The day's patches: one line «Патчи: N для M конфигураций», the rows unfold (open at once
+// under «Мои» — there they are few and wanted).
+function news_patches_block(date, pat, nPat, byId) {
+  const cfgs = new Set(pat.map(e => e.config_id)).size;
+  const open = NEWS.mine || NEWS.openPat[date];
+  return `<div class="news-patches">
+    <button type="button" class="news-patches-head${open ? ' open' : ''}" onclick="NEWS.openPat['${date}']=!NEWS.openPat['${date}']; news_render()">
+      ${icn_chevron_r()} Патчи: <b>${nPat}</b> ${ru_plural(nPat, 'исправление', 'исправления', 'исправлений')} для ${cfgs} ${ru_plural(cfgs, 'конфигурации', 'конфигураций', 'конфигураций')}</button>
+    ${open ? `<div class="news-rows">${pat.map(e => news_patch_row(e, byId.get(String(e.config_id)))).join('')}</div>` : ''}
   </div>`;
 }
 // The things worth a headline: new platform builds, raised requirements,
@@ -3953,12 +3987,15 @@ function news_render() {
       .sort((a, b) => notable(a) - notable(b) || main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
     const LIMIT = 8, open = NEWS.open[date];
     const shown = open ? rel : rel.slice(0, LIMIT);
+    const pat = list.filter(e => e.type === 'patch').sort((a, b) => main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
     const nRel = list.filter(e => e.type === 'release').length;
+    const nPat = pat.reduce((a, e) => a + (e.count || 1), 0);
     html += `<section class="news-day fade-up">
       <div class="news-day-head"><span>${news_day_label(date)}</span>
-        <span class="news-day-count">${nRel ? nRel + ' ' + ru_plural(nRel, 'релиз', 'релиза', 'релизов') : ''}</span></div>
+        <span class="news-day-count">${[nRel ? nRel + ' ' + ru_plural(nRel, 'релиз', 'релиза', 'релизов') : '', nPat ? nPat + ' ' + ru_plural(nPat, 'патч', 'патча', 'патчей') : ''].filter(Boolean).join(' · ')}</span></div>
       ${hl.map(e => news_highlight(e, byId.get(String(e.config_id)))).join('')}
       ${shown.length ? `<div class="news-rows">${shown.map(e => news_release_row(e, byId.get(String(e.config_id)))).join('')}</div>` : ''}
+      ${pat.length ? news_patches_block(date, pat, nPat, byId) : ''}
       ${rel.length > LIMIT ? `<button class="st-more" onclick="NEWS.open['${date}']=!NEWS.open['${date}']; news_render()">${open ? 'Свернуть' : 'Ещё ' + (rel.length - LIMIT) + ' ' + ru_plural(rel.length - LIMIT, 'релиз', 'релиза', 'релизов')}</button>` : ''}
     </section>`;
   }
