@@ -278,6 +278,9 @@ SQL, and `'\\'` to get a single-backslash string `'\'`.
 
 ```
 npm run typecheck     # tsc --noEmit  (run after EVERY change; CI gate)
+npm test              # build + node --test on a real Postgres: src/test (db.ts seeds a small world
+                      # into upd_test next to DATABASE_URL; api.test.ts = the SQL routes, the journal,
+                      # the push cursor). CI (.github/workflows/ci.yml) runs it on every push
 npm run generate      # drizzle-kit generate (after schema.ts edits)
 npm run migrate       # apply migrations
 npm run import:lst <path>   # dev: import from a local .lst
@@ -309,6 +312,15 @@ refresh.sh = git pull + update.sh (no nightly app update) — see the memory not
 `tsconfig` uses `NodeNext`. **All relative imports MUST end in `.js`**
 (e.g. `import { db } from "./client.js"`) even though the source is `.ts`.
 Omitting the extension fails the typecheck. New files must follow this.
+
+## Tests
+
+`src/test/api.test.ts` covers the rules that live in several places: the newest version is
+the highest number (not the newest date — an LTS build released later), by-version lookup
+without a cap, suggestions, `/api/files` links and the no-portal note, `/api/chain` with
+sizes/dates/patches and the edition guard, `recordEvents` idempotency + the news flags
+(first / raised_from / branch), push subscribe → cursor at the journal's end, cursor kept on
+failed delivery. Add a test when touching those routes. The seed is in `src/test/db.ts`.
 
 ## Environment / verification reality
 

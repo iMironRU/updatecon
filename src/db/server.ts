@@ -242,7 +242,7 @@ async function sitePage(): Promise<string> {
 export async function buildServer() {
   await loadAdminAccess();
   await loadMetrika();
-  const app = Fastify({ logger: true, rewriteUrl: (req) => adminRewrite(req.url ?? "/") });
+  const app = Fastify({ logger: process.env.LOG_LEVEL === "silent" ? false : true, rewriteUrl: (req) => adminRewrite(req.url ?? "/") });
   // The ITS account may come from the admin UI (settings) rather than .env.
   try { await applyItsCredentials(); } catch (e) { console.warn("[credentials] not applied:", (e as Error).message); }
 

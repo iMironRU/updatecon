@@ -13,7 +13,8 @@
     "server": "tsx src/db/server.ts",
     "worker": "tsx src/db/worker.ts",
     "dev": "tsx watch src/db/server.ts",
-    "snapshot": "bash scripts/snapshot.sh"
+    "snapshot": "bash scripts/snapshot.sh",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\""
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",
