@@ -507,3 +507,23 @@ export const releaseEvents = pgTable(
     configIdx: index("release_events_config_idx").on(t.configId, t.id),
   }),
 );
+
+/**
+ * version_news — «Что нового» of a version, read from its «Новое в версии» file on
+ * releases.1c.ru: 1C's typical products redirect to the public news.webits.1c.ru page
+ * (all versions of the line in one page, cut by heading), partners ship a plain HTML.
+ * Sanitised to a small allow-list of tags, capped in size. Read by the releases
+ * import for recent versions (like patches), in snapshots.
+ */
+export const versionNews = pgTable(
+  "version_news",
+  {
+    configId: integer("config_id").notNull(),
+    version: text("version").notNull(),
+    html: text("html").notNull(),            // sanitised fragment
+    text: text("text").notNull(),            // plain text, first ~400 chars for teasers
+    sourceUrl: text("source_url"),           // where it came from (the file page or the public page)
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.configId, t.version] }) }),
+);

@@ -159,6 +159,16 @@ drizzle/                generated migration SQL (committed)
   `/api/chain` steps carry `patches` + `patchesUrl` (the portal's page of that version — single
   patch pages redirect to login); `/api/patches` lazy-fetches with an ITS account.
 
+- `version_news` (config_id, version PK → html, text, source_url) — «Что нового»: the version's
+  «Новое в версии» file from its file list. 1C's typical products ship a stub that redirects
+  (meta refresh) to the public news.webits.1c.ru page, which lists the line's versions up to the
+  one asked (`extractVersionNews` cuts the heading's section: the exact build, else the line
+  «3.0.208»; a page naming versions but not this one → nothing); partners ship a plain HTML
+  (`<h1>Версия X</h1>` sections or one text). Sanitised to an allow-list (`sanitizeNewsHtml`),
+  40 KB cap. Read by the releases import for the same recent versions as patches; in snapshots.
+  `/api/version-news` serves it, `/api/chain` steps carry the teaser (`news`), `/api/versions`
+  meta flags `news: true`.
+
 - `update_edges` (config_id, from_version, to_version, edition, cfu_path,
   content_hash, raw_json, first_seen_at, last_seen_at).
   UNIQUE `(config_id, from_version, to_version)`. Indexes on

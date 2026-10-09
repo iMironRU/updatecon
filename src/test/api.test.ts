@@ -78,6 +78,28 @@ test("chain: shortest path with sizes, dates and patches per step; editions are 
   assert.match(x.note, /редакци/);
 });
 
+test("what's new: the chain teaser, the version flag, the text endpoint; the extractor", async () => {
+  const c = await get("/api/chain?config_id=1&from=3.0.100.1&to=3.0.103.4");
+  assert.equal(c.steps[2].news, "Новое Добавлен раздел ЭДО.");
+  assert.equal(c.steps[1].news, null);
+  const v = await get("/api/versions?config_id=1");
+  assert.equal(v.meta["3.0.103.4"].news, true);
+  assert.equal(v.meta["3.0.102.3"].news, undefined);
+  const n = await get("/api/version-news?config_id=1&version=3.0.103.4");
+  assert.match(n.html, /<b>ЭДО<\/b>/);
+  assert.equal((await app.inject({ method: "GET", url: "/api/version-news?config_id=1&version=3.0.102.3" })).statusCode, 404);
+  const { extractVersionNews, sanitizeNewsHtml, newsRedirectUrl } = await import("../releases/parse-releases.js");
+  const page = `<html><body><div id="newsEntry"><h3>Новое в версии 3.0.208</h3><h5>Тема</h5><p>Текст описания подлиннее <script>x()</script><a href="javascript:1">a</a> <a href="https://its.1c.ru/x">b</a></p></div><div id="newsEntry"><h3>Новое в версии 3.0.207.28</h3><p>Другой текст здесь, тоже подлиннее</p></div></body></html>`;
+  const a = extractVersionNews(page, "3.0.208.14")!;          // the line's section for a build
+  assert.match(a.html, /<h5>Тема<\/h5><p>Текст описания подлиннее <a>a<\/a> <a href="https:\/\/its\.1c\.ru\/x" target="_blank" rel="noopener">b<\/a><\/p>/);
+  assert.doesNotMatch(a.html, /script|Другой/);
+  assert.equal(extractVersionNews(page, "3.0.207.28")!.text, "Другой текст здесь, тоже подлиннее");
+  assert.equal(extractVersionNews(page, "3.0.206.1"), null);   // names versions, not this one
+  assert.equal(extractVersionNews("<body><p>Только одна версия описана тут подробно</p></body>", "1.0.1.1")!.text, "Только одна версия описана тут подробно");
+  assert.equal(sanitizeNewsHtml('<div style="x"><img src=a><p onclick="y">ok</p></div>'), "<p>ok</p>");
+  assert.equal(newsRedirectUrl('<meta http-equiv="refresh" content="0; url=https://news.webits.1c.ru/a?b=1&amp;c=2">'), "https://news.webits.1c.ru/a?b=1&c=2");
+});
+
 test("journal: recorded once, flags decided then; the news feed reads it", async () => {
   const { recordEvents } = await import("../db/events.js");
   const r1 = await recordEvents({ horizonDays: 365, onLog: () => {} });

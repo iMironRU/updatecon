@@ -305,3 +305,76 @@ export function parsePatchesPage(html: string): PatchInfo[] {
   }
   return patches;
 }
+
+// ── «Что нового» ────────────────────────────────────────────────────────────
+// Two shapes: the public news.webits.1c.ru page of 1C's typical products (many
+// <div id="newsEntry"> blocks, each «<h3>Новое в версии X</h3>»), and a product's own
+// news.htm («<h1>Версия X</h1>» sections, or just one version's text). The section of
+// the asked version (else of its line «3.0.208» for 3.0.208.14), else the whole body.
+
+const NEWS_ALLOWED = new Set(["p", "ul", "ol", "li", "b", "strong", "i", "em", "br", "a", "h4", "h5", "h6", "table", "tr", "td", "th", "tbody", "thead"]);
+const NEWS_MAX = 40_000;
+
+/** Keep only harmless markup: the tags above, href on <a> (http/https) — nothing else. */
+export function sanitizeNewsHtml(html: string): string {
+  let h = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style|iframe|object|embed|svg|head)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<\/?(h1|h2|h3)\b[^>]*>/gi, (m) => (m.startsWith("</") ? "</h4>" : "<h4>"))
+    .replace(/<\/?(div|section|article|span|font|center)\b[^>]*>/gi, (m) => (m.startsWith("</") ? "" : ""));
+  h = h.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, (m, tag: string, attrs: string) => {
+    const t = tag.toLowerCase();
+    if (!NEWS_ALLOWED.has(t)) return "";
+    if (m.startsWith("</")) return `</${t}>`;
+    if (t === "a") {
+      const href = attrs.match(/href\s*=\s*"([^"]*)"|href\s*=\s*'([^']*)'/i);
+      const url = (href?.[1] ?? href?.[2] ?? "").trim();
+      return /^https?:\/\//i.test(url) ? `<a href="${url.replace(/"/g, "&quot;")}" target="_blank" rel="noopener">` : "<a>";
+    }
+    return t === "br" ? "<br>" : `<${t}>`;
+  });
+  h = h.replace(/(\s*<br>\s*){3,}/g, "<br><br>").replace(/\s{2,}/g, " ").trim();
+  if (h.length > NEWS_MAX) h = h.slice(0, NEWS_MAX) + "…";
+  return h;
+}
+
+export function htmlToText(html: string): string {
+  return html.replace(/<\/(p|li|h\d|tr|br)>|<br>/gi, " ").replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+/** The public page a 1C news.htm stub redirects to (meta refresh), or null. */
+export function newsRedirectUrl(html: string): string | null {
+  if (html.length > 5000) return null;
+  const m = html.match(/http-equiv="refresh"[^>]*url=([^"'>\s]+)/i);
+  return m ? m[1].replace(/&amp;/g, "&") : null;
+}
+
+/** The version's section of a news page as sanitised HTML + plain text, or null when the page says nothing. */
+export function extractVersionNews(html: string, version: string): { html: string; text: string } | null {
+  const body = (html.split(/<body[^>]*>/i)[1] ?? html).replace(/<!--[\s\S]*?-->/g, "");
+  const esc = (v: string) => v.replace(/\./g, "\\.");
+  const line = version.split(".").slice(0, 3).join(".");
+  // headings that name a version: <hN ...>…3.0.208.14…</hN>
+  const heads = [...body.matchAll(/<h([1-4])\b[^>]*>([\s\S]*?)<\/h\1>/gi)].map((m) => ({ level: m[1], text: htmlToText(m[2]), at: m.index!, end: m.index! + m[0].length }));
+  const find = (re: RegExp) => heads.find((h) => re.test(h.text));
+  const h = find(new RegExp(`(^|[^0-9.])${esc(version)}([^0-9.]|$)`)) ?? find(new RegExp(`(^|[^0-9.])${esc(line)}([^0-9.]|$)`));
+  let section: string;
+  // a page that names versions but not this one says nothing about it (a line's page
+  // without this build) — better no text than the whole page
+  if (!h && heads.some((x) => /\d+\.\d+\.\d+/.test(x.text))) return null;
+  if (h) {
+    const next = heads.find((x) => x.at > h.at && Number(x.level) <= Number(h.level));
+    section = body.slice(h.end, next ? next.at : undefined);
+    // the webits page: the block ends with its newsEntry div
+    const cut = section.search(/<div id="newsEntry"/);
+    if (cut >= 0) section = section.slice(0, cut);
+  } else {
+    section = body;
+  }
+  const clean = sanitizeNewsHtml(section);
+  const text = htmlToText(clean);
+  if (text.length < 20) return null;
+  return { html: clean, text: text.slice(0, 400) };
+}

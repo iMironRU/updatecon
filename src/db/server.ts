@@ -982,13 +982,15 @@ export async function buildServer() {
       FROM version_meta
       WHERE config_id = ${cfg[0].id}
     `);
-    const meta: Record<string, { release_date: string | null; min_platform: string | null; file_size_bytes: number | null }> = {};
+    const meta: Record<string, { release_date: string | null; min_platform: string | null; file_size_bytes: number | null; news?: boolean }> = {};
+    const withNews = new Set((((await db.execute(sql`SELECT version FROM version_news WHERE config_id = ${found.id}`)) as any).rows as { version: string }[]).map((r) => r.version));
     const files: Record<string, VersionFileKinds & { nick: string; links: Record<string, string> }> = {};
     for (const r of (metaRows as any).rows ?? metaRows) {
       meta[(r as any).version] = {
         release_date: (r as any).release_date ?? null,
         min_platform: (r as any).min_platform ?? null,
         file_size_bytes: (r as any).file_size_bytes ?? null,
+        news: withNews.has((r as any).version) || undefined,   // /api/version-news has the text
       };
       if ((r as any).files_nick && Array.isArray((r as any).files) && (r as any).files.length) {
         const kinds = classifyVersionFiles((r as any).files);
@@ -1166,8 +1168,12 @@ export async function buildServer() {
       WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})
       ORDER BY patch_date DESC NULLS LAST, id DESC`)) as any).rows as { version: string; uuid: string; title: string | null; description: string | null; patch_date: string | null }[];
     const nick = cfg.releasesHref ? cfg.releasesHref.replace(/^\/project\//, "") : null;
+    const newsRows = ((await db.execute(sql`SELECT version, text FROM version_news
+      WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})`)) as any).rows as { version: string; text: string }[];
+    const newsBy = new Map(newsRows.map((r) => [r.version, r.text]));
     const steps = res.steps.map((st) => ({
       ...st, sizeBytes: byV.get(st.toVersion)?.file_size_bytes ?? null, releaseDate: byV.get(st.toVersion)?.release_date ?? null,
+      news: newsBy.get(st.toVersion) ?? null,
       patches: prows.filter((p) => p.version === st.toVersion).map(({ version: _v, ...p }) => p),
       patchesUrl: nick ? `https://releases.1c.ru/patches/total?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(st.toVersion)}` : null,
     }));
@@ -1176,6 +1182,16 @@ export async function buildServer() {
   });
 
   // ── Обмены и переходы (exchanges.ts, the 1CExchenge registry) ─────────────
+  // «Что нового» of a version (sanitised HTML from the portal's news file / public page).
+  app.get("/api/version-news", async (req, reply) => {
+    const configId = Number((req.query as any).config_id), version = String((req.query as any).version ?? "").trim();
+    if (!configId || !version) return reply.code(400).send({ error: "config_id и version" });
+    const row = ((await db.execute(sql`SELECT html, text, source_url, fetched_at FROM version_news WHERE config_id = ${configId} AND version = ${version}`)) as any).rows[0];
+    if (!row) return reply.code(404).send({ error: "нет текста для этой версии" });
+    reply.header("Cache-Control", "public, max-age=3600");
+    return { config_id: configId, version, html: row.html, text: row.text, source: row.source_url, fetched_at: row.fetched_at };
+  });
+
   // ── Web Push: «Уведомлять о релизах моих конфигураций» ──────────────────
   app.get("/api/push/key", async () => ({ key: (await vapidKeys()).publicKey }));
   app.post("/api/push/subscribe", async (req, reply) => {

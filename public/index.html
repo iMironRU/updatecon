@@ -353,6 +353,14 @@ input, select, textarea { font-family: inherit; }
 .patch-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .patch-title .mono { font-family: var(--mono); font-size: 12px; }
 .patch-all { color: var(--accent); }
+.step-news { margin-top: 8px; font-size: 13px; }
+.step-news-teaser { color: var(--text-muted); margin-left: 6px; }
+.version-news { margin-top: 8px; padding: 10px 14px; background: var(--surface2); border-radius: var(--r-sm); font-size: 13px; line-height: 1.55; max-height: 420px; overflow: auto; }
+.version-news h4 { font-size: 14px; margin: 10px 0 4px; } .version-news h5 { font-size: 13px; margin: 10px 0 4px; } .version-news h6 { font-size: 13px; margin: 8px 0 2px; color: var(--text-muted); }
+.version-news p { margin: 4px 0; } .version-news ul, .version-news ol { margin: 4px 0 4px 18px; } .version-news a { color: var(--accent); }
+.version-news table { border-collapse: collapse; margin: 6px 0; } .version-news td, .version-news th { border: 1px solid var(--border); padding: 3px 6px; }
+.version-news-src { margin-top: 8px; font-size: 12px; } .version-news-src a { color: var(--text-muted); }
+.version-news-wrap { margin-bottom: 8px; }
 .step-patches { margin-top: 8px; font-size: 13px; }
 .step-patches-head { background: none; border: none; padding: 0; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
 .step-patches-head:hover { color: var(--accent); }
@@ -1248,6 +1256,7 @@ function chain_response_to_steps(apiResult, cfg) {
       req: false,
       patches: s.patches || [],
       patchesUrl: s.patchesUrl || '',
+      news: s.news || '',
       dl: ver?.dl || '',
       order: ver?.order || '',
     };
@@ -1672,6 +1681,30 @@ function chain_time_text(mb, steps, mbit) {
   const fmt = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} ч${r ? ' ' + r + ' мин' : ''}` : `${m} мин`; };
   return `≈ ${fmt(dl + 15 * steps)} – ${fmt(dl + 20 * steps)}`;
 }
+// «Что нового» of the step's version: a teaser line, the full text loads on demand.
+function step_news_html(s, cfg) {
+  if (!s.news || !cfg) return '';
+  const id = 'sn-' + Math.random().toString(36).slice(2, 8);
+  return `<div class="step-news">
+    <button type="button" class="step-patches-head" onclick="news_expand('${id}','${cfg.id}','${s.v}',this)">${icn_chevron_r()} Что нового</button>
+    <span class="step-news-teaser">${esc_html(s.news.slice(0, 160))}${s.news.length > 160 ? '…' : ''}</span>
+    <div id="${id}" class="version-news" hidden></div></div>`;
+}
+async function news_expand(id, cfgId, ver, btn) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  if (!box.hidden) { box.hidden = true; btn.classList.remove('open'); return; }
+  btn.classList.add('open');
+  if (!box.innerHTML) {
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Загрузка…</div>';
+    try {
+      const d = await apiFetch('/api/version-news', { config_id: cfgId, version: ver });
+      box.innerHTML = d.html + (d.source ? `<div class="version-news-src"><a href="${esc_html(d.source)}" target="_blank" rel="noopener">${icn_link()} Источник ${icn_ext()}</a></div>` : '');
+    } catch (e) { box.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Текста нет</div>'; }
+  }
+  box.hidden = false;
+  const t = btn.closest('.step-news')?.querySelector('.step-news-teaser'); if (t) t.hidden = true;
+}
 // The version's patches («исправления» on releases.1c.ru): a line with the count and the
 // newest date, the list unfolds; every link leads to the portal's page of this version.
 function step_patches_html(s) {
@@ -1755,6 +1788,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
           ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} downloads.v8.1c.ru ${icn_ext()}</a>` : ''}
           ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления ${icn_ext()}</a>` : ''}
         </div>
+        ${step_news_html(s, cfg)}
         ${step_patches_html(s)}
       </div>
     </div>`;
@@ -2823,6 +2857,7 @@ function render_config(id) {
           ${ver.page && ver.dl !== ver.page ? `<a href="${ver.page}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Все файлы версии на портале 1С: переходы с других продуктов, ReadMe">${icn_link()} Все файлы</a>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="cfg_build_from_ver('${id}','${ver.v}')">${icn_chevron_r()} Цепочка отсюда</button>
         </div>
+        ${cfg._meta?.[ver.v]?.news ? `<div class="version-news-wrap"><button type="button" class="step-patches-head" onclick="news_expand('vn-${id}-${i}','${id}','${ver.v}',this)">${icn_chevron_r()} Что нового в ${ver.v}</button><div id="vn-${id}-${i}" class="version-news" hidden></div></div>` : ''}
         <div id="patches-${id}-${i}"></div>
       </div>
     </div>`;
@@ -4322,11 +4357,12 @@ function api_rows() {
   return [
     { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
     { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
+    { path: '/api/version-news?config_id=<id>&version=<версия>', desc: '«Что нового» версии: очищенный HTML и текст из файла «Новое в версии» на releases.1c.ru (для типовых 1С — с публичной страницы news.webits.1c.ru), источник.', example: '/api/version-news?config_id=96&version=3.0.208.14' },
     { path: '/api/push/key · POST /api/push/subscribe', desc: 'Web Push: публичный VAPID-ключ и подписка {subscription, config_ids} на релизы выбранных конфигураций (страница делает это сама кнопкой «Включить уведомления»).', example: '/api/push/key' },
     { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
     { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
     { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
-    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку, файл .cfu, дата, размер (<code>sizeBytes</code>, если прочитан) и патчи (<code>patches</code>, <code>patchesUrl</code>) каждого шага; <code>totalBytes</code> / <code>sizesKnown</code> для оценки времени.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку, файл .cfu, дата, размер (<code>sizeBytes</code>, если прочитан), патчи (<code>patches</code>, <code>patchesUrl</code>) и начало «Что нового» (<code>news</code>) каждого шага; <code>totalBytes</code> / <code>sizesKnown</code> для оценки времени.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
     { path: '/api/transitions?config_id=<id>', desc: 'Переходы на другие продукты и редакции и с них.', example: '/api/transitions?config_id=96' },
     { path: '/api/exchanges?config_id=<id>', desc: 'Обмены (синхронизация) и переходы (перенос данных) типовых конфигураций по реестру 1CExchenge: механизм, план обмена, объекты, в какой поставке найдено, версии EnterpriseData. Без <code>config_id</code> — все связи.', example: '/api/exchanges?config_id=96' },
     { path: '/api/news?days=<дней>', desc: 'Лента событий: релизы, новые сборки платформы, повышение требований, конец длительной поддержки.', example: '/api/news?days=7' },

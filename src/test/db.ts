@@ -34,7 +34,7 @@ export function prepare(): Promise<void> {
 /** Empty the data tables (settings too: VAPID keys etc. are made on demand). */
 export async function clean() {
   const { pool } = await import("../db/client.js");
-  await pool.query(`TRUNCATE push_subscriptions, release_events, patches, exchange_formats, exchanges, transitions,
+  await pool.query(`TRUNCATE push_subscriptions, release_events, version_news, patches, exchange_formats, exchanges, transitions,
     solutions_info, package_manifests, template_tags, version_meta, update_edges, release_projects, configurations,
     platform_builds, import_runs, settings RESTART IDENTITY CASCADE`);
 }
@@ -85,5 +85,6 @@ export async function seed() {
     (1, '3.0.103.4', '11111111-1111-1111-1111-111111111111', 'EF_1', 'Первое исправление', '2026-09-05'),
     (1, '3.0.103.4', '22222222-2222-2222-2222-222222222222', 'EF_2', 'Второе исправление', '2026-09-06'),
     (2, '3.0.103.4', '11111111-1111-1111-1111-111111111111', 'EF_1', 'Первое исправление', '2026-09-05')`);
+  await q(`INSERT INTO version_news (config_id, version, html, text, source_url) VALUES (1, '3.0.103.4', '<h4>Новое</h4><p>Добавлен раздел <b>ЭДО</b>.</p>', 'Новое Добавлен раздел ЭДО.', 'https://example.test/news')`);
   await q(`INSERT INTO platform_builds (version, nick, line, release_date) VALUES ('8.3.27.1688', 'Platform83', '8.3', '2026-08-20')`);
 }

@@ -32,6 +32,7 @@ import { refreshTags } from "../db/tags.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles, parseVersionFileList,
   parseFileProperties, parsePatchesPage, parseProjectLinks, parseDate,
+  classifyVersionFiles, releaseFileUrl, newsRedirectUrl, extractVersionNews,
   type ReleasesConfig, type VersionRow,
 } from "./parse-releases.js";
 
@@ -312,6 +313,52 @@ async function syncPatchesForConfig(
   }
   return total;
 }
+// «Что нового» of recent versions: the news file from the version's file list; a 1C stub
+// redirects to the public news.webits.1c.ru page (its content depends on the version asked:
+// the versions up to that one — so cached per exact URL within a run).
+const newsPageCache = new Map<string, Promise<string | null>>();
+async function publicPage(url: string): Promise<string | null> {
+  const key = url;
+  let p = newsPageCache.get(key);
+  if (!p) {
+    p = fetch(url, { signal: AbortSignal.timeout(30_000) }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+    newsPageCache.set(key, p);
+  }
+  return p;
+}
+export async function syncNewsForConfig(
+  session: ReleasesSession,
+  configId: number,
+  nick: string,
+  versions: string[],
+): Promise<number> {
+  if (!versions.length) return 0;
+  const rows = await db.select({ version: versionMeta.version, files: versionMeta.files, filesNick: versionMeta.filesNick })
+    .from(versionMeta).where(and(eq(versionMeta.configId, configId), inArray(versionMeta.version, versions)));
+  const have = new Set((((await db.execute(sql`SELECT version FROM version_news WHERE config_id = ${configId}`)) as any).rows as { version: string }[]).map((r) => r.version));
+  let n = 0;
+  for (const r of rows) {
+    if (have.has(r.version)) continue;
+    const path = classifyVersionFiles(r.files as any).news;
+    if (!path) continue;
+    try {
+      const fileUrl = releaseFileUrl(r.filesNick ?? nick, r.version, path).replace(/^https:\/\/releases\.1c\.ru/, "");
+      let html = await session.get(fileUrl);
+      let source = `https://releases.1c.ru${fileUrl}`;
+      const redirect = newsRedirectUrl(html);
+      if (redirect) { const pub = await publicPage(redirect); if (!pub) continue; html = pub; source = redirect; }
+      const news = extractVersionNews(html, r.version);
+      if (!news) continue;
+      await db.execute(sql`INSERT INTO version_news (config_id, version, html, text, source_url) VALUES (${configId}, ${r.version}, ${news.html}, ${news.text}, ${source})
+        ON CONFLICT (config_id, version) DO UPDATE SET html = EXCLUDED.html, text = EXCLUDED.text, source_url = EXCLUDED.source_url, fetched_at = now()`);
+      n++;
+      await delay(150);
+    } catch {
+      // the file is missing or asks for a one-time code — the next run tries again
+    }
+  }
+  return n;
+}
 /** Versions worth a patches page: released in the last 180 days, newest first, at most `max`. */
 function patchVersions(rows: VersionRow[], max = 6): string[] {
   const since = Date.now() - 180 * 86400_000;
@@ -432,7 +479,7 @@ export async function runReleasesImport(
       .onConflictDoUpdate({ target: releaseProjects.nick, set: meta });
   }
 
-  let byRule = 0, byVersions = 0, byManual = 0, metaRows = 0, totalSized = 0, totalPatches = 0;
+  let byRule = 0, byVersions = 0, byManual = 0, metaRows = 0, totalSized = 0, totalPatches = 0, totalNews = 0;
   const linkedNicks = new Set<string>();
   const taken = new Set<number>();          // apps that got a project this run
   const fetchedNicks: string[] = [];
@@ -471,9 +518,13 @@ export async function runReleasesImport(
       totalSized += read;
     }
     if (syncPatchesData) {
-      const n = await syncPatchesForConfig(session, app.id, nick, patchVersions(rows));
+      const recent = patchVersions(rows);
+      const n = await syncPatchesForConfig(session, app.id, nick, recent);
       if (n > 0) log(`    патчи: ${n}`);
       totalPatches += n;
+      const w = await syncNewsForConfig(session, app.id, nick, recent);
+      if (w > 0) log(`    что нового: ${w}`);
+      totalNews += w;
     }
   };
 
@@ -570,7 +621,7 @@ export async function runReleasesImport(
   const unmatched = projects.length - matched;
   log(
     `Готово: сопоставлено=${matched} (правило=${byRule}, по версиям=${byVersions}, вручную=${byManual}), ` +
-    `не сопоставлено=${unmatched}, метаданных=${metaRows}, файлов версий=${totalSized}, патчей=${totalPatches}`,
+    `не сопоставлено=${unmatched}, метаданных=${metaRows}, файлов версий=${totalSized}, патчей=${totalPatches}, что нового=${totalNews}`,
   );
   if (unmatched > 0) log(`Несопоставленные проекты — в админке, вкладка «Сопоставление».`);
 
