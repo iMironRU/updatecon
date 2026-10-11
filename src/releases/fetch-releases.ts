@@ -33,7 +33,27 @@ export class ReleasesSession {
     return [...this.jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   }
 
-  private httpReq(
+  // A connection that fails outright (the portal unreachable for a minute, a reset socket)
+  // is tried three times with growing pauses: the nightly build lost a whole step to one
+  // ETIMEDOUT. HTTP answers are never retried here.
+  private async httpReq(
+    url: string,
+    opts: { method?: string; headers?: Record<string, string>; body?: string } = {},
+  ): Promise<{ status: number; body: string; location: string | null }> {
+    const pauses = [5_000, 20_000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.httpOnce(url, opts);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code ?? "";
+        const transient = /^(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|EPIPE|ENETUNREACH|EHOSTUNREACH)$/.test(code) || /socket hang up|timed out/i.test((e as Error).message);
+        if (!transient || attempt >= pauses.length) throw e;
+        await new Promise((r) => setTimeout(r, pauses[attempt]));
+      }
+    }
+  }
+
+  private httpOnce(
     url: string,
     opts: { method?: string; headers?: Record<string, string>; body?: string } = {},
   ): Promise<{ status: number; body: string; location: string | null }> {
@@ -69,6 +89,7 @@ export class ReleasesSession {
         },
       );
       req.on("error", reject);
+      req.setTimeout(90_000, () => req.destroy(new Error(`timed out: ${u.hostname}${u.pathname}`)));
       if (opts.body) req.write(opts.body);
       req.end();
     });
