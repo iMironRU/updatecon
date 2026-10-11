@@ -891,7 +891,7 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
 <div class="menu-backdrop" id="menu-backdrop" hidden onclick="toggle_menu(false)"></div>
 <div class="offline-bar" id="offline-bar" role="status" hidden>
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65"/><path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/><path d="M16.85 11.25a10 10 0 0 1 2.22 1.68"/><path d="M5 13a10 10 0 0 1 5.24-2.76"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
-  <span>Нет связи с сервером — показаны данные с последнего посещения</span>
+  <span>Нет связи с сервером — показаны данные с последнего посещения. Цепочки «Моих конфигураций» строятся и без сети.</span>
 </div>
 
 <main class="main" id="main-content"></main>
@@ -1196,6 +1196,7 @@ async function initDataOnce() {
     assign_levels(CONFIGS);
     CONFIGS.forEach(c => { c.stale = is_stale(c); });
     CONFIGS_LOADED = true;
+    setTimeout(() => { prefetch_favourites().catch(() => {}); }, 4000);
     DB_META = {
       last_updated: stats.last_updated || null,
       // Same number as the catalog shows by default: current editions only.
@@ -1252,7 +1253,77 @@ async function find_configs_by_version_api(ver) {
     const [rows] = await Promise.all([apiFetch('/api/configs', { version: ver }), CONFIGS_LOADED ? null : initData()]);
     if (!CONFIGS_LOADED) return [];
     return rows.map(r => CONFIGS.find(c => c.id === String(r.id))).filter(Boolean);
-  } catch(e) { return []; }
+  } catch(e) {
+    // No server: the graphs of «Мои конфигурации» kept by the service worker know their versions.
+    const out = [];
+    for (const id of FAV) {
+      const g = await graph_cached(id);
+      if (g && g.edges.some(e => e[0] === ver || e[1] === ver)) { const c = CONFIGS.find(x => x.id === String(id)); if (c) out.push(c); }
+    }
+    return out;
+  }
+}
+
+/* ── Chains without the server ──
+   /api/chain is the answer; when it cannot be reached, the configuration's edge list
+   (/api/graph, cached by the service worker for «Мои конфигурации») and the same
+   breadth-first search as the server's: the shortest chain inside the edition. */
+const GRAPHS = {};
+async function graph_cached(cfgId) {
+  if (GRAPHS[cfgId]) return GRAPHS[cfgId];
+  try { const g = await apiFetch('/api/graph', { config_id: cfgId }); GRAPHS[cfgId] = g; return g; } catch (e) { return null; }
+}
+function chain_bfs(graph, from, to) {
+  const ed = v => v.split('.')[0];
+  if (ed(from) !== ed(to)) return { found: false, steps: [], length: 0, note: 'Версии в разных редакциях. Переход между редакциями — отдельная процедура, цепочкой обновлений не строится.' };
+  if (from === to) return { found: true, steps: [], length: 0 };
+  const next = new Map();
+  for (const [f, t, cfu] of graph.edges) { if (ed(t) !== ed(to)) continue; if (!next.has(f)) next.set(f, []); next.get(f).push([t, cfu]); }
+  const pred = new Map([[from, null]]);
+  let frontier = [from];
+  for (let depth = 0; frontier.length && depth < 64; depth++) {
+    const nf = [];
+    for (const v of frontier) for (const [t, cfu] of (next.get(v) || [])) {
+      if (pred.has(t)) continue;
+      pred.set(t, [v, cfu]);
+      if (t === to) {
+        const steps = []; let cur = to;
+        while (pred.get(cur)) { const [p, c] = pred.get(cur); steps.unshift({ fromVersion: p, toVersion: cur, cfuPath: c }); cur = p; }
+        return { found: true, steps, length: steps.length, offline: true };
+      }
+      nf.push(t);
+    }
+    frontier = nf;
+  }
+  return { found: false, steps: [], length: 0, note: 'Цепочка не найдена — нет пути в сохранённых данных.' };
+}
+async function chain_api(cfg, from, to) {
+  try { return await apiFetch('/api/chain', { config_id: cfg.id, from, to }); }
+  catch (e) {
+    const g = await graph_cached(cfg.id);
+    if (!g) throw e;
+    set_offline(true);
+    return chain_bfs(g, from, to);
+  }
+}
+// «Мои конфигурации» for the road: their versions and graphs are fetched once a day so the
+// service worker has them; also right after a star is set.
+const PREFETCH_KEY = 'uc_prefetch';
+async function prefetch_favourites(onlyId) {
+  if (!navigator.onLine || !('serviceWorker' in navigator)) return;
+  let done = {}; try { done = JSON.parse(localStorage.getItem(PREFETCH_KEY) || '{}'); } catch (e) {}
+  const today = new Date().toISOString().slice(0, 10);
+  const ids = onlyId ? [String(onlyId)] : [...FAV];
+  for (const id of ids) {
+    if (done[id] === today) continue;
+    try {
+      await apiFetch('/api/versions', { config_id: id });
+      await apiFetch('/api/graph', { config_id: id });
+      done[id] = today;
+    } catch (e) { break; }
+    await new Promise(r => setTimeout(r, 400));
+  }
+  try { localStorage.setItem(PREFETCH_KEY, JSON.stringify(done)); } catch (e) {}
 }
 
 const CHAIN_OFFICIAL = {};   // "config:from" → the 1C update service's answer (from /api/chain)
@@ -1897,7 +1968,7 @@ async function do_copy_chain(cfgId, fromV, toV) {
   let steps = CHAIN_CACHE[key];
   if (!steps) {
     try {
-      const r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV });
+      const r = await chain_api(cfg, fromV, toV);
       steps = chain_response_to_steps(r, cfg);
       if (steps) CHAIN_CACHE[key] = steps;
     } catch(e) { toast('Ошибка при получении цепочки'); return; }
@@ -2265,7 +2336,7 @@ async function home_build_chain() {
     const toV = toVRaw || cfg.latestV;
     if (!toV) continue;
     let r;
-    try { r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV }); }
+    try { r = await chain_api(cfg, fromV, toV); }
     catch(e) { continue; }
     if (r.found && !reached) { reached = true; goal('chain'); }
 
@@ -3242,7 +3313,7 @@ async function cfg_do_chain(id) {
 
   result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Строю цепочку...</span></div>`;
   let r;
-  try { r = await apiFetch('/api/chain', { config_id: cfg.id, from: fromV, to: toV }); }
+  try { r = await chain_api(cfg, fromV, toV); }
   catch(e) { result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>Ошибка сервера</span></div>`; return; }
   if (r.found) goal('chain');
 
@@ -3279,7 +3350,7 @@ async function bind_chain_page(params) {
   await loadVersionsForConfig(config);
   const toV = to || cfg.latestV;
   let r;
-  try { r = await apiFetch('/api/chain', { config_id: cfg.id, from, to: toV }); }
+  try { r = await chain_api(cfg, from, toV); }
   catch(e) { el.innerHTML = `<div class="alert alert-warning">${icn_alert()} Ошибка сервера</div>`; return; }
   if (r.found) goal('chain');
 
@@ -3904,6 +3975,7 @@ function fav_toggle(e, id) {
   toast(on ? '★ Добавлено в «Мои конфигурации»' : 'Убрано из «Моих конфигураций»');
   if (on) goal('fav');
   push_sync_favs();
+  if (on) prefetch_favourites(id).catch(() => {});
   if (ROUTE_PATH === '/news' && NEWS.mine) news_render();
   if (ROUTE_PATH === '/catalog' && CAT && CAT.fav) apply_filters();
   return false;
@@ -4421,6 +4493,7 @@ function api_rows() {
     { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
     { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
     { path: '/api/version-news?config_id=<id>&version=<версия>', desc: '«Что нового» версии: очищенный HTML и текст из файла «Новое в версии» на releases.1c.ru (для типовых 1С — с публичной страницы news.webits.1c.ru), источник.', example: '/api/version-news?config_id=96&version=3.0.208.14' },
+    { path: '/api/graph?config_id=<id>', desc: 'Граф обновлений конфигурации: рёбра [из, в, путь .cfu] — то, из чего строится цепочка; приложение хранит его для «Моих конфигураций» и строит цепочки без сети.', example: '/api/graph?config_id=96' },
     { path: '/api/chain-checks', desc: 'Сверка наших цепочек с сервисом обновлений 1С (update-api.1c.ru) по типовым конфигурациям: итоги по статусам и расхождения; в /api/chain для проверенной исходной версии поле <code>official</code>.', example: '/api/chain-checks' },
     { path: '/api/push/key · POST /api/push/subscribe', desc: 'Web Push: публичный VAPID-ключ и подписка {subscription, config_ids} на релизы выбранных конфигураций (страница делает это сама кнопкой «Включить уведомления»).', example: '/api/push/key' },
     { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },

@@ -1187,6 +1187,17 @@ export async function buildServer() {
   });
 
   // ── Обмены и переходы (exchanges.ts, the 1CExchenge registry) ─────────────
+  // The configuration's update graph as edge triples — one small answer the PWA keeps for
+  // «Мои конфигурации» so a chain can be built without the server (the page's own BFS).
+  app.get("/api/graph", async (req, reply) => {
+    const cfg = await resolveConfig(req.query as Record<string, unknown>);
+    if (!cfg) return reply.code(404).send({ error: "config_id" });
+    const rows = ((await db.execute(sql`SELECT from_version, to_version, cfu_path FROM update_edges WHERE config_id = ${cfg.id}
+      ORDER BY string_to_array(to_version, '.')::bigint[], from_version`)) as any).rows as { from_version: string; to_version: string; cfu_path: string }[];
+    reply.header("Cache-Control", "public, max-age=3600");
+    return { config_id: cfg.id, edition: cfg.edition, edges: rows.map((r) => [r.from_version, r.to_version, r.cfu_path]) };
+  });
+
   app.get("/api/chain-checks", async () => chainCheckSummary());
 
   // «Что нового» of a version (sanitised HTML from the portal's news file / public page).

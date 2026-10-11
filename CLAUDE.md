@@ -82,7 +82,10 @@ public/index.html       single-file UI (vanilla JS, no build); /news reads the r
 public/sw.js            PWA service worker: network first, cache fallback for the public pages and
                         GET /api/* (offline answers carry X-Updatecon-Offline: 1 → the page's
                         «Нет связи» bar; 5xx counts as no network); push + notificationclick;
-                        never touches the admin panel. Bump CACHE when sw.js changes
+                        never touches the admin panel. Bump CACHE when sw.js changes.
+                        Offline chains: the page prefetches /api/versions + /api/graph (edge triples)
+                        of «Мои конфигурации» once a day; when /api/chain fails, chain_bfs() runs the
+                        server's BFS on the cached graph (no sizes/patches/news then)
 public/manifest.webmanifest, public/icons/   install manifest + icons (rendered from icons/*.svg)
 drizzle/                generated migration SQL (committed)
 ```

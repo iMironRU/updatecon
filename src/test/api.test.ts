@@ -178,3 +178,11 @@ test("chain checks: the verdict from the service's answer and our chain", async 
   assert.equal(sum.mismatches[0].version, "3.0.100.1");
   assert.equal((await get("/api/chain?config_id=1&from=3.0.101.2&to=3.0.103.4")).official, null);
 });
+
+test("graph: the configuration's edges for the offline chain", async () => {
+  const g = await get("/api/graph?config_id=1");
+  assert.equal(g.config_id, 1);
+  assert.equal(g.edges.length, 4);
+  assert.deepEqual(g.edges.find((e: string[]) => e[1] === "3.0.101.2"), ["3.0.100.1", "3.0.101.2", "1c/Accounting/3_0_101_2/1cv8.cfu"]);
+  assert.equal((await app.inject({ method: "GET", url: "/api/graph?config_id=999" })).statusCode, 404);
+});
