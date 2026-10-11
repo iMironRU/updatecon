@@ -56,6 +56,14 @@ src/db/
                         (releases, ДП-branch updates, patches of the favourites); the cursor moves only
                         on delivery; 404/410 or 5 failures delete. sw.js shows the notification and
                         opens data.url. iOS: installed PWA only. Not in snapshots. Library: web-push.
+  chain-checks.ts       our chains against 1C's own update service (update-api.1c.ru, what the
+                        internet-support library asks; src/releases/update-api.ts, no ITS account for
+                        the reference methods): step 6 of «Обновить всё» asks the service about recent
+                        versions of typical configurations (programNameFor: template folder name,
+                        HRM family → HRMBase), compares its next version + file count with findChain
+                        → chain_checks (match | ours_longer | ours_shorter | no_path | behind = the LST
+                        lags | unknown), weekly per version. /api/chain carries `official`, /api/chain-checks
+                        feeds the stats card. In snapshots. Worked out in github.com/iMironRU/1CExchenge.
   scripts.ts            scripts for the user's machine (/api/script/chain, /api/script/platform):
                         apply an update chain in designer batch mode / install a platform build,
                         PowerShell + bash; templates in src/scripts (copied to dist/scripts like src/admin)

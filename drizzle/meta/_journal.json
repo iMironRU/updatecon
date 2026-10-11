@@ -155,6 +155,13 @@
       "when": 1791567507469,
       "tag": "0021_nervous_tinkerer",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791705522596,
+      "tag": "0022_plain_major_mapleleaf",
+      "breakpoints": true
     }
   ]
 }

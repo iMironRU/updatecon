@@ -74,6 +74,7 @@ import { runFullUpdate } from "./pipeline.js";
 import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika } from "./metrika.js";
 import { chainScript, platformScript, linuxInstallerAvailable, cfuUrl, type ScriptOs, type ScriptFile } from "./scripts.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
+import { chainCheckSummary } from "./chain-checks.js";
 import { vapidKeys, validSubscription, saveSubscription, removeSubscription, sendTest, subscriptionCount, notifyReleases } from "./push.js";
 import { configExchanges, allExchanges, REGISTRY_PAGE } from "./exchanges.js";
 import {
@@ -1178,10 +1179,16 @@ export async function buildServer() {
       patchesUrl: nick ? `https://releases.1c.ru/patches/total?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(st.toVersion)}` : null,
     }));
     const known = steps.filter((st) => st.sizeBytes != null);
-    return { ...res, steps, totalBytes: known.reduce((a, st) => a + (st.sizeBytes as number), 0), sizesKnown: known.length };
+    // 1C's own answer for this start version, when checked (typical configurations).
+    const chk = ((await db.execute(sql`SELECT svc_next, svc_files, svc_size, svc_platform, status, note, checked_at::date::text AS checked
+      FROM chain_checks WHERE config_id = ${cfg.id} AND version = ${String(from)}`)) as any).rows[0] ?? null;
+    return { ...res, steps, totalBytes: known.reduce((a, st) => a + (st.sizeBytes as number), 0), sizesKnown: known.length,
+      official: chk ? { next: chk.svc_next, files: chk.svc_files, size: chk.svc_size, platform: chk.svc_platform, status: chk.status, note: chk.note, checked: chk.checked } : null };
   });
 
   // ── Обмены и переходы (exchanges.ts, the 1CExchenge registry) ─────────────
+  app.get("/api/chain-checks", async () => chainCheckSummary());
+
   // «Что нового» of a version (sanitised HTML from the portal's news file / public page).
   app.get("/api/version-news", async (req, reply) => {
     const configId = Number((req.query as any).config_id), version = String((req.query as any).version ?? "").trim();

@@ -278,6 +278,12 @@ input, select, textarea { font-family: inherit; }
 .step-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
 .step-note { font-size: 12px; color: var(--orange); background: var(--orange-dim);
   padding: 4px 10px; border-radius: var(--r-xs); margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; }
+.chain-official { margin: 0 0 8px; padding: 8px 14px; border-radius: var(--r-sm); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface2); color: var(--text-muted); }
+.chain-official svg { width: 14px; height: 14px; flex: none; }
+.chain-official.ok { color: var(--green); background: var(--green-dim); }
+.chain-official.warn { color: var(--orange); background: var(--orange-dim); }
+.chain-official .mono { font-family: var(--mono); }
+.chain-official-note { opacity: .8; }
 .chain-summary { padding: 16px 20px; background: var(--surface2);
   border-top: 1px solid var(--border); display: flex; align-items: center; gap: 16px;
   flex-wrap: wrap; justify-content: space-between; }
@@ -434,6 +440,8 @@ input, select, textarea { font-family: inherit; }
 .st-foot b { color: var(--text); font-weight: 600; }
 .st-foot a { color: var(--accent); font-weight: 600; }
 .st-empty { font-size: 13px; color: var(--text-muted); padding: 6px 0; line-height: 1.55; }
+.st-kv { display: grid; grid-template-columns: auto auto; gap: 4px 14px; font-size: 13px; margin-bottom: 10px; width: max-content; } .st-kv span { color: var(--text-muted); }
+.st-rows { display: flex; flex-direction: column; gap: 4px; font-size: 13px; } .st-row a { color: var(--text); font-weight: 600; } .st-row .mono { font-family: var(--mono); font-size: 12px; } .st-dim { color: var(--text-muted); }
 .st-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-muted); }
 .st-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .st-more { background: none; border: none; padding: 0; margin-top: 10px; font: inherit; font-size: 13px; font-weight: 600;
@@ -1245,8 +1253,10 @@ async function find_configs_by_version_api(ver) {
   } catch(e) { return []; }
 }
 
+const CHAIN_OFFICIAL = {};   // "config:from" → the 1C update service's answer (from /api/chain)
 function chain_response_to_steps(apiResult, cfg) {
   if (!apiResult || !apiResult.found || !apiResult.steps?.length) return null;
+  if (cfg && apiResult.official) CHAIN_OFFICIAL[cfg.id + ':' + apiResult.steps[0].fromVersion] = apiResult.official;
   return apiResult.steps.map(s => {
     const ver = cfg?.versions?.find(x => x.v === s.toVersion);
     return {
@@ -1740,6 +1750,17 @@ function step_patches_html(s) {
       ${s.patchesUrl ? `<a href="${s.patchesUrl}" target="_blank" rel="noopener" class="patch-row patch-all">${icn_link()} Все патчи версии на releases.1c.ru ${icn_ext()}</a>` : ''}
     </div></div>`;
 }
+// What 1C's own update service says for this start version (typical configurations, checked
+// nightly): the next version and the number of files — next to our chain.
+function chain_official_html(cfg, fromV, steps) {
+  const o = cfg && CHAIN_OFFICIAL[cfg.id + ':' + fromV];
+  if (!o) return '';
+  const label = { match: 'совпадает с нашей', ours_longer: 'у нас длиннее', ours_shorter: 'у нас короче', no_path: 'у нас нет пути', behind: 'у нас пока нет этой версии', unknown: 'сервис не знает эту версию' }[o.status] || o.status;
+  const cls = o.status === 'match' ? 'ok' : (o.status === 'unknown' || o.status === 'behind') ? 'muted' : 'warn';
+  const what = o.next ? `до <b class="mono">${esc_html(o.next)}</b>${o.files != null ? `, ${o.files} ${plural(o.files, 'файл', 'файла', 'файлов')}` : ''}${o.size ? `, ${fmt_mb(Math.round(o.size / 1024 / 1024 * 10) / 10)}` : ''}` : 'версия актуальна';
+  return `<div class="chain-official ${cls}" title="Сервис обновлений 1С (update-api.1c.ru), которым типовые конфигурации проверяют обновления; проверено ${o.checked ? fmt_date(o.checked) : ''}">
+    ${icn_check()} Сервис 1С: ${what} — ${label}${o.note && o.status !== 'match' ? ` <span class="chain-official-note">(${esc_html(o.note)})</span>` : ''}</div>`;
+}
 function render_chain_steps(steps, fromV, cfg, reversed) {
   const est_mb = chain_median_mb(cfg);
   if (!steps || !steps.length) return `<div class="empty"><p>Обновление не требуется или цепочка не найдена</p></div>`;
@@ -1823,6 +1844,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
   });
 
   html += `</div>`;
+  html += chain_official_html(cfg, fromV, steps);
   html += `<div class="card fade-up fade-up-1">
     <div class="chain-summary">
       <div style="display:flex;gap:24px;flex-wrap:wrap">
@@ -3461,6 +3483,18 @@ const PC_KEY = 'uc_platform';
 let PC_TIMER = null, PC_SEQ = 0, PC_LAST = null;
 function pc_saved() { try { return localStorage.getItem(PC_KEY) || ''; } catch (e) { return ''; } }
 const PC_HINT = '<div class="st-empty">Введите версию своей платформы — покажем, у каких конфигураций последний релиз на ней не встанет и до какой версии можно обновиться без смены платформы. Номер сборки можно не указывать: «8.3.24» — любая сборка этой линейки.</div>';
+// /stats: our chains against 1C's update service (chain_checks, nightly).
+let CHAIN_CHECKS = null;
+function chain_checks_html() {
+  const d = CHAIN_CHECKS;
+  if (!d || !d.checked) return '';
+  const t = d.totals || {};
+  const n = Object.values(t).reduce((a, b) => a + b, 0);
+  const rows = (d.mismatches || []).slice(0, 30).map(m => `<div class="st-row"><a href="/chain?config=${m.config_id}&from=${encodeURIComponent(m.version)}&to=${encodeURIComponent(m.svc_next || m.our_next || '')}">${esc_html(m.name)}</a> <span class="mono">${esc_html(m.version)}</span> <span class="st-dim">${esc_html(m.note || m.status)}</span></div>`).join('');
+  return st_card('Сверка цепочек с сервисом обновлений 1С', `${nfmt(n)} ${ru_plural(n, 'проверка', 'проверки', 'проверок')} типовых конфигураций, ${fmt_date(d.checked)}`, `
+    <div class="st-kv"><span>совпадает</span><b>${nfmt(t.match || 0)}</b><span>расходится</span><b>${nfmt((t.ours_longer || 0) + (t.ours_shorter || 0) + (t.no_path || 0))}</b><span>у нас ещё нет версии</span><b>${nfmt(t.behind || 0)}</b><span>сервис не знает</span><b>${nfmt(t.unknown || 0)}</b></div>
+    ${rows ? `<div class="st-rows">${rows}</div>` : '<div class="st-empty">Расхождений нет</div>'}`);
+}
 function platform_check_html() {
   // Quick picks: the lines the latest releases ask for most often.
   const lines = new Map();
@@ -3832,6 +3866,7 @@ async function bind_stats() {
   }
   const m = STATS_MORE;
   const put = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  if (!CHAIN_CHECKS) apiFetch('/api/chain-checks').then(d => { CHAIN_CHECKS = d; put('st-checks', chain_checks_html()); }).catch(() => {});
   put('st-a-years', years_card_html(m));
   put('st-a-wd', weekdays_card_html(m));
   put('st-a-85', plat85_card_html(m));
@@ -4303,6 +4338,7 @@ function render_stats() {
       <div class="st-grid">${industries_card_html()}${trans_card_html(STATS_MORE)}</div>
       <div class="st-section">Цепочки и частота</div>
       <div class="st-grid">${chains_card_html(STATS_MORE)}${freq_card_html()}</div>
+      <div id="st-checks">${chain_checks_html()}</div>
     </div>
   </div>`;
 }
@@ -4382,6 +4418,7 @@ function api_rows() {
     { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
     { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
     { path: '/api/version-news?config_id=<id>&version=<версия>', desc: '«Что нового» версии: очищенный HTML и текст из файла «Новое в версии» на releases.1c.ru (для типовых 1С — с публичной страницы news.webits.1c.ru), источник.', example: '/api/version-news?config_id=96&version=3.0.208.14' },
+    { path: '/api/chain-checks', desc: 'Сверка наших цепочек с сервисом обновлений 1С (update-api.1c.ru) по типовым конфигурациям: итоги по статусам и расхождения; в /api/chain для проверенной исходной версии поле <code>official</code>.', example: '/api/chain-checks' },
     { path: '/api/push/key · POST /api/push/subscribe', desc: 'Web Push: публичный VAPID-ключ и подписка {subscription, config_ids} на релизы выбранных конфигураций (страница делает это сама кнопкой «Включить уведомления»).', example: '/api/push/key' },
     { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
     { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },

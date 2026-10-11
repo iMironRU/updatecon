@@ -153,3 +153,26 @@ test("push: a new subscription starts at the journal's end; favourites are re-se
   assert.equal(del.statusCode, 200);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM push_subscriptions")).rows[0].n, 0);
 });
+
+test("chain checks: the verdict from the service's answer and our chain", async () => {
+  const { compareCheck } = await import("../db/chain-checks.js");
+  const svc = (next: string | null, files: number | null, known = true) => ({ known, next, files });
+  assert.equal(compareCheck(svc(null, null, false), { found: false, steps: 0, targetKnown: false }, "3.0.103.4", "3.0.100.1").status, "unknown");
+  assert.equal(compareCheck(svc(null, null), { found: false, steps: 0, targetKnown: true }, "3.0.103.4", "3.0.103.4").status, "match");      // both say current
+  assert.equal(compareCheck(svc(null, null), { found: false, steps: 0, targetKnown: true }, "3.0.103.4", "3.0.102.3").status, "ours_longer"); // we know a newer one
+  assert.equal(compareCheck(svc("3.0.104.1", 1), { found: false, steps: 0, targetKnown: false }, "3.0.103.4", "3.0.103.4").status, "behind");
+  assert.equal(compareCheck(svc("3.0.103.4", 3), { found: true, steps: 3, targetKnown: true }, "3.0.103.4", "3.0.100.1").status, "match");
+  assert.equal(compareCheck(svc("3.0.103.4", 2), { found: true, steps: 3, targetKnown: true }, "3.0.103.4", "3.0.100.1").status, "ours_longer");
+  assert.equal(compareCheck(svc("3.0.103.4", 4), { found: true, steps: 3, targetKnown: true }, "3.0.103.4", "3.0.100.1").status, "ours_shorter");
+  assert.equal(compareCheck(svc("3.0.103.4", 1), { found: false, steps: 0, targetKnown: true }, "3.0.103.4", "3.0.100.1").status, "no_path");
+  const { pool } = await import("../db/client.js");
+  await pool.query(`INSERT INTO chain_checks (config_id, version, program_name, svc_next, svc_files, svc_size, our_next, our_steps, status, note)
+    VALUES (1, '3.0.100.1', 'Accounting', '3.0.103.4', 2, 500000000, '3.0.103.4', 3, 'ours_longer', 'у нас 3, у сервиса 2 до 3.0.103.4')`);
+  const c = await get("/api/chain?config_id=1&from=3.0.100.1&to=3.0.103.4");
+  assert.equal(c.official.status, "ours_longer");
+  assert.equal(c.official.files, 2);
+  const sum = await get("/api/chain-checks");
+  assert.equal(sum.totals.ours_longer, 1);
+  assert.equal(sum.mismatches[0].version, "3.0.100.1");
+  assert.equal((await get("/api/chain?config_id=1&from=3.0.101.2&to=3.0.103.4")).official, null);
+});

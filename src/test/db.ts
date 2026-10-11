@@ -34,7 +34,7 @@ export function prepare(): Promise<void> {
 /** Empty the data tables (settings too: VAPID keys etc. are made on demand). */
 export async function clean() {
   const { pool } = await import("../db/client.js");
-  await pool.query(`TRUNCATE push_subscriptions, release_events, version_news, patches, exchange_formats, exchanges, transitions,
+  await pool.query(`TRUNCATE push_subscriptions, release_events, version_news, chain_checks, patches, exchange_formats, exchanges, transitions,
     solutions_info, package_manifests, template_tags, version_meta, update_edges, release_projects, configurations,
     platform_builds, import_runs, settings RESTART IDENTITY CASCADE`);
 }

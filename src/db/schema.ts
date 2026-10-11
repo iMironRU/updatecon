@@ -22,6 +22,7 @@ import {
   uniqueIndex,
   index,
   bigserial,
+  bigint,
   date,
   primaryKey,
 } from "drizzle-orm/pg-core";
@@ -524,6 +525,32 @@ export const versionNews = pgTable(
     text: text("text").notNull(),            // plain text, first ~400 chars for teasers
     sourceUrl: text("source_url"),           // where it came from (the file page or the public page)
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.configId, t.version] }) }),
+);
+
+/**
+ * chain_checks — our chain checked against 1C's own update service
+ * (update-api.1c.ru, the one the internet-support library asks): for a typical
+ * configuration's version the service names the next version and how many files
+ * its chain has; we build ours to that version and compare. One row per
+ * (configuration, version), refreshed weekly by step 6 of «Обновить всё». In snapshots.
+ */
+export const chainChecks = pgTable(
+  "chain_checks",
+  {
+    configId: integer("config_id").notNull(),
+    version: text("version").notNull(),
+    programName: text("program_name").notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+    svcNext: text("svc_next"),               // the service's target version (null: it says «актуальна» or does not know)
+    svcFiles: integer("svc_files"),          // files in its chain
+    svcSize: bigint("svc_size", { mode: "number" }),
+    svcPlatform: text("svc_platform"),       // minimum platform for the target
+    ourNext: text("our_next"),               // our newest version of the configuration
+    ourSteps: integer("our_steps"),          // our chain to svc_next (null: no path)
+    status: text("status").notNull(),        // match | ours_longer | ours_shorter | no_path | unknown
+    note: text("note"),
   },
   (t) => ({ pk: primaryKey({ columns: [t.configId, t.version] }) }),
 );
