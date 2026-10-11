@@ -75,3 +75,25 @@ export async function programInfo(programName: string, version: string, configNa
     platformRecommended: pu?.recommended ? pu.platformVersion ?? null : null,
   };
 }
+
+export interface ServicePatch { uuid: string; name: string; description: string | null; metadata: string | null; size: number | null; date: string | null }
+
+/** The patches («исправления») published for a program version — the same list the portal's page shows, structured. */
+export async function patchesInfo(programName: string, version: string): Promise<ServicePatch[]> {
+  const r = await fetch(`${API}/patches/getInfo`, {
+    method: "POST", headers: { "Content-Type": "application/json", "User-Agent": "1C+Enterprise/8.3" },
+    body: JSON.stringify({ programVersionList: [{ programName, versionNumber: version }], installedPatchesList: [], additionalParameters: [] }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!r.ok) throw new Error(`update-api patches: HTTP ${r.status}`);
+  const j = await r.json() as any;
+  if (j.errorMessage) throw new Error(`update-api patches: ${j.errorMessage}`);
+  return (Array.isArray(j.patchUpdateList) ? j.patchUpdateList : [])
+    .filter((p: any) => typeof p.ueid === "string" && /^[a-f0-9-]{36}$/.test(p.ueid))
+    .map((p: any) => ({
+      uuid: p.ueid, name: String(p.name ?? ""), description: p.description ? String(p.description).slice(0, 2000) : null,
+      metadata: p.modificatedMetadata ? String(p.modificatedMetadata).slice(0, 2000) : null,
+      size: Number.isFinite(p.size) ? Number(p.size) : null,
+      date: p.buildDate ? new Date(Number(p.buildDate)).toISOString().slice(0, 10) : null,
+    }));
+}

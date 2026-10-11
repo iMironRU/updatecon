@@ -361,6 +361,8 @@ input, select, textarea { font-family: inherit; }
 .patch-date { color: var(--text-muted); font-family: var(--mono); min-width: 80px; }
 .patch-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .patch-title .mono { font-family: var(--mono); font-size: 12px; }
+.patch-meta { margin-left: 8px; font-size: 11px; color: var(--text-light); font-family: var(--mono); }
+.patch-size { font-family: var(--mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .patch-all { color: var(--accent); }
 .step-news { margin-top: 8px; font-size: 13px; }
 .step-news-teaser { color: var(--text-muted); margin-left: 6px; }
@@ -1746,7 +1748,7 @@ function step_patches_html(s) {
     <div id="${id}" class="patches-list" hidden>
       ${list.map(p => `<a href="${s.patchesUrl || '#'}" target="_blank" rel="noopener" class="patch-row" title="${esc_html(p.description || '')}">
         <span class="patch-date">${p.patch_date ? fmt_date(p.patch_date) : ''}</span>
-        <span class="patch-title"><span class="mono">${esc_html(p.title || p.uuid.slice(0, 8))}</span>${p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : ''}</span></a>`).join('')}
+        <span class="patch-title"><span class="mono">${esc_html(p.title || p.uuid.slice(0, 8))}</span>${p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : ''}${p.metadata ? `<span class="patch-meta" title="Что меняет: ${esc_html(p.metadata)}">${esc_html(p.metadata.split(',')[0].split('.').slice(0, 2).join('.'))}</span>` : ''}</span>${p.size_bytes ? `<span class="patch-size">${p.size_bytes < 1048576 ? Math.max(1, Math.round(p.size_bytes / 1024)) + ' КБ' : (p.size_bytes / 1048576).toFixed(1) + ' МБ'}</span>` : ''}</a>`).join('')}
       ${s.patchesUrl ? `<a href="${s.patchesUrl}" target="_blank" rel="noopener" class="patch-row patch-all">${icn_link()} Все патчи версии на releases.1c.ru ${icn_ext()}</a>` : ''}
     </div></div>`;
 }
@@ -3186,7 +3188,8 @@ function render_patches(cfgId, verIdx, patchList) {
   for (var i = 0; i < patchList.length; i++) {
     var p = patchList[i];
     var pDate = p.patch_date ? fmt_date(p.patch_date) : '';
-    var pTitle = '<span class="mono">' + esc_html(p.title || p.uuid.slice(0, 8)) + '</span>' + (p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : '');
+    var pTitle = '<span class="mono">' + esc_html(p.title || p.uuid.slice(0, 8)) + '</span>' + (p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : '')
+      + (p.metadata ? '<span class="patch-meta" title="Что меняет: ' + esc_html(p.metadata) + '">' + esc_html(p.metadata.split(',')[0].split('.').slice(0, 2).join('.')) + '</span>' : '');
     var nick = cfg_nick(cfgId);
     var href = nick ? 'https://releases.1c.ru/patches/total?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(CONFIGS.find(function(c){ return c.id === String(cfgId); }).versions[verIdx].v) : '#';
     links += '<a href="' + href + '" target="_blank" rel="noopener" class="patch-row" title="' + esc_html(p.description || '') + '">' +

@@ -162,6 +162,13 @@
       "when": 1791705522596,
       "tag": "0022_plain_major_mapleleaf",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791706706931,
+      "tag": "0023_fantastic_sentinel",
+      "breakpoints": true
     }
   ]
 }

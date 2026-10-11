@@ -81,10 +81,10 @@ export async function seed() {
     await q(`INSERT INTO version_meta (config_id, version, release_date, min_platform, file_size_bytes, files, files_nick) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [c, v, d, p, size, c === 1 ? JSON.stringify([{ t: "Дистрибутив обновления", p: `Accounting\\${v.replace(/\./g, "_")}\\updsetup.zip` }, { t: "Полный дистрибутив", p: `Accounting\\${v.replace(/\./g, "_")}\\setup.zip` }]) : null, c === 1 ? "Accounting30" : null]);
   }
-  await q(`INSERT INTO patches (config_id, version, uuid, title, description, patch_date) VALUES
-    (1, '3.0.103.4', '11111111-1111-1111-1111-111111111111', 'EF_1', 'Первое исправление', '2026-09-05'),
-    (1, '3.0.103.4', '22222222-2222-2222-2222-222222222222', 'EF_2', 'Второе исправление', '2026-09-06'),
-    (2, '3.0.103.4', '11111111-1111-1111-1111-111111111111', 'EF_1', 'Первое исправление', '2026-09-05')`);
+  await q(`INSERT INTO patches (config_id, version, uuid, title, description, metadata, size_bytes, source, patch_date) VALUES
+    (1, '3.0.103.4', '11111111-1111-1111-1111-111111111111', 'EF_1', 'Первое исправление', NULL, NULL, 'portal', '2026-09-05'),
+    (1, '3.0.103.4', '22222222-2222-2222-2222-222222222222', 'EF_2', 'Второе исправление', 'ОбщийМодуль.Продажи.Провести', 7671, 'service', '2026-09-06'),
+    (2, '3.0.103.4', '11111111-1111-1111-1111-111111111111', 'EF_1', 'Первое исправление', NULL, NULL, 'portal', '2026-09-05')`);
   await q(`INSERT INTO version_news (config_id, version, html, text, source_url) VALUES (1, '3.0.103.4', '<h4>Новое</h4><p>Добавлен раздел <b>ЭДО</b>.</p>', 'Новое Добавлен раздел ЭДО.', 'https://example.test/news')`);
   await q(`INSERT INTO platform_builds (version, nick, line, release_date) VALUES ('8.3.27.1688', 'Platform83', '8.3', '2026-08-20')`);
 }

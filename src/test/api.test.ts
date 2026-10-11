@@ -68,6 +68,8 @@ test("chain: shortest path with sizes, dates and patches per step; editions are 
   assert.equal(c.steps[2].releaseDate, "2026-09-01");
   assert.equal(c.steps[2].patches.length, 2);
   assert.equal(c.steps[2].patches[0].title, "EF_2");                    // newest first
+  assert.equal(c.steps[2].patches[0].metadata, "ОбщийМодуль.Продажи.Провести");
+  assert.equal(c.steps[2].patches[0].size_bytes, 7671);
   assert.match(c.steps[2].patchesUrl, /patches\/total\?nick=Accounting30&ver=3\.0\.103\.4/);
   assert.equal(c.totalBytes, 250_000_000);
   assert.equal(c.sizesKnown, 1);

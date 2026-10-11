@@ -164,9 +164,11 @@ drizzle/                generated migration SQL (committed)
   page check) is typed in the chain summary; a step whose minimum is above the current build
   gets a «обновите платформу до X» item (/platform?build=, /install).
 
-- `patches` (uuid unique → config_id, version, title = the portal's name EF_…, description,
-  patch_date) — «исправления» from releases.1c.ru `/patches/total?nick=&ver=`, read by the
-  releases import for versions of the last 180 days (6 newest per project), upsert by uuid.
+- `patches` ((config_id, version, uuid) unique → title = the name EF_…, description, metadata =
+  what it changes, size_bytes, source portal|service, patch_date) — «исправления», read by the
+  releases import for versions of the last 180 days (6 newest per project): typical 1C products
+  from the update service (`patchesInfo`, update-api.1c.ru /patches/getInfo, same uuids as the
+  portal, with metadata and size), the rest from releases.1c.ru `/patches/total?nick=&ver=`.
   `/api/chain` steps carry `patches` + `patchesUrl` (the portal's page of that version — single
   patch pages redirect to login); `/api/patches` lazy-fetches with an ITS account.
 

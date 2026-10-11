@@ -1082,7 +1082,7 @@ export async function buildServer() {
 
     // 2. Query DB first.
     const dbRows = await db.execute(sql`
-      SELECT uuid, title, description, patch_date::text, download_key
+      SELECT uuid, title, description, metadata, size_bytes, patch_date::text, download_key
       FROM patches
       WHERE config_id = ${configId} AND version = ${String(ver)}
       ORDER BY patch_date DESC NULLS LAST
@@ -1165,9 +1165,9 @@ export async function buildServer() {
     const byV = new Map(meta.map((m) => [m.version, m]));
     // The versions' patches («исправления»), newest first; the portal page lists them per version.
     const prows = ((await db.execute(sql`
-      SELECT version, uuid, title, description, patch_date::text AS patch_date FROM patches
+      SELECT version, uuid, title, description, metadata, size_bytes, patch_date::text AS patch_date FROM patches
       WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})
-      ORDER BY patch_date DESC NULLS LAST, id DESC`)) as any).rows as { version: string; uuid: string; title: string | null; description: string | null; patch_date: string | null }[];
+      ORDER BY patch_date DESC NULLS LAST, id DESC`)) as any).rows as { version: string; uuid: string; title: string | null; description: string | null; metadata: string | null; size_bytes: number | null; patch_date: string | null }[];
     const nick = cfg.releasesHref ? cfg.releasesHref.replace(/^\/project\//, "") : null;
     const newsRows = ((await db.execute(sql`SELECT version, text FROM version_news
       WHERE config_id = ${cfg.id} AND version IN (${sql.join(vers.map((v) => sql`${v}`), sql`, `)})`)) as any).rows as { version: string; text: string }[];

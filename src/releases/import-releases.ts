@@ -28,6 +28,7 @@ import { nickMatchesTemplate, templateName } from "../db/template.js";
 import { compareVersions } from "../parser/version.js";
 import { ReleasesSession } from "./fetch-releases.js";
 import { syncSolutions } from "./solutions.js";
+import { programNameFor, patchesInfo } from "./update-api.js";
 import { refreshTags } from "../db/tags.js";
 import {
   parseTotalPage, parseProjectPage, parseVersionFiles, parseVersionFileList,
@@ -284,16 +285,37 @@ export async function syncVersionFilesForConfig(
 
 // ── Patches fetching ──────────────────────────────────────────────────────────
 
-// The version's patches («исправления»): one page per version, newest versions of
-// the last half-year only (patches are issued for current versions), upsert by uuid.
-async function syncPatchesForConfig(
+// The version's patches («исправления»), newest versions of the last half-year only
+// (patches are issued for current versions), upsert by (config, version, uuid). Typical
+// 1C products: the update service (structured, with what each patch changes and its
+// size); everything else: the portal's page per version. The ids are the same.
+export async function syncPatchesForConfig(
   session: ReleasesSession,
   configId: number,
   nick: string,
   versions: string[],
+  programName: string | null = null,
 ): Promise<number> {
   let total = 0;
   for (const ver of versions) {
+    if (programName) {
+      try {
+        const list = await patchesInfo(programName, ver);
+        for (const p of list) {
+          await db.insert(patches)
+            .values({ configId, version: ver, uuid: p.uuid, title: p.name || null, description: p.description, metadata: p.metadata, sizeBytes: p.size, patchDate: p.date, source: "service" })
+            .onConflictDoUpdate({ target: [patches.configId, patches.version, patches.uuid], set: {
+              title: p.name || null, description: p.description, metadata: p.metadata, sizeBytes: p.size, source: "service",
+              patchDate: sql`coalesce(${patches.patchDate}, ${p.date})`,   // the portal's «дата исправления» wins over the build date
+            } });
+          total++;
+        }
+        await delay(300);
+        continue;
+      } catch {
+        // the service is down or does not know the program: the portal page below
+      }
+    }
     try {
       const html = await session.get(
         `/patches/total?nick=${encodeURIComponent(nick)}&ver=${encodeURIComponent(ver)}`
@@ -519,7 +541,7 @@ export async function runReleasesImport(
     }
     if (syncPatchesData) {
       const recent = patchVersions(rows);
-      const n = await syncPatchesForConfig(session, app.id, nick, recent);
+      const n = await syncPatchesForConfig(session, app.id, nick, recent, programNameFor(app.templateCode));
       if (n > 0) log(`    патчи: ${n}`);
       totalPatches += n;
       const w = await syncNewsForConfig(session, app.id, nick, recent);
