@@ -402,7 +402,15 @@ input, select, textarea { font-family: inherit; }
 .matched-more:hover { text-decoration: underline; }
 .matched-picked { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 8px; flex-wrap: wrap; }
 .matched-picked .change { font-size: 12px; color: var(--accent); cursor: pointer; }
-.ver-field { position: relative; }
+.ver-field, .name-field { position: relative; }
+.name-suggest { max-height: 420px; }
+.name-suggest-item { font-family: 'Golos Text', sans-serif; font-size: 13px; align-items: center; color: var(--text); }
+.name-suggest-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name-suggest-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name-suggest-item .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; text-align: right; }
+.name-suggest-all { font-family: 'Golos Text', sans-serif; font-size: 12px; color: var(--accent); justify-content: flex-start; gap: 4px; }
+.name-suggest-all svg { width: 12px; height: 12px; }
+.name-suggest-empty { font-family: 'Golos Text', sans-serif; font-size: 13px; color: var(--text-muted); cursor: default; }
 .ver-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 200; margin-top: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 8px 24px rgba(0,0,0,.25); overflow: hidden; max-height: 320px; overflow-y: auto; }
 .ver-suggest-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; cursor: pointer; font-family: var(--mono); font-size: 14px; }
 .ver-suggest-item:hover, .ver-suggest-item.active { background: var(--accent-dim); }
@@ -2128,6 +2136,12 @@ function render_home() {
     <div class="hero fade-up">
       <div class="hero-title">Построить цепочку обновлений</div>
       <div class="hero-sub">Введите текущую версию конфигурации 1С — мы найдём путь до актуальной версии</div>
+      <div class="field name-field" style="margin:0 0 14px">
+        <label class="label">Поиск по названию</label>
+        <input id="inp-name" class="input input-lg" placeholder="Бухгалтерия, ЗУП, Розница, разработчик…" autocomplete="off" spellcheck="false"
+          oninput="name_suggest(this.value)" onkeydown="name_suggest_key(event)" onblur="setTimeout(name_suggest_hide, 150)" onfocus="name_suggest(this.value)">
+        <div id="name-suggest" class="ver-suggest name-suggest" hidden></div>
+      </div>
       <div class="chain-builder">
         <div class="field ver-field" style="margin:0">
           <label class="label">Текущая версия</label>
@@ -2267,6 +2281,41 @@ function home_matches_reopen() {
   delete el.dataset.selected;
   document.getElementById('home-chain-result').innerHTML = '';
   home_matches_all();
+}
+// ── name search on the home page: the catalog's own matcher, current editions first ──
+function name_suggest(q) {
+  const box = document.getElementById('name-suggest');
+  if (!box) return;
+  q = q.trim().toLowerCase();
+  if (q.length < 2 || !CONFIGS_LOADED) { name_suggest_hide(); return; }
+  const found = CONFIGS.filter(c => cfg_matches_search(c, q));
+  if (!found.length) { box.innerHTML = '<div class="ver-suggest-item name-suggest-empty">Ничего не найдено</div>'; box.hidden = false; return; }
+  const exact = c => ((c.name || '').toLowerCase().startsWith(q) || (c.short || '').toLowerCase().startsWith(q)) ? 0 : 1;
+  found.sort((a, b) => (fav_has(b.id) - fav_has(a.id)) || (exact(a) - exact(b)) || ((b.isLatestEdition ? 1 : 0) - (a.isLatestEdition ? 1 : 0)) || main_cmp(a, b));
+  const shown = found.slice(0, 8);
+  box.innerHTML = shown.map(c => `<a class="ver-suggest-item name-suggest-item" href="/config/${c.id}" onmousedown="event.preventDefault()" onclick="name_suggest_hide()">
+      <span class="name-suggest-main">${type_badge(c.type)}<span class="name-suggest-name">${esc_html(c.name)}</span></span>
+      <span class="n">${esc_html([c.vendorName, c.edition ? 'ред. ' + c.edition : '', c.latestV || ''].filter(Boolean).join(' · '))}</span></a>`).join('')
+    + (found.length > shown.length ? `<a class="ver-suggest-item name-suggest-all" href="/catalog?q=${encodeURIComponent(q)}" onmousedown="event.preventDefault()">Все ${found.length} в каталоге ${icn_chevron_r()}</a>` : '');
+  box.hidden = false;
+}
+function name_suggest_hide() { const box = document.getElementById('name-suggest'); if (box) { box.hidden = true; box.innerHTML = ''; } }
+function name_suggest_key(e) {
+  const box = document.getElementById('name-suggest');
+  const items = box && !box.hidden ? [...box.querySelectorAll('a.ver-suggest-item')] : [];
+  let i = items.findIndex(x => x.classList.contains('active'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!items.length) return;
+    e.preventDefault();
+    i = e.key === 'ArrowDown' ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
+    items.forEach((x, k) => x.classList.toggle('active', k === i));
+    items[i]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const q = e.target.value.trim();
+    if (i >= 0) items[i].click();
+    else if (q) navigate('/catalog?q=' + encodeURIComponent(q));
+  } else if (e.key === 'Escape') name_suggest_hide();
 }
 // ── version suggestions under the input ──
 function ver_suggest(q) {
