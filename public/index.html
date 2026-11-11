@@ -67,6 +67,9 @@
   --shadow: 0 4px 16px rgba(0,0,0,0.3); --shadow-lg: 0 12px 32px rgba(0,0,0,0.4);
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* The hidden attribute must win over any class that sets display (a .patches-list
+   with display:flex was showing its 49 rows no matter what the toggle did). */
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 body { font-family: 'Golos Text', sans-serif; background: var(--bg); color: var(--text);
   line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column;
