@@ -143,7 +143,10 @@ for f in docker-compose.yml docker-compose.proxy.yml Caddyfile; do
   [ -f "$f" ] && cp -f "$f" "$f.prev"
 done
 
-run_spin "Скачиваем образ из ghcr.io" $DC pull
+# Только образ приложения: `compose pull` без сервисов тянет и postgres:16-alpine,
+# а с новым digest'ом база пересоздаётся прямо посреди дня (issue #45). Postgres
+# обновляем осознанно, отдельным шагом.
+run_spin "Скачиваем образ приложения из ghcr.io" $DC pull web worker
 
 run_spin "Перезапускаем сервисы" $DC up -d
 
