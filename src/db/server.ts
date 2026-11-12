@@ -59,7 +59,6 @@ import { readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { request as httpsRequest } from "node:https";
 import { randomBytes } from "node:crypto";
 import { sql, eq, and, desc, getTableColumns, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
@@ -745,67 +744,6 @@ export async function buildServer() {
     has_its: !!(process.env.ITS_LOGIN && process.env.ITS_PASSWORD),
   }));
 
-  // ── Proxy download via ITS (credentials stay server-side) ─────────────────
-  app.get("/api/download", async (req, reply) => {
-    const { from, to } = req.query as Record<string, string>;
-    const cfg = await resolveConfig(req.query as Record<string, unknown>, to);
-    if (!cfg || !from || !to) {
-      return reply.status(400).send({ error: "config_id, from, to are required" });
-    }
-    if (!process.env.ITS_LOGIN || !process.env.ITS_PASSWORD) {
-      return reply.status(503).send({ error: "ITS credentials not configured" });
-    }
-
-    // Resolve cfu_path from the edge
-    const rows = await db.execute(sql`
-      SELECT ue.cfu_path
-      FROM update_edges ue
-      WHERE ue.config_id = ${cfg.id} AND ue.from_version = ${from} AND ue.to_version = ${to}
-      LIMIT 1
-    `);
-    const edge = ((rows as any).rows ?? rows)[0] as { cfu_path: string } | undefined;
-    if (!edge?.cfu_path) {
-      return reply.status(404).send({ error: "Update edge not found" });
-    }
-
-    const urlPath = "/tmplts/" + edge.cfu_path.replace(/\\/g, "/");
-    const auth =
-      "Basic " +
-      Buffer.from(`${process.env.ITS_LOGIN}:${process.env.ITS_PASSWORD}`).toString("base64");
-    const filename = edge.cfu_path.split(/[\\/]/).pop() ?? "1cv8.cfu";
-
-    return new Promise<void>((resolve, reject) => {
-      const upstream = httpsRequest(
-        {
-          host: "downloads.v8.1c.ru",
-          path: urlPath,
-          headers: { Authorization: auth, "User-Agent": "1C+Enterprise/8.3" },
-        },
-        (res) => {
-          if (res.statusCode === 401) {
-            res.resume();
-            reply.status(502).send({ error: "ITS auth failed" });
-            return resolve();
-          }
-          if (res.statusCode !== 200) {
-            res.resume();
-            reply.status(502).send({ error: `ITS returned ${res.statusCode}` });
-            return resolve();
-          }
-          void reply.header("Content-Disposition", `attachment; filename="${filename}"`);
-          void reply.header("Content-Type", "application/octet-stream");
-          if (res.headers["content-length"]) {
-            void reply.header("Content-Length", res.headers["content-length"]);
-          }
-          reply.send(res);
-          res.on("end", resolve);
-          res.on("error", reject);
-        },
-      );
-      upstream.on("error", reject);
-      upstream.end();
-    });
-  });
 
   // Version suggestions for the home input: distinct versions starting with the
   // typed prefix (edge targets), newest first, with the number of configurations.
