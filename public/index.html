@@ -2962,7 +2962,7 @@ function render_facets() {
   if (platCnt.has('none')) plats.push('none');
   set('f-platforms', plats
     .map(p => p === 'none'
-      ? facet_chip('platforms', p, 'не определена', platCnt.get(p) || 0, 'Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта')
+      ? facet_chip('platforms', p, 'не определена', platCnt.get(p) || 0, 'Нет проекта на releases.1c.ru (партнёрские, БАС-линейка) — минимальной платформы нет в данных')
       : facet_chip('platforms', p, p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + (p === PLATFORM_NEWEST ? ' (новая)' : '') + ' — по последней версии конфигурации'))
     .join('') || '<span class="fchips-empty">нет данных</span>');
 
@@ -3750,7 +3750,7 @@ function platform_card_html() {
         v: `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`,
         l: known ? 'Платформа ' + k + (isNew ? ' — новая' : old ? ' — устаревшая' : '') : 'Платформа не определена',
         s: known ? [st_examples(cur.filter(c => c.platform === k))]
-                 : ['Нет данных releases.1c.ru, а пакет закрыт для ИТС-аккаунта — чаще всего партнёрские продукты'],
+                 : ['У этих конфигураций нет проекта на releases.1c.ru (партнёрские, БАС-линейка) — минимальную платформу брать неоткуда'],
         h: 'Нажмите — открыть в каталоге',
       },
     });
