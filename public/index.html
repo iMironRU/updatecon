@@ -386,7 +386,9 @@ input, select, textarea { font-family: inherit; }
   padding: 32px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
 .hero-title { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
 .hero-sub { color: var(--text-muted); margin-bottom: 24px; font-size: 15px; }
-.chain-builder { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+.chain-builder { display: grid; grid-template-columns: 1.1fr 1.1fr 0.9fr auto; gap: 12px; align-items: end; }
+.plat-hint { font-size: 11px; line-height: 1.3; margin-top: 4px; color: var(--text-light); }
+.plat-hint.bad { color: var(--orange); }
 .suggestion-chip { padding: 4px 12px; border: 1px solid var(--border); border-radius: 99px;
   font-size: 12px; font-family: var(--mono); cursor: pointer; transition: all .15s;
   color: var(--text-muted); background: var(--surface2); }
@@ -418,6 +420,20 @@ input, select, textarea { font-family: inherit; }
 .ver-suggest-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; cursor: pointer; font-family: var(--mono); font-size: 14px; }
 .ver-suggest-item:hover, .ver-suggest-item.active { background: var(--accent-dim); }
 .ver-suggest-item .n { font-family: inherit; font-size: 12px; color: var(--text-muted); }
+/* Recent queries of the home fields (localStorage): a quiet header with «очистить»
+   and a × per row. */
+.hist-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 14px 4px; font-family: 'Golos Text', sans-serif; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .4px; color: var(--text-light); }
+.hist-clear { background: none; border: none; padding: 0; font: inherit; font-size: 11px;
+  text-transform: none; letter-spacing: 0; color: var(--text-light); cursor: pointer; }
+.hist-clear:hover { color: var(--accent); }
+.hist-item { cursor: pointer; }
+.hist-link { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; color: inherit; }
+.hist-item .hist-link .name-suggest-name { max-width: none; }
+.hist-item svg { width: 12px; height: 12px; color: var(--text-light); flex-shrink: 0; }
+.hist-del { margin-left: auto; padding: 0 4px; color: var(--text-light); font-size: 15px; line-height: 1; }
+.hist-del:hover { color: var(--red); }
 .stats-banner { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-h) 100%);
   border-radius: var(--r-xl); padding: 24px 28px; color: white; margin-bottom: 24px;
   display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
@@ -816,6 +832,12 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
 .footer-link { font-size: 12px; color: var(--text-muted); transition: color .15s; }
 .footer-link:hover { color: var(--accent); }
 .footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
+/* Four fields in the chain builder need room: below 1100px it folds to two columns
+   (the platform field's label is longer than the version ones). */
+@media (max-width: 1100px) {
+  .chain-builder { grid-template-columns: 1fr 1fr; }
+  .chain-builder .btn-lg { grid-column: 1/-1; }
+}
 @media (max-width: 900px) {
   .catalog-layout { grid-template-columns: 1fr; }
   .filters-panel { position: static; max-height: none; overflow: visible; }
@@ -1750,6 +1772,7 @@ const icn_partner = () => icn('<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"
 const icn_industry= () => icn('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/>');
 const icn_chevron_r=() => icn('<polyline points="9 18 15 12 9 6"/>');
 const icn_search  = () => icn('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+const icn_hist    = () => icn('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>');
 const icn_filter  = () => icn('<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>');
 const icn_bar     = () => icn('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');
 const icn_spin_svg= () => `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;display:block;margin:0 auto 8px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>`;
@@ -1859,6 +1882,14 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     s._platUp = (myPlat && req && platform_cmp_v(req, curPlat) > 0) ? req : '';
     if (s._platUp) { curPlat = req; platUps++; }
   });
+  // One glanceable answer per chain: does the user's build take it? The per-step
+  // «обновите платформу» items stay, this is the summary at the top.
+  const maxReq = steps.map(s => plat_build(s.plat)).filter(Boolean).sort(platform_cmp_v).pop() || '';
+  const platBadge = myPlat && maxReq
+    ? (platUps
+        ? `<span class="badge badge-orange" title="Минимальная платформа цепочки выше вашей сборки">нужна платформа &ge; ${esc_html(maxReq)}</span>`
+        : `<span class="badge badge-green" title="Ваша сборка не ниже минимумов всех шагов">платформа ${esc_html(myPlat)} хватает</span>`)
+    : '';
 
   const display = reversed ? [...steps].reverse() : steps;
   const startLabel = reversed ? 'Целевая версия' : 'Текущая версия';
@@ -1870,6 +1901,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     <span class="chain-group-title">${cfg ? cfg.name : ''}</span>
     <div class="chain-group-meta">
       <span class="badge badge-blue">${steps.length} шаг${steps.length===1?'':steps.length<5?'а':'ов'}</span>
+      ${platBadge}
       <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:2px 8px" onclick="toggle_chain_dir('${blockId}')">
         ${reversed ? '↓ Старые первыми' : '↑ Новые первыми'}
       </button>
@@ -2142,19 +2174,26 @@ function render_home() {
       <div class="field name-field" style="margin:0 0 14px">
         <label class="label">Поиск по названию</label>
         <input id="inp-name" class="input input-lg" placeholder="Бухгалтерия, ЗУП, Розница, разработчик…" autocomplete="off" spellcheck="false"
-          oninput="name_suggest(this.value)" onkeydown="name_suggest_key(event)" onblur="setTimeout(name_suggest_hide, 150)" onfocus="name_suggest(this.value)">
+          oninput="name_suggest(this.value)" onkeydown="name_suggest_key(event)" onblur="name_suggest_blur()" onfocus="name_suggest(this.value)">
         <div id="name-suggest" class="ver-suggest name-suggest" hidden></div>
       </div>
       <div class="chain-builder">
         <div class="field ver-field" style="margin:0">
           <label class="label">Текущая версия</label>
           <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" autocomplete="off" spellcheck="false"
-            oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="setTimeout(ver_suggest_hide, 150)" onfocus="home_version_input(this.value)">
+            oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="ver_suggest_blur()" onfocus="home_version_input(this.value)">
           <div id="ver-suggest" class="ver-suggest" hidden></div>
         </div>
         <div class="field" style="margin:0">
           <label class="label">Целевая версия <span style="font-weight:400;text-transform:none;font-size:11px">(оставьте пустым — до последней)</span></label>
           <input id="inp-target" class="input input-mono input-lg" placeholder="Последняя">
+        </div>
+        <div class="field" style="margin:0">
+          <label class="label">Версия платформы <span style="font-weight:400;text-transform:none;font-size:11px">(необязательно)</span></label>
+          <input id="inp-platform" class="input input-mono input-lg" placeholder="8.3.24.1691" inputmode="decimal" autocomplete="off"
+            value="${esc_html(pc_saved())}" onchange="home_platform_input(this.value)" oninput="home_platform_hint(this.value)"
+            onkeydown="if (event.key === 'Enter') { event.preventDefault(); this.blur(); }">
+          <div id="plat-hint" class="plat-hint"></div>
         </div>
         <button class="btn btn-primary btn-lg" onclick="home_build_chain()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
@@ -2286,17 +2325,110 @@ function home_matches_reopen() {
   home_matches_all();
 }
 // ── name search on the home page: the catalog's own matcher, current editions first ──
+/* ================================================================
+   RECENT QUERIES of the home fields — localStorage uc_hist_name / uc_hist_ver
+   ================================================================
+   Focus an empty field and the last queries are right there instead of a blank
+   box. Written only when a search led somewhere (a chain was built, a config was
+   picked, Enter went to the catalog). Local only, like «Мои конфигурации». */
+const HIST_MAX = 8;
+function hist_get(kind) {
+  try {
+    const v = JSON.parse(localStorage.getItem('uc_hist_' + kind) || '[]');
+    return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.trim()).slice(0, HIST_MAX) : [];
+  } catch (e) { return []; }
+}
+function hist_put(kind, value) {
+  value = String(value || '').replace(/\s+/g, ' ').trim();
+  if (value.length < 2) return;
+  const rest = hist_get(kind).filter(x => x.toLowerCase() !== value.toLowerCase());
+  rest.unshift(value);
+  try { localStorage.setItem('uc_hist_' + kind, JSON.stringify(rest.slice(0, HIST_MAX))); } catch (e) {}
+}
+function hist_drop(kind, value) {
+  try { localStorage.setItem('uc_hist_' + kind, JSON.stringify(hist_get(kind).filter(x => x !== value))); } catch (e) {}
+}
+function hist_clear(kind) {
+  try { localStorage.removeItem('uc_hist_' + kind); } catch (e) {}
+}
+function hist_rows(kind, q) {
+  q = String(q || '').trim().toLowerCase();
+  return hist_get(kind).filter(v => !q || v.toLowerCase().includes(q));
+}
+function hist_head_html(kind) {
+  return `<div class="hist-head">${kind === 'ver' ? 'Недавние версии' : 'Недавние запросы'}
+    <button type="button" class="hist-clear" onmousedown="event.preventDefault()" onclick="hist_clear_click(event,'${kind}')">очистить</button></div>`;
+}
+function hist_clear_click(ev, kind) {
+  ev.preventDefault(); ev.stopPropagation();
+  hist_clear(kind);
+  if (kind === 'ver') ver_suggest_hide(); else name_suggest_hide();
+}
+function hist_drop_click(ev, kind, value) {
+  ev.preventDefault(); ev.stopPropagation();
+  hist_drop(kind, value);
+  const inp = document.getElementById(kind === 'ver' ? 'inp-version' : 'inp-name');
+  if (kind === 'ver') ver_suggest(inp ? inp.value : ''); else name_suggest(inp ? inp.value : '');
+}
+/** Recent name queries into #name-suggest; false when there is nothing to show. */
+function name_hist_render(q) {
+  const box = document.getElementById('name-suggest');
+  if (!box) return false;
+  const rows = hist_rows('name', q);
+  if (!rows.length) return false;
+  box.innerHTML = hist_head_html('name') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}">
+      <a class="hist-link" href="/catalog?q=${encodeURIComponent(v)}" onclick="name_hist_pick(event, this)">${icn_hist()}<span class="name-suggest-name">${esc_html(v)}</span></a>
+      <span class="hist-del" title="Убрать из истории" onclick="hist_drop_click(event,'name',this.parentElement.dataset.v)">×</span></div>`).join('');
+  box.hidden = false;
+  return true;
+}
+function name_hist_pick(ev, el) {
+  ev.preventDefault();
+  const row = el.closest('.hist-item');
+  const v = (row && row.dataset.v) || '';
+  const inp = document.getElementById('inp-name');
+  if (inp) { inp.value = v; inp.focus(); }
+  name_suggest(v);
+}
+/** A config was picked from the suggestions: remember what was typed to find it. */
+function name_suggest_pick() {
+  const inp = document.getElementById('inp-name');
+  if (inp) hist_put('name', inp.value);
+  name_suggest_hide();
+}
+/** Recent versions into #ver-suggest. */
+function ver_hist_render(q) {
+  const box = document.getElementById('ver-suggest');
+  if (!box) return false;
+  const rows = hist_rows('ver', q);
+  if (!rows.length) return false;
+  box.innerHTML = hist_head_html('ver') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}" onmousedown="ver_suggest_pick(this.dataset.v)">
+      <span>${esc_html(v)}</span>
+      <span class="hist-del" title="Убрать из истории" onmousedown="event.preventDefault(); event.stopPropagation(); hist_drop_click(event,'ver',this.parentElement.dataset.v)">×</span></div>`).join('');
+  box.hidden = false;
+  return true;
+}
+/* The blur timer of 150ms only exists so a click on a suggestion lands before the box
+   hides; it must not fire when focus already came back (history would vanish). */
+let _nameHideTimer = 0, _verHideTimer = 0;
+function name_suggest_blur() {
+  clearTimeout(_nameHideTimer);
+  _nameHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'inp-name') name_suggest_hide(); }, 150);
+}
 function name_suggest(q) {
   const box = document.getElementById('name-suggest');
   if (!box) return;
-  q = q.trim().toLowerCase();
-  if (q.length < 2 || !CONFIGS_LOADED) { name_suggest_hide(); return; }
+  clearTimeout(_nameHideTimer);
+  q = String(q || '').trim().toLowerCase();
+  if (!CONFIGS_LOADED) { name_suggest_hide(); return; }
+  // Nothing typed yet: the recent queries are more useful than an empty box.
+  if (q.length < 2) { if (!name_hist_render(q)) name_suggest_hide(); return; }
   const found = CONFIGS.filter(c => cfg_matches_search(c, q));
   if (!found.length) { box.innerHTML = '<div class="ver-suggest-item name-suggest-empty">Ничего не найдено</div>'; box.hidden = false; return; }
   const exact = c => ((c.name || '').toLowerCase().startsWith(q) || (c.short || '').toLowerCase().startsWith(q)) ? 0 : 1;
   found.sort((a, b) => (fav_has(b.id) - fav_has(a.id)) || (exact(a) - exact(b)) || ((b.isLatestEdition ? 1 : 0) - (a.isLatestEdition ? 1 : 0)) || main_cmp(a, b));
   const shown = found.slice(0, 8);
-  box.innerHTML = shown.map(c => `<a class="ver-suggest-item name-suggest-item" href="/config/${c.id}" onmousedown="event.preventDefault()" onclick="name_suggest_hide()">
+  box.innerHTML = shown.map(c => `<a class="ver-suggest-item name-suggest-item" href="/config/${c.id}" onmousedown="event.preventDefault()" onclick="name_suggest_pick()">
       <span class="name-suggest-main">${type_badge(c.type)}<span class="name-suggest-name">${esc_html(c.name)}</span></span>
       <span class="n">${esc_html([c.vendorName, c.edition ? 'ред. ' + c.edition : '', c.latestV || ''].filter(Boolean).join(' · '))}</span></a>`).join('')
     + (found.length > shown.length ? `<a class="ver-suggest-item name-suggest-all" href="/catalog?q=${encodeURIComponent(q)}" onmousedown="event.preventDefault()">Все ${found.length} в каталоге ${icn_chevron_r()}</a>` : '');
@@ -2305,7 +2437,7 @@ function name_suggest(q) {
 function name_suggest_hide() { const box = document.getElementById('name-suggest'); if (box) { box.hidden = true; box.innerHTML = ''; } }
 function name_suggest_key(e) {
   const box = document.getElementById('name-suggest');
-  const items = box && !box.hidden ? [...box.querySelectorAll('a.ver-suggest-item')] : [];
+  const items = box && !box.hidden ? [...box.querySelectorAll('a.ver-suggest-item, a.hist-link')] : [];
   let i = items.findIndex(x => x.classList.contains('active'));
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (!items.length) return;
@@ -2317,15 +2449,22 @@ function name_suggest_key(e) {
     e.preventDefault();
     const q = e.target.value.trim();
     if (i >= 0) items[i].click();
-    else if (q) navigate('/catalog?q=' + encodeURIComponent(q));
+    else if (q) { hist_put('name', q); navigate('/catalog?q=' + encodeURIComponent(q)); }
   } else if (e.key === 'Escape') name_suggest_hide();
 }
 // ── version suggestions under the input ──
+function ver_suggest_blur() {
+  clearTimeout(_verHideTimer);
+  _verHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'inp-version') ver_suggest_hide(); }, 150);
+}
 function ver_suggest(q) {
   const box = document.getElementById('ver-suggest');
   if (!box) return;
   clearTimeout(_verSuggestTimer);
-  if (!/^\d[\d.]{1,}$/.test(q) || q.length < 3) { ver_suggest_hide(); return; }
+  clearTimeout(_verHideTimer);
+  q = String(q || '').trim();
+  // Empty, or not a version yet — the recent versions beat an empty box.
+  if (!/^\d[\d.]{1,}$/.test(q) || q.length < 3) { if (!ver_hist_render(q)) ver_suggest_hide(); return; }
   _verSuggestTimer = setTimeout(async () => {
     let rows = [];
     try { rows = await apiFetch('/api/versions/suggest', { q }); } catch (e) {}
@@ -2354,6 +2493,36 @@ function ver_suggest_key(e) {
     items[i]?.scrollIntoView({ block: 'nearest' });
   } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); ver_suggest_pick(items[i].firstChild.textContent); }
   else if (e.key === 'Escape') ver_suggest_hide();
+}
+/* The home form's optional platform build. It goes into the same localStorage key
+   the chain summary and the /stats check use (uc_platform), so the value is already
+   there when the chain renders — «обновите платформу» items and the time estimate
+   follow it. «8.3.24» means the line (any build), «8.3.24.1691» a build. */
+function home_platform_hint(v) {
+  const el = document.getElementById('plat-hint');
+  if (!el) return;
+  v = String(v || '').trim();
+  if (!v) { el.textContent = ''; el.classList.remove('bad'); return; }
+  if (!/^\d+\.\d+(\.\d+){0,2}$/.test(v)) {
+    el.textContent = 'не версия — нужно 8.3.24 или 8.3.24.1691';
+    el.classList.add('bad');
+    return;
+  }
+  el.classList.remove('bad');
+  el.textContent = v.split('.').length === 2 ? 'линейка: подойдёт любая сборка' : '';
+}
+function home_platform_input(v) {
+  v = String(v || '').trim();
+  home_platform_hint(v);
+  // Garbage is not stored: /stats reads the same key and would check nonsense.
+  if (/^\d+\.\d+(\.\d+){0,2}$/.test(v) || !v) {
+    try { if (v) localStorage.setItem(PC_KEY, v); else localStorage.removeItem(PC_KEY); } catch (e) {}
+  }
+  // Already-built results follow the field in place — no second request.
+  Object.keys(CHAIN_RENDER_STATE).forEach(id => {
+    const el = document.getElementById(id), st = CHAIN_RENDER_STATE[id];
+    if (el && st) el.outerHTML = render_chain_steps(st.steps, st.fromV, st.cfg, st.reversed);
+  });
 }
 async function home_build_chain() {
   const fromV = document.getElementById('inp-version').value.trim();
@@ -2407,6 +2576,13 @@ async function home_build_chain() {
     if (!steps?.length) continue;
     CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
     html += `<div style="margin-bottom:24px">${render_chain_steps(steps, fromV, cfg)}</div>`;
+  }
+  // A chain was built — the query is worth remembering for the next visit.
+  if (reached) {
+    hist_put('ver', fromV);
+    if (toVRaw) hist_put('ver', toVRaw);
+    const nameInp = document.getElementById('inp-name');
+    if (nameInp) hist_put('name', nameInp.value);
   }
   result.innerHTML = html || `<div class="empty"><p>Цепочка не найдена</p></div>`;
 }
