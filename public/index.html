@@ -2362,13 +2362,17 @@ function hist_head_html(kind) {
 function hist_clear_click(ev, kind) {
   ev.preventDefault(); ev.stopPropagation();
   hist_clear(kind);
-  if (kind === 'ver') ver_suggest_hide(); else name_suggest_hide();
+  if (kind === 'ver') ver_suggest_hide();
+  else if (kind === 'cat') { if (typeof cat_hist_hide === 'function') cat_hist_hide(); }
+  else name_suggest_hide();
 }
 function hist_drop_click(ev, kind, value) {
   ev.preventDefault(); ev.stopPropagation();
   hist_drop(kind, value);
-  const inp = document.getElementById(kind === 'ver' ? 'inp-version' : 'inp-name');
-  if (kind === 'ver') ver_suggest(inp ? inp.value : ''); else name_suggest(inp ? inp.value : '');
+  const inp = document.getElementById(kind === 'ver' ? 'inp-version' : kind === 'cat' ? 'catalog-search' : 'inp-name');
+  if (kind === 'ver') ver_suggest(inp ? inp.value : '');
+  else if (kind === 'cat') cat_hist_show(inp ? inp.value : '');
+  else name_suggest(inp ? inp.value : '');
 }
 /** Recent name queries into #name-suggest; false when there is nothing to show. */
 function name_hist_render(q) {
@@ -2818,7 +2822,10 @@ function render_catalog() {
           <div class="search-wrap" style="flex:1">
             ${icn_search()}
             <input class="input search-input" id="catalog-search" placeholder="Название, разработчик, шаблон или линейка (бух, зуп…)"
-                   value="${esc_html(CAT.q)}" oninput="CAT.q=this.value; apply_filters()">
+                   value="${esc_html(CAT.q)}" autocomplete="off"
+                   oninput="CAT.q=this.value; apply_filters(); cat_hist_show(this.value)"
+                   onkeydown="cat_hist_key(event)" onblur="cat_hist_blur()" onfocus="cat_hist_show(this.value)">
+            <div id="cat-suggest" class="ver-suggest name-suggest" hidden></div>
           </div>
           <div class="sort-seg" id="catalog-sort" role="group" aria-label="Сортировка"></div>
         </div>
@@ -2832,7 +2839,7 @@ function config_card_html(c) {
   const freq = c.avg_update_days;
   const freq_cls = !freq ? 'badge-gray' : freq <= 40 ? 'badge-green' : freq <= 80 ? 'badge-yellow' : 'badge-gray';
   const freq_text = freq ? `~${freq} дн.` : 'нет данных';
-  return `<div class="card config-card card-clickable fade-up" onclick="navigate('/config/${c.id}')">
+  return `<div class="card config-card card-clickable fade-up" onclick="cat_hist_record(); navigate('/config/${c.id}')">
     ${fav_btn(c.id)}
     <div class="config-card-body">
       <div class="config-card-top">
@@ -3105,6 +3112,48 @@ function main_cmp(a, b) {
     || new Date(b.latestDate||0) - new Date(a.latestDate||0)
     || levelRank(a) - levelRank(b)
     || (a.name||'').localeCompare(b.name||'','ru');
+}
+/* ── Recent queries of the catalog's search field ──
+   Same storage as the home fields (uc_hist_cat), shown while the field is empty:
+   the grid is the answer once you type, so the dropdown is only about starting
+   points. A query is remembered when it led somewhere — Enter, or a card opened
+   from the filtered list. */
+let _catHideTimer = 0;
+function cat_hist_hide() { const b = document.getElementById('cat-suggest'); if (b) { b.hidden = true; b.innerHTML = ''; } }
+function cat_hist_show(q) {
+  const box = document.getElementById('cat-suggest');
+  if (!box) return;
+  clearTimeout(_catHideTimer);
+  q = String(q || '').trim();
+  if (q.length >= 2) { cat_hist_hide(); return; }
+  const rows = hist_rows('cat', q);
+  if (!rows.length) { cat_hist_hide(); return; }
+  box.innerHTML = hist_head_html('cat') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}">
+      <span class="hist-link" onclick="cat_hist_pick(event, this)">${icn_hist()}<span class="name-suggest-name">${esc_html(v)}</span></span>
+      <span class="hist-del" title="Убрать из истории" onclick="hist_drop_click(event,'cat',this.parentElement.dataset.v)">×</span></div>`).join('');
+  box.hidden = false;
+}
+function cat_hist_blur() {
+  clearTimeout(_catHideTimer);
+  _catHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'catalog-search') cat_hist_hide(); }, 150);
+}
+function cat_hist_pick(ev, el) {
+  ev.preventDefault();
+  const v = el.closest('.hist-item')?.dataset.v || '';
+  const inp = document.getElementById('catalog-search');
+  if (inp) inp.value = v;
+  CAT.q = v;
+  apply_filters();
+  cat_hist_hide();
+}
+function cat_hist_key(e) {
+  if (e.key === 'Escape') { cat_hist_hide(); return; }
+  if (e.key === 'Enter') { hist_put('cat', e.target.value); cat_hist_hide(); }
+}
+/** A card was opened from the filtered catalog: the query did its job. */
+function cat_hist_record() {
+  const inp = document.getElementById('catalog-search');
+  if (inp && CAT.q.trim().length >= 2) hist_put('cat', inp.value);
 }
 function apply_filters() {
   if (!CAT) return;
