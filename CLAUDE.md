@@ -263,6 +263,19 @@ hides the panel link on the public site (`/api/site` then returns null — the
 address is not given away). Forgotten address: `docker compose logs web | grep
 панель`, or delete `admin_path` from settings.
 
+## Downloads are never proxied through our ITS account
+
+`/api/download` was removed (issue #5, 12.11.2026): it streamed `.cfu` files from
+`downloads.v8.1c.ru` with OUR ITS credentials to anyone who asked — anonymous, no
+limits, no logs. An ITS subscription covers your own bases; serving 1C's files to
+third parties is redistribution, and one public endpoint on one account is also a
+practical risk (quota, rate limits, a ban that would break the import).
+
+Files are downloaded by the user, with the user's own ITS login: the generated
+scripts ask for it at run time (`src/scripts`), the catalog links to
+releases.1c.ru. Do not add a proxy endpoint back, not even "for convenience" —
+ask first.
+
 ## Scripts for the user's machine (scripts.ts, src/scripts)
 
 The chain script downloads `.cfu` files from downloads.v8.1c.ru with Basic auth
