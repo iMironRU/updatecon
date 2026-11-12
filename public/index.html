@@ -2184,9 +2184,14 @@ function render_home() {
             oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="ver_suggest_blur()" onfocus="home_version_input(this.value)">
           <div id="ver-suggest" class="ver-suggest" hidden></div>
         </div>
-        <div class="field" style="margin:0">
+        <div class="field ver-field" style="margin:0">
           <label class="label">Целевая версия <span style="font-weight:400;text-transform:none;font-size:11px">(оставьте пустым — до последней)</span></label>
-          <input id="inp-target" class="input input-mono input-lg" placeholder="Последняя">
+          <input id="inp-target" class="input input-mono input-lg" placeholder="Последняя" autocomplete="off" inputmode="decimal"
+            oninput="ver_suggest(this.value,'ver-suggest-target','inp-target')"
+            onkeydown="ver_suggest_key(event,'ver-suggest-target','inp-target')"
+            onblur="ver_suggest_blur('ver-suggest-target','inp-target')"
+            onfocus="ver_suggest(this.value,'ver-suggest-target','inp-target')">
+          <div id="ver-suggest-target" class="ver-suggest" hidden></div>
         </div>
         <div class="field" style="margin:0">
           <label class="label">Версия платформы <span style="font-weight:400;text-transform:none;font-size:11px">(необязательно)</span></label>
@@ -2366,13 +2371,15 @@ function hist_clear_click(ev, kind) {
   else if (kind === 'cat') { if (typeof cat_hist_hide === 'function') cat_hist_hide(); }
   else name_suggest_hide();
 }
-function hist_drop_click(ev, kind, value) {
+function hist_drop_click(ev, kind, value, boxId, inpId) {
   ev.preventDefault(); ev.stopPropagation();
   hist_drop(kind, value);
-  const inp = document.getElementById(kind === 'ver' ? 'inp-version' : kind === 'cat' ? 'catalog-search' : 'inp-name');
-  if (kind === 'ver') ver_suggest(inp ? inp.value : '');
-  else if (kind === 'cat') cat_hist_show(inp ? inp.value : '');
-  else name_suggest(inp ? inp.value : '');
+  const id = inpId || (kind === 'ver' ? 'inp-version' : kind === 'cat' ? 'catalog-search' : 'inp-name');
+  const inp = document.getElementById(id);
+  const val = inp ? inp.value : '';
+  if (kind === 'ver') ver_suggest(val, boxId || 'ver-suggest', id);
+  else if (kind === 'cat') cat_hist_show(val);
+  else name_suggest(val);
 }
 /** Recent name queries into #name-suggest; false when there is nothing to show. */
 function name_hist_render(q) {
@@ -2400,21 +2407,23 @@ function name_suggest_pick() {
   if (inp) hist_put('name', inp.value);
   name_suggest_hide();
 }
-/** Recent versions into #ver-suggest. */
-function ver_hist_render(q) {
-  const box = document.getElementById('ver-suggest');
+/** Recent versions into the given box — the home form has two version fields
+    («Текущая версия» and the optional «Целевая версия»), both share uc_hist_ver. */
+function ver_hist_render(q, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const box = document.getElementById(boxId);
   if (!box) return false;
   const rows = hist_rows('ver', q);
   if (!rows.length) return false;
-  box.innerHTML = hist_head_html('ver') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}" onmousedown="ver_suggest_pick(this.dataset.v)">
+  box.innerHTML = hist_head_html('ver') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}" onmousedown="ver_suggest_pick(this.dataset.v,'${boxId}','${inpId}')">
       <span>${esc_html(v)}</span>
-      <span class="hist-del" title="Убрать из истории" onmousedown="event.preventDefault(); event.stopPropagation(); hist_drop_click(event,'ver',this.parentElement.dataset.v)">×</span></div>`).join('');
+      <span class="hist-del" title="Убрать из истории" onmousedown="event.preventDefault(); event.stopPropagation(); hist_drop_click(event,'ver',this.parentElement.dataset.v,'${boxId}','${inpId}')">×</span></div>`).join('');
   box.hidden = false;
   return true;
 }
 /* The blur timer of 150ms only exists so a click on a suggestion lands before the box
    hides; it must not fire when focus already came back (history would vanish). */
-let _nameHideTimer = 0, _verHideTimer = 0;
+let _nameHideTimer = 0;
+const _verTimers = {};   // boxId → {suggest, hide}: two version inputs share this code
 function name_suggest_blur() {
   clearTimeout(_nameHideTimer);
   _nameHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'inp-name') name_suggest_hide(); }, 150);
@@ -2457,36 +2466,42 @@ function name_suggest_key(e) {
   } else if (e.key === 'Escape') name_suggest_hide();
 }
 // ── version suggestions under the input ──
-function ver_suggest_blur() {
-  clearTimeout(_verHideTimer);
-  _verHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'inp-version') ver_suggest_hide(); }, 150);
+/* One implementation for both version fields: the box id and the input id are
+   arguments, so «Целевая версия» gets the same history, debounce and keys as
+   «Текущая версия» without a second copy of the code. */
+function ver_timers(boxId) { return (_verTimers[boxId] ||= { suggest: 0, hide: 0 }); }
+function ver_suggest_blur(boxId = 'ver-suggest', inpId = 'inp-version') {
+  const t = ver_timers(boxId);
+  clearTimeout(t.hide);
+  t.hide = setTimeout(() => { if (document.activeElement?.id !== inpId) ver_suggest_hide(boxId); }, 150);
 }
-function ver_suggest(q) {
-  const box = document.getElementById('ver-suggest');
+function ver_suggest(q, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const box = document.getElementById(boxId);
   if (!box) return;
-  clearTimeout(_verSuggestTimer);
-  clearTimeout(_verHideTimer);
+  const t = ver_timers(boxId);
+  clearTimeout(t.suggest);
+  clearTimeout(t.hide);
   q = String(q || '').trim();
   // Empty, or not a version yet — the recent versions beat an empty box.
-  if (!/^\d[\d.]{1,}$/.test(q) || q.length < 3) { if (!ver_hist_render(q)) ver_suggest_hide(); return; }
-  _verSuggestTimer = setTimeout(async () => {
+  if (!/^\d[\d.]{1,}$/.test(q) || q.length < 3) { if (!ver_hist_render(q, boxId, inpId)) ver_suggest_hide(boxId); return; }
+  t.suggest = setTimeout(async () => {
     let rows = [];
     try { rows = await apiFetch('/api/versions/suggest', { q }); } catch (e) {}
     rows = rows.filter(r => r.version !== q);
-    if (!rows.length || document.activeElement?.id !== 'inp-version') { ver_suggest_hide(); return; }
-    box.innerHTML = rows.map(r => `<div class="ver-suggest-item" onmousedown="ver_suggest_pick('${r.version}')"><span>${r.version}</span><span class="n">${r.configs} ${plural(r.configs,'конфигурация','конфигурации','конфигураций')}</span></div>`).join('');
+    if (!rows.length || document.activeElement?.id !== inpId) { ver_suggest_hide(boxId); return; }
+    box.innerHTML = rows.map(r => `<div class="ver-suggest-item" data-v="${esc_html(r.version)}" onmousedown="ver_suggest_pick(this.dataset.v,'${boxId}','${inpId}')"><span>${esc_html(r.version)}</span><span class="n">${r.configs} ${plural(r.configs,'конфигурация','конфигурации','конфигураций')}</span></div>`).join('');
     box.hidden = false;
   }, 200);
 }
-function ver_suggest_hide() { const box = document.getElementById('ver-suggest'); if (box) { box.hidden = true; box.innerHTML = ''; } }
-function ver_suggest_pick(v) {
-  const inp = document.getElementById('inp-version');
-  inp.value = v;
-  ver_suggest_hide();
-  home_version_input(v);
+function ver_suggest_hide(boxId = 'ver-suggest') { const box = document.getElementById(boxId); if (box) { box.hidden = true; box.innerHTML = ''; } }
+function ver_suggest_pick(v, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const inp = document.getElementById(inpId);
+  if (inp) inp.value = v;
+  ver_suggest_hide(boxId);
+  if (inpId === 'inp-version') home_version_input(v);   // the chain form reacts to the current version only
 }
-function ver_suggest_key(e) {
-  const box = document.getElementById('ver-suggest');
+function ver_suggest_key(e, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const box = document.getElementById(boxId);
   if (!box || box.hidden) return;
   const items = [...box.querySelectorAll('.ver-suggest-item')];
   let i = items.findIndex(x => x.classList.contains('active'));
@@ -2495,8 +2510,8 @@ function ver_suggest_key(e) {
     i = e.key === 'ArrowDown' ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
     items.forEach((x, k) => x.classList.toggle('active', k === i));
     items[i]?.scrollIntoView({ block: 'nearest' });
-  } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); ver_suggest_pick(items[i].firstChild.textContent); }
-  else if (e.key === 'Escape') ver_suggest_hide();
+  } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); ver_suggest_pick(items[i].dataset.v || items[i].textContent.trim(), boxId, inpId); }
+  else if (e.key === 'Escape') ver_suggest_hide(boxId);
 }
 /* The home form's optional platform build. It goes into the same localStorage key
    the chain summary and the /stats check use (uc_platform), so the value is already
