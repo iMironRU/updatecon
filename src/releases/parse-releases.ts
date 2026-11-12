@@ -50,6 +50,30 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The project link's text → the catalog's display name.
+ *
+ * Taken verbatim from /total, where it is a single text node today — but the
+ * markup is 1C's, so anything nested in it (a tag, an entity, a double space:
+ * «Управление ЖКХ  КОРП») would otherwise land in `configurations.display_name`
+ * and in every page that shows it. A name that looks truncated after this
+ * ("Бухгалтерия предприятия (базовая для 1)") is the portal's own text, not a
+ * parsing artefact — verified against the raw row.
+ */
+export function cleanProjectName(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** "DD.MM.YY" or "DD.MM.YYYY" → "YYYY-MM-DD" (ISO), null if unparseable. */
 export function parseDate(raw: string): string | null {
   const m = raw.trim().match(/^(\d{1,2})\.(\d{2})\.(\d{2,4})$/);
@@ -81,11 +105,13 @@ export function parseTotalPage(html: string): ReleasesConfig[] {
     const groupId = rowMatch[1];
     const row = rowMatch[2];
 
-    const hrefMatch = row.match(/href="(\/project\/[^"?]+)">([^<]+)</);
+    // The whole link text up to </a>: a tag inside the name must not truncate it
+    // (cleanProjectName strips markup, entities and double spaces).
+    const hrefMatch = row.match(/href="(\/project\/[^"?]+)">([\s\S]*?)<\/a>/);
     if (!hrefMatch) continue;
 
     const href = hrefMatch[1];
-    const displayName = hrefMatch[2].trim();
+    const displayName = cleanProjectName(hrefMatch[2]);
     const groupName = groupMap.get(groupId) ?? "";
 
     // Current versions: the "actual" cell may list several — a long-term
