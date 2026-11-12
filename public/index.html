@@ -386,7 +386,9 @@ input, select, textarea { font-family: inherit; }
   padding: 32px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
 .hero-title { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
 .hero-sub { color: var(--text-muted); margin-bottom: 24px; font-size: 15px; }
-.chain-builder { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+.chain-builder { display: grid; grid-template-columns: 1.1fr 1.1fr 0.9fr auto; gap: 12px; align-items: end; }
+.plat-hint { font-size: 11px; line-height: 1.3; margin-top: 4px; color: var(--text-light); }
+.plat-hint.bad { color: var(--orange); }
 .suggestion-chip { padding: 4px 12px; border: 1px solid var(--border); border-radius: 99px;
   font-size: 12px; font-family: var(--mono); cursor: pointer; transition: all .15s;
   color: var(--text-muted); background: var(--surface2); }
@@ -830,6 +832,12 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
 .footer-link { font-size: 12px; color: var(--text-muted); transition: color .15s; }
 .footer-link:hover { color: var(--accent); }
 .footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
+/* Four fields in the chain builder need room: below 1100px it folds to two columns
+   (the platform field's label is longer than the version ones). */
+@media (max-width: 1100px) {
+  .chain-builder { grid-template-columns: 1fr 1fr; }
+  .chain-builder .btn-lg { grid-column: 1/-1; }
+}
 @media (max-width: 900px) {
   .catalog-layout { grid-template-columns: 1fr; }
   .filters-panel { position: static; max-height: none; overflow: visible; }
@@ -1874,6 +1882,14 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     s._platUp = (myPlat && req && platform_cmp_v(req, curPlat) > 0) ? req : '';
     if (s._platUp) { curPlat = req; platUps++; }
   });
+  // One glanceable answer per chain: does the user's build take it? The per-step
+  // «обновите платформу» items stay, this is the summary at the top.
+  const maxReq = steps.map(s => plat_build(s.plat)).filter(Boolean).sort(platform_cmp_v).pop() || '';
+  const platBadge = myPlat && maxReq
+    ? (platUps
+        ? `<span class="badge badge-orange" title="Минимальная платформа цепочки выше вашей сборки">нужна платформа &ge; ${esc_html(maxReq)}</span>`
+        : `<span class="badge badge-green" title="Ваша сборка не ниже минимумов всех шагов">платформа ${esc_html(myPlat)} хватает</span>`)
+    : '';
 
   const display = reversed ? [...steps].reverse() : steps;
   const startLabel = reversed ? 'Целевая версия' : 'Текущая версия';
@@ -1885,6 +1901,7 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
     <span class="chain-group-title">${cfg ? cfg.name : ''}</span>
     <div class="chain-group-meta">
       <span class="badge badge-blue">${steps.length} шаг${steps.length===1?'':steps.length<5?'а':'ов'}</span>
+      ${platBadge}
       <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:2px 8px" onclick="toggle_chain_dir('${blockId}')">
         ${reversed ? '↓ Старые первыми' : '↑ Новые первыми'}
       </button>
@@ -2170,6 +2187,13 @@ function render_home() {
         <div class="field" style="margin:0">
           <label class="label">Целевая версия <span style="font-weight:400;text-transform:none;font-size:11px">(оставьте пустым — до последней)</span></label>
           <input id="inp-target" class="input input-mono input-lg" placeholder="Последняя">
+        </div>
+        <div class="field" style="margin:0">
+          <label class="label">Версия платформы <span style="font-weight:400;text-transform:none;font-size:11px">(необязательно)</span></label>
+          <input id="inp-platform" class="input input-mono input-lg" placeholder="8.3.24.1691" inputmode="decimal" autocomplete="off"
+            value="${esc_html(pc_saved())}" onchange="home_platform_input(this.value)" oninput="home_platform_hint(this.value)"
+            onkeydown="if (event.key === 'Enter') { event.preventDefault(); this.blur(); }">
+          <div id="plat-hint" class="plat-hint"></div>
         </div>
         <button class="btn btn-primary btn-lg" onclick="home_build_chain()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
@@ -2469,6 +2493,36 @@ function ver_suggest_key(e) {
     items[i]?.scrollIntoView({ block: 'nearest' });
   } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); ver_suggest_pick(items[i].firstChild.textContent); }
   else if (e.key === 'Escape') ver_suggest_hide();
+}
+/* The home form's optional platform build. It goes into the same localStorage key
+   the chain summary and the /stats check use (uc_platform), so the value is already
+   there when the chain renders — «обновите платформу» items and the time estimate
+   follow it. «8.3.24» means the line (any build), «8.3.24.1691» a build. */
+function home_platform_hint(v) {
+  const el = document.getElementById('plat-hint');
+  if (!el) return;
+  v = String(v || '').trim();
+  if (!v) { el.textContent = ''; el.classList.remove('bad'); return; }
+  if (!/^\d+\.\d+(\.\d+){0,2}$/.test(v)) {
+    el.textContent = 'не версия — нужно 8.3.24 или 8.3.24.1691';
+    el.classList.add('bad');
+    return;
+  }
+  el.classList.remove('bad');
+  el.textContent = v.split('.').length === 2 ? 'линейка: подойдёт любая сборка' : '';
+}
+function home_platform_input(v) {
+  v = String(v || '').trim();
+  home_platform_hint(v);
+  // Garbage is not stored: /stats reads the same key and would check nonsense.
+  if (/^\d+\.\d+(\.\d+){0,2}$/.test(v) || !v) {
+    try { if (v) localStorage.setItem(PC_KEY, v); else localStorage.removeItem(PC_KEY); } catch (e) {}
+  }
+  // Already-built results follow the field in place — no second request.
+  Object.keys(CHAIN_RENDER_STATE).forEach(id => {
+    const el = document.getElementById(id), st = CHAIN_RENDER_STATE[id];
+    if (el && st) el.outerHTML = render_chain_steps(st.steps, st.fromV, st.cfg, st.reversed);
+  });
 }
 async function home_build_chain() {
   const fromV = document.getElementById('inp-version').value.trim();
