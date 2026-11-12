@@ -285,6 +285,13 @@ installers themselves were not (no 1C platform on the dev machine).
 version: `-Version` / `--version` takes a build or a line (8.5, 8.3.24 → newest build from
 `/api/platform`), without it the script asks. Regenerate after editing src/scripts.
 
+`tools/dump-total-row.ts` — one `/total` row, raw, for a project nick: answers "is this
+catalog name our parse or 1C's own text?" (the truncated «базовая для 1)» turned out to be
+the portal's, see #39). Needs an ITS account: `ITS_LOGIN=… ITS_PASSWORD=… npx tsx
+tools/dump-total-row.ts AccountingOneBase30`. In CI the secrets exist, so a temporary
+`workflow_dispatch` job is enough — dispatch needs the file on the default branch, a `push:`
+trigger on the branch does not.
+
 ## SQL inside sql`…` templates — escaping gotcha
 
 The drizzle `sql` tag receives *cooked* template strings, so TS escapes are
