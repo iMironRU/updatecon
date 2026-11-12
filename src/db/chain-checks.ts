@@ -29,8 +29,12 @@ export function compareCheck(svc: { known: boolean; next: string | null; files: 
   if (!ours.found) return { status: "no_path", note: `у нас нет пути до ${svc.next}` };
   const tail = ourNext && ourNext !== svc.next ? `; у нас новее: ${ourNext}` : "";
   if (svc.files == null || ours.steps === svc.files) return { status: "match", note: `${ours.steps} ${ours.steps === 1 ? "шаг" : ours.steps < 5 ? "шага" : "шагов"} до ${svc.next}${tail}` };
-  if (ours.steps > svc.files) return { status: "ours_longer", note: `у нас ${ours.steps}, у сервиса ${svc.files} до ${svc.next}${tail}` };
-  return { status: "ours_shorter", note: `у нас ${ours.steps}, у сервиса ${svc.files} до ${svc.next}${tail}` };
+  // The service's upgradeSequence is its own recommended order of files, not the shortest
+  // one: 3.1.37.54 → 3.1.39.53 is 3 files for it, while both legs of our 2-file path are
+  // packages whose from-lists include the previous version (issue #47). A shorter chain
+  // to the same target is therefore not an error — the status exists to keep it visible.
+  if (ours.steps < svc.files) return { status: "ours_shorter", note: `наш путь короче: ${ours.steps} против ${svc.files} до ${svc.next}${tail}` };
+  return { status: "ours_longer", note: `наш путь длиннее: ${ours.steps} против ${svc.files} до ${svc.next}${tail}` };
 }
 
 export interface CheckResult { asked: number; match: number; mismatch: number; behind: number; unknown: number }
@@ -90,7 +94,10 @@ export async function chainCheckSummary() {
   const mismatches = ((await db.execute(sql`
     SELECT k.config_id, coalesce(c.display_name, c.name) AS name, k.version, k.svc_next, k.svc_files, k.our_steps, k.our_next, k.status, k.note, k.checked_at::date::text AS checked
     FROM chain_checks k JOIN configurations c ON c.id = k.config_id
-    WHERE k.status NOT IN ('match', 'unknown', 'behind') ORDER BY c.name, string_to_array(k.version, '.')::bigint[] DESC`)) as any).rows;
+    WHERE k.status NOT IN ('match', 'unknown', 'behind')
+    -- настоящие проблемы («нет пути») первыми, «наш путь короче/длиннее» — информационные
+    ORDER BY CASE k.status WHEN 'no_path' THEN 0 WHEN 'ours_longer' THEN 1 ELSE 2 END,
+      c.name, string_to_array(k.version, '.')::bigint[] DESC`)) as any).rows;
   const last = ((await db.execute(sql`SELECT max(checked_at)::date::text AS d FROM chain_checks`)) as any).rows[0]?.d ?? null;
   return { checked: last, totals: Object.fromEntries(totals.map((t) => [t.status, Number(t.n)])), mismatches };
 }

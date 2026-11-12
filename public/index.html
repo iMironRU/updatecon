@@ -3794,7 +3794,11 @@ function chain_checks_html() {
   const n = Object.values(t).reduce((a, b) => a + b, 0);
   const rows = (d.mismatches || []).slice(0, 30).map(m => `<div class="st-row"><a href="/chain?config=${m.config_id}&from=${encodeURIComponent(m.version)}&to=${encodeURIComponent(m.svc_next || m.our_next || '')}">${esc_html(m.name)}</a> <span class="mono">${esc_html(m.version)}</span> <span class="st-dim">${esc_html(m.note || m.status)}</span></div>`).join('');
   return st_card('Сверка цепочек с сервисом обновлений 1С', `${nfmt(n)} ${ru_plural(n, 'проверка', 'проверки', 'проверок')} типовых конфигураций, ${fmt_date(d.checked)}`, `
-    <div class="st-kv"><span>совпадает</span><b>${nfmt(t.match || 0)}</b><span>расходится</span><b>${nfmt((t.ours_longer || 0) + (t.ours_shorter || 0) + (t.no_path || 0))}</b><span>у нас ещё нет версии</span><b>${nfmt(t.behind || 0)}</b><span>сервис не знает</span><b>${nfmt(t.unknown || 0)}</b></div>
+    <div class="st-kv"><span>совпадает</span><b>${nfmt(t.match || 0)}</b>
+      <span title="Сервис предлагает свой порядок файлов, не самый короткий: наш путь короче и ведёт к той же версии — не ошибка">наш путь короче</span><b>${nfmt(t.ours_shorter || 0)}</b>
+      <span title="Сервис считает версию актуальной, а у нас есть следующая: региональные линейки и переходы редакций, где сервис отвечает по семейству">у нас новее</span><b>${nfmt(t.ours_longer || 0)}</b>
+      <span title="До версии, которую называет сервис, у нас нет пути — вот это настоящая проблема">нет пути</span><b>${nfmt(t.no_path || 0)}</b>
+      <span>у нас ещё нет версии</span><b>${nfmt(t.behind || 0)}</b><span>сервис не знает</span><b>${nfmt(t.unknown || 0)}</b></div>
     ${rows ? `<div class="st-rows">${rows}</div>` : '<div class="st-empty">Расхождений нет</div>'}`);
 }
 function platform_check_html() {
