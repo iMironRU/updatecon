@@ -554,7 +554,7 @@ a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
 .st-drill-x:hover { background: var(--surface2); color: var(--text); }
 .lrow.nobar .lrow-top { margin-bottom: 0; }
 /* «Мои конфигурации» star */
-.fav-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 30px; height: 30px; flex: none;
+.fav-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 36px; height: 36px; flex: none;
   border-radius: 8px; color: var(--text-light); transition: color .12s, background .12s; }
 .fav-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .fav-btn:hover { color: var(--yellow, #e3a008); background: var(--surface2); }
@@ -563,7 +563,7 @@ a.kpi:hover, a.kpi:focus-visible { border-color: var(--accent); outline: none; }
 .fav-btn.labelled { width: auto; height: auto; padding: 6px 12px; border: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--text-muted); }
 .fav-btn.labelled.on { color: #e3a008; border-color: rgba(227,160,8,.5); }
 .config-card { position: relative; }
-.config-card > .fav-btn { position: absolute; top: 10px; right: 10px; z-index: 1; }
+.config-card > .fav-btn { position: absolute; top: 8px; right: 8px; z-index: 1; }
 /* news */
 .news-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .news-filters .select { width: auto; max-width: 260px; padding: 6px 10px; font-size: 13px; }
@@ -632,8 +632,8 @@ a.news-hl:hover, .news-hl a.news-hl-text:hover b { color: var(--accent); }
 .pl-lines tbody tr:hover td { background: var(--surface2); }
 .pl-lines tbody tr.sel:hover td { background: var(--accent-dim); }
 .pl-lines td small { display: inline; margin-left: 6px; }
-.st-table .pl-links a { color: var(--accent); font-weight: 600; margin-right: 12px; white-space: nowrap; }
-.st-table .pl-links .pl-install { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; margin-right: 12px; cursor: pointer; white-space: nowrap; }
+.st-table .pl-links a { display: inline-block; padding: 8px 0; min-height: 32px; color: var(--accent); font-weight: 600; margin-right: 12px; white-space: nowrap; }
+.st-table .pl-links .pl-install { display: inline-block; min-height: 32px; font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 8px 0; margin-right: 12px; cursor: pointer; white-space: nowrap; }
 .st-table .pl-links .pl-install:hover, .st-table .pl-links .pl-install:focus-visible { text-decoration: underline; }
 /* Script dialog: download + install / update on the user's own machine */
 .sdlg { margin: auto; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: hidden auto; padding: 0; border: 1px solid var(--border);
@@ -763,7 +763,7 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .filter-opt-label { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .filter-opt.is-empty { opacity: .45; }
 .filter-search { padding: 6px 10px; font-size: 13px; margin-bottom: 6px; }
-.filter-more { background: none; border: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
+.filter-more { background: none; border: none; padding: 8px 0; min-height: 32px; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
 .filter-more:hover { text-decoration: underline; }
 .catalog-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 16px; min-height: 28px; }
 /* Home: after «Построить» the first chain must be the answer the user came for. */
@@ -773,14 +773,14 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .catalog-more { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0 10px; }
 .catalog-more-sub { font-size: 12px; color: var(--text-muted); }
 .catalog-found { font-size: 13px; color: var(--text-muted); margin-right: 4px; }
-.filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px;
+.filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 99px;
   border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent);
   font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .filter-chip:hover { background: var(--accent); color: #fff; }
 .filters-toggle, .filters-done { display: none; }
 .filter-group { margin-bottom: 18px; }
 .fchips { display: flex; flex-wrap: wrap; gap: 5px; }
-.fchip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border);
+.fchip { display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px; min-height: 32px; border: 1px solid var(--border);
   border-radius: 99px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.35;
   cursor: pointer; transition: border-color .12s, background .12s; }
 .fchip span { font-size: 11px; color: var(--text-light); }
@@ -846,7 +846,7 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
 .made-in-russia { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
 .russia-flag { display: flex; flex-direction: column; width: 18px; height: 13px; border-radius: 2px; overflow: hidden; border: 1px solid var(--border); }
 .russia-flag span { flex: 1; display: block; }
-.footer-link { font-size: 12px; color: var(--text-muted); transition: color .15s; }
+.footer-link { display: inline-flex; align-items: center; min-height: 32px; font-size: 12px; color: var(--text-muted); transition: color .15s; }
 .footer-link:hover { color: var(--accent); }
 .footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
 /* Four fields in the chain builder need room: below 1100px it folds to two columns
