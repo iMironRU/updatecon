@@ -232,12 +232,39 @@ async function resolveConfig(q: Record<string, unknown>, versionHint?: string): 
 // when a counter is set. Re-read when the file changes.
 const PUBLIC_DIR = join(__dirname, "..", "..", "public");
 let sitePageCache: { mtime: number; html: string } | null = null;
+
+// ── The app's own assets ───────────────────────────────────────────────────
+// public/app.js (259 KB) and public/app.css (70 KB) are referenced from the
+// page as /app.js and /app.css and rewritten here to content-hashed URLs, so
+// the browser can cache them for a year as immutable: the document itself is
+// no-cache, and re-parsing a quarter of a megabyte of JS on every visit was
+// the last second before the first card appeared.
+const ASSET_FILES = ["app.js", "app.css"] as const;
+type AssetName = (typeof ASSET_FILES)[number];
+const assetCache = new Map<AssetName, { mtime: number; body: Buffer; hash: string }>();
+async function appAsset(name: AssetName): Promise<{ body: Buffer; hash: string }> {
+  const file = join(PUBLIC_DIR, name);
+  const { mtimeMs } = await stat(file);
+  const hit = assetCache.get(name);
+  if (hit?.mtime === mtimeMs) return hit;
+  const body = await readFile(file);
+  // 8 hex chars of sha1: enough to make a URL per build, short enough to read.
+  const hash = createHash("sha1").update(body).digest("hex").slice(0, 8);
+  const entry = { mtime: mtimeMs, body, hash };
+  assetCache.set(name, entry);
+  return entry;
+}
 async function sitePage(): Promise<string> {
   const file = join(PUBLIC_DIR, "index.html");
   const { mtimeMs } = await stat(file);
   if (sitePageCache?.mtime !== mtimeMs) sitePageCache = { mtime: mtimeMs, html: await readFile(file, "utf8") };
+  const [js, css] = await Promise.all([appAsset("app.js"), appAsset("app.css")]);
+  let html = sitePageCache.html
+    .replace('href="/app.css"', `href="/app.${css.hash}.css"`)
+    .replace('src="/app.js"', `src="/app.${js.hash}.js"`);
   const tag = metrikaTag();
-  return tag ? sitePageCache.html.replace("</head>", tag + "</head>") : sitePageCache.html;
+  if (tag) html = html.replace("</head>", tag + "</head>");
+  return html;
 }
 
 export async function buildServer() {
@@ -736,6 +763,24 @@ export async function buildServer() {
   });
 
   app.post("/admin/api/tags/refresh", async () => ({ ok: true, ...(await refreshTags()) }));
+
+  // ── The app's hashed assets ───────────────────────────────────────────────
+  // A URL contains the content hash, so it can be cached forever; a stale hash
+  // 404s on purpose — the document is no-cache and its next load carries the new one.
+  // Note the dot: the page asks for /app.<hash>.js, so the route must match that
+  // shape — a stale hash has to 404 here, or the SPA fallback would answer 200
+  // with index.html and the browser would try to run HTML as JavaScript.
+  app.get("/app.:name", async (req, reply) => {
+    const m = /^([0-9a-f]{8})\.(js|css)$/.exec(String((req.params as any).name ?? ""));
+    if (!m) return reply.code(404).send({ error: "not found" });
+    const file = (m[2] === "js" ? "app.js" : "app.css") as AssetName;
+    const asset = await appAsset(file);
+    if (asset.hash !== m[1]) return reply.code(404).send({ error: "stale asset" });
+    return reply
+      .type(m[2] === "js" ? "application/javascript; charset=utf-8" : "text/css; charset=utf-8")
+      .header("cache-control", "public, max-age=31536000, immutable")
+      .send(asset.body);
+  });
 
   // ── Public static + API ───────────────────────────────────────────────────
   app.register(fastifyStatic, {

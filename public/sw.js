@@ -7,15 +7,29 @@
  * says so). Only the public site is touched — the admin panel (any address),
  * downloads and everything else go straight to the network.
  */
-const CACHE = 'updatecon-v5';
+const CACHE = 'updatecon-v6';
 const SHELL = '/';                                   // every app page is the same index.html
 const APP_PAGE = /^\/(catalog|news|stats|platform|settings|install|chain|config\/[^/]+)?\/?$/;
 const API = /^\/api\/(configs|versions|patches|chain|graph|version-news|chain-checks|transitions|tags|site|news|platform|platform-check|stats|stats\/more|stats\/releases)$/;
 const STATIC = /^\/(favicon\.svg|manifest\.webmanifest|icons\/.+)$/;
+// The app's own html/css/js are separate files with a content hash in the name:
+// immutable by definition, so cache-first, and they must be precached with the
+// shell or the offline app would come up without styles and logic.
+const ASSET = /^\/app\.[0-9a-f]{8}\.(js|css)$/;
 const FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//;
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([SHELL, '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'])));
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    await c.addAll([SHELL, '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png']);
+    // The shell no longer carries the app: read its two asset URLs and cache them too.
+    const page = await c.match(SHELL);
+    if (page) {
+      const html = await page.clone().text();
+      const assets = [...new Set((html.match(/\/app\.[0-9a-f]{8}\.(?:js|css)/g) || []))];
+      await Promise.all(assets.map((u) => c.add(u).catch(() => {})));
+    }
+  })());
   self.skipWaiting();
 });
 
@@ -72,6 +86,11 @@ self.addEventListener('fetch', (e) => {
       return;                                        // the admin panel and anything else: untouched
     }
     if (API.test(url.pathname)) { e.respondWith(networkFirst(req, req, 8000)); return; }
+    if (ASSET.test(url.pathname)) {
+      e.respondWith(caches.open(CACHE).then((c) => c.match(req).then((hit) => hit
+        || fetch(req).then((res) => { if (res.ok) c.put(req, res.clone()); return res; }))));
+      return;
+    }
     if (STATIC.test(url.pathname)) { e.respondWith(staleWhileRevalidate(req)); return; }
     return;
   }

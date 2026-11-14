@@ -1,0 +1,4091 @@
+/* ================================================================
+   API + DATA LAYER
+   ================================================================ */
+let CONFIGS = [];
+let DB_META = { last_updated: null, total_configs: 0, total_editions: 0, total_versions: 0 };
+let TAG_DICT = [];
+let SITE = { adminLink: null };   // /api/site: the admin panel's address, if the site may show it             // [{tag, title}] — product lines, in dictionary order
+let CONFIGS_LOADED = false;
+const CHAIN_CACHE = {};        // `${cfgId}:${fromV}:${toV}` -> steps[]
+const CHAIN_RENDER_STATE = {}; // blockId -> { steps, fromV, cfg, reversed }
+
+async function apiFetch(path, params) {
+  const url = path + (params ? '?' + new URLSearchParams(params) : '');
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  set_offline(r.headers.get('X-Updatecon-Offline') === '1');
+  return r.json();
+}
+
+/* ================================================================
+   INSTALLABLE APP (manifest.webmanifest + sw.js)
+   ================================================================ */
+// sw.js answers from its cache when the server is unreachable and marks such
+// responses; the bar says the data may be old. Browser online/offline events
+// only show the device's own connection, so the responses decide.
+function set_offline(on) {
+  const bar = document.getElementById('offline-bar');
+  if (!bar || bar.hidden !== on) return;
+  bar.hidden = !on;
+  document.body.classList.toggle('offline', on);
+}
+window.addEventListener('online', () => set_offline(false));
+
+let INSTALL_PROMPT = null;     // beforeinstallprompt (Chrome, Edge, Яндекс): install from our own button
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  INSTALL_PROMPT = e;
+  refresh_install_section();
+});
+window.addEventListener('appinstalled', () => { INSTALL_PROMPT = null; refresh_install_section(); goal('pwa_install'); });
+
+function app_standalone() {
+  return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+function install_section_body() {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let text, btn = '';
+  if (app_standalone()) {
+    text = '<b>Апдейкон открыт как приложение.</b> Без сети покажет данные с последнего посещения.';
+  } else if (INSTALL_PROMPT) {
+    text = '<b>Установите Апдейкон</b> — отдельное окно и значок на рабочем столе или домашнем экране. Без сети открываются данные с последнего посещения.';
+    btn = '<button class="btn btn-primary" onclick="install_app()">Установить приложение</button>';
+  } else if (ios) {
+    text = '<b>Установка на iPhone и iPad:</b> в Safari нажмите «Поделиться» → «На экран „Домой“».';
+  } else {
+    text = '<b>Апдейкон можно установить как приложение:</b> значок установки в адресной строке или пункт «Установить приложение» в меню браузера (Chrome, Edge, Яндекс Браузер). Без сети открываются данные с последнего посещения.';
+  }
+  return `<img src="/icons/icon-192.png" alt=""><div class="app-install-text">${text}</div>${btn}`;
+}
+function refresh_install_section() {
+  const el = document.getElementById('app-install');
+  if (el) el.innerHTML = install_section_body();
+}
+async function install_app() {
+  if (!INSTALL_PROMPT) return;
+  const ev = INSTALL_PROMPT;
+  INSTALL_PROMPT = null;
+  ev.prompt();
+  const { outcome } = await ev.userChoice;
+  if (outcome === 'accepted') toast('Апдейкон установлен');
+  refresh_install_section();
+}
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+
+/* ── Web Push: «Уведомлять о релизах моих конфигураций» ──
+   The subscription lives in the browser (pushManager) and on the server with the
+   favourite ids; every change of favourites re-sends them. On iPhone it works only
+   for the app installed on the home screen (iOS 16.4+). */
+const PUSH_KEY = 'uc_push';   // '1' when this browser subscribed — resend favourites on change
+function push_supported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+function push_ios_needs_install() {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return ios && !app_standalone();
+}
+function b64_to_u8(s) { const b = atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+async function push_subscription() {
+  if (!push_supported()) return null;
+  try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
+}
+async function push_send(sub) {
+  const r = await fetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: sub.toJSON(), config_ids: [...FAV].map(Number) }) });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function push_enable() {
+  if (!push_supported()) { toast('Этот браузер не поддерживает уведомления'); return; }
+  if (push_ios_needs_install()) { toast('На iPhone — только из приложения на экране «Домой»'); return; }
+  if (!FAV.size) { toast('Сначала добавьте конфигурации в «Мои» (звёздочка)'); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Уведомления запрещены в браузере'); push_render(); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await apiFetch('/api/push/key');
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64_to_u8(key) });
+    await push_send(sub);
+    try { localStorage.setItem(PUSH_KEY, '1'); } catch (e) {}
+    toast('Уведомления включены'); goal('push_on');
+  } catch (e) { toast('Не удалось включить: ' + (e.message || e)); }
+  push_render();
+}
+async function push_disable() {
+  const sub = await push_subscription();
+  if (sub) {
+    try { await fetch('/api/push/subscribe', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch (e) {}
+    try { await sub.unsubscribe(); } catch (e) {}
+  }
+  try { localStorage.removeItem(PUSH_KEY); } catch (e) {}
+  toast('Уведомления выключены');
+  push_render();
+}
+async function push_test() {
+  const sub = await push_subscription();
+  if (!sub) { toast('Подписки нет'); return; }
+  try {
+    const r = await fetch('/api/push/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+    const j = await r.json().catch(() => ({}));
+    toast(r.ok ? 'Отправлено — уведомление придёт через пару секунд' : ('Не отправлено: ' + (j.error || r.status)));
+  } catch (e) { toast('Не отправлено: ' + e.message); }
+}
+// Favourites changed → the server gets the new list (only when subscribed here).
+async function push_sync_favs() {
+  let on = false; try { on = localStorage.getItem(PUSH_KEY) === '1'; } catch (e) {}
+  if (!on) return;
+  const sub = await push_subscription();
+  if (sub) push_send(sub).catch(() => {});
+}
+async function push_section_body() {
+  if (!push_supported()) return '<div class="app-install-text">Этот браузер не поддерживает push-уведомления.</div>';
+  if (push_ios_needs_install()) return '<div class="app-install-text">На iPhone и iPad уведомления работают только из приложения, добавленного на экран «Домой» (iOS 16.4 и новее). Установите Апдейкон — пункт выше — и включите уведомления уже в нём.</div>';
+  const sub = await push_subscription();
+  const denied = Notification.permission === 'denied';
+  if (sub) return `<div class="app-install-text"><b>Уведомления включены.</b> Придут, когда выйдет новый релиз любой из ${FAV.size} ${plural(FAV.size, 'конфигурации', 'конфигураций', 'конфигураций')} в «Моих». Список обновляется сам при изменении звёздочек.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" onclick="push_test()">Проверить</button><button class="btn btn-ghost btn-sm" onclick="push_disable()">Выключить</button></div>`;
+  if (denied) return '<div class="app-install-text">Уведомления запрещены для этого сайта в настройках браузера. Разрешите их там и вернитесь сюда.</div>';
+  return `<div class="app-install-text"><b>Сообщать о новых релизах</b> конфигураций из «Моих» — одно уведомление в день выхода, со ссылкой на цепочку.${FAV.size ? '' : ' Сначала отметьте конфигурации звёздочкой.'}</div>
+    <button class="btn btn-primary" onclick="push_enable()"${FAV.size ? '' : ' disabled'}>Включить уведомления</button>`;
+}
+async function push_render() {
+  const el = document.getElementById('push-section');
+  if (el) el.innerHTML = await push_section_body();
+}
+
+function nick_from_href(href) {
+  return href ? href.replace('/project/', '') : '';
+}
+
+// "ЗарплатаИУправлениеПерсоналомДляКазахстана" -> "Зарплата и управление персоналом для Казахстана"
+// (fallback title for editions without a releases.1c.ru project)
+function humanize_name(n) {
+  if (!n) return '';
+  var words = n.replace(/([a-zа-яё0-9])([A-ZА-ЯЁ])/g, '$1 $2')
+               .replace(/([a-zа-яё])([0-9])/g, '$1 $2')
+               .replace(/([A-ZА-ЯЁ]+)([A-ZА-ЯЁ][a-zа-яё])/g, '$1 $2')
+               .split(' ');
+  return words.map(function(w, i) {
+    if (i === 0 || words[i - 1] === 'Для') return w;          // keep proper nouns after "для"
+    if (w.length === 1 || /^[A-ZА-ЯЁ][a-zа-яё]/.test(w)) return w.toLowerCase();
+    return w;                                                  // acronyms: КОРП, ERP, ITIL
+  }).join(' ').replace(/ Для /g, ' для ');
+}
+
+function adapt_config(row) {
+  const id = String(row.id);
+  const nick = nick_from_href(row.releases_href);
+  const displayName = row.display_name || humanize_name(row.name);
+  const latestV = row.latest_version || '';
+  const seg = latestV.split('.');
+  const edition = seg.length >= 2 ? seg[0] + '.' + seg[1] : seg[0] || '';
+  const gn = row.group_name || '';
+  const templateCode = row.template_code || '';
+  const vendorDir = templateCode.split('/')[0].toLowerCase();
+  // Type from the releases.1c.ru group when the project is linked; the rest is settled by
+  // assign_types() after the catalog is loaded (sibling editions, 1С:Решения, vendor folder).
+  const cfgType = type_from_group(gn) || type_from_name(row.name, templateCode) || null;
+  const isLatestEdition = row.is_latest_edition !== false;
+  return {
+    id,
+    configName: row.name,       // LST metadata name (not unique — API calls use id)
+    templateCode,
+    templateKey: templateCode.toLowerCase(),
+    editionNum: row.edition,
+    isLatestEdition,
+    tags: row.tags || [],       // [{tag, kind: 'own'|'based'}] — product lines of the template
+    level: null,                // 'base' | 'prof' | 'corp' — set by assign_levels()
+    platform: row.platform || null, // platform generation of the newest version: '8.2' | '8.3' | '8.5' …
+    sol: {                      // solutions.1c.ru product card (industry/partner products)
+      kind: row.sol_kind || '', orgTypes: row.sol_org_types || [], countries: row.sol_countries || [],
+      developers: row.sol_developers || [], base: row.sol_base || '', industries: row.sol_industries || [],
+      tasks: row.sol_tasks || [], editions: row.sol_editions || [], phone: row.sol_phone || '', email: row.sol_email || '',
+    },
+    transOut: row.trans_out || [],   // kinds of "переходы" from this edition: 'product' | 'edition'
+    // Long-term support ("ДП") branch: its current build, line (first 3 segments), end date.
+    ltsVersion: row.lts_version || '',
+    ltsLine: row.lts_version ? row.lts_version.split('.').slice(0, 3).join('.') : '',
+    ltsUntil: row.lts_until || '',
+    vendorName: clean_vendor((row.sol_developers || []).length ? row.sol_developers.join(', ') : row.vendor),
+    nick,
+    name: displayName,
+    short: displayName.split(',')[0].trim(),
+    edition,
+    type: cfgType,
+    vendor: row.vendor || '1С',
+    status: isLatestEdition ? 'active' : 'legacy',
+    description: '',            // placeholder
+    groupName: row.group_name || '',
+    region: row.region || infer_region(row) || 'ru',
+    // Countries from 1С:Решения when known; "Для всех стран" matches every region filter.
+    allRegions: (row.sol_countries || []).some(function(x) { return /всех стран/i.test(x); }),
+    regions: (function() {
+      var codes = (row.sol_countries || []).map(country_code).filter(Boolean);
+      return codes.length ? codes : [row.region || infer_region(row) || 'ru'];
+    })(),
+    nextReleaseVersion: row.next_release_version || '',
+    nextReleasePlannedDate: row.next_release_planned_date || '',
+    nextReleasePlanUpdated: row.next_release_plan_updated || '',
+    platform_min: row.latest_platform || '—',
+    url_1c: row.releases_href ? 'https://releases.1c.ru' + row.releases_href : '',
+    infoUrl: row.info_url || '',   // "Общая информация о конфигурации": solutions.1c.ru / v8.1c.ru
+    bugsUrl: row.bugs_url || '',   // "Каталог ошибок продукта": bugboard.v8.1c.ru
+    release_year: row.latest_date ? new Date(row.latest_date).getFullYear() : null,
+    avg_update_days: row.avg_days ? Number(row.avg_days) : null,
+    version_count: Number(row.version_count) || 0,
+    latestV,
+    latestDate: row.latest_date || null,
+    latestPlat: row.latest_platform || null,
+    versions: [],   // loaded lazily
+    _meta: {},      // version -> {release_date, min_platform, file_size_bytes}
+  };
+}
+
+let _initPromise = null;
+let INIT_FAILED = false;
+// Three tries with a pause (the server restarting behind the proxy answers 5xx for a few
+// seconds; a phone wakes up without network). Then the page says so and offers a retry.
+async function initData() {
+  if (CONFIGS_LOADED) return;
+  if (_initPromise) return _initPromise;   // one load, every caller waits for it
+  _initPromise = (async () => {
+    for (const pause of [1000, 3000, 6000, 0]) {
+      await initDataOnce();
+      if (CONFIGS_LOADED || !pause) break;
+      await new Promise(r => setTimeout(r, pause));
+    }
+    INIT_FAILED = !CONFIGS_LOADED;
+  })().finally(() => { _initPromise = null; });
+  return _initPromise;
+}
+async function init_retry() { INIT_FAILED = false; await route(); }
+// Back online or back to the app → one more try without a tap.
+window.addEventListener('online', () => { if (INIT_FAILED) init_retry(); });
+document.addEventListener('visibilitychange', () => { if (INIT_FAILED && document.visibilityState === 'visible') init_retry(); });
+async function initDataOnce() {
+  try {
+    const [rows, stats, tags] = await Promise.all([
+      apiFetch('/api/configs'),
+      apiFetch('/api/stats'),
+      apiFetch('/api/tags').catch(() => []),
+      apiFetch('/api/site').then(s => { SITE = s; }).catch(() => {}),
+    ]);
+    TAG_DICT = tags || [];
+    CONFIGS = rows.map(adapt_config);
+    assign_types(CONFIGS);
+    assign_levels(CONFIGS);
+    CONFIGS.forEach(c => { c.stale = is_stale(c); });
+    CONFIGS_LOADED = true;
+    setTimeout(() => { prefetch_favourites().catch(() => {}); }, 4000);
+    DB_META = {
+      last_updated: stats.last_updated || null,
+      // Same number as the catalog shows by default: current editions only.
+      total_configs: CONFIGS.filter(c => c.isLatestEdition).length,
+      total_editions: CONFIGS.length,
+      total_versions: stats.versions || 0,
+    };
+    // footer-ver is updated by init_version_badge()
+  } catch(e) {
+    console.error('initData failed:', e);
+    // Do NOT set CONFIGS_LOADED on failure — allows retry on next route() call.
+  }
+}
+
+async function loadVersionsForConfig(cfgId) {
+  const cfg = CONFIGS.find(c => c.id === String(cfgId));
+  if (!cfg || cfg.versions.length > 0) return cfg;
+  try {
+    const data = await apiFetch('/api/versions', { config_id: cfg.id });
+    cfg._meta = data.meta || {};
+    cfg._cfu = data.cfu || {};
+    // API returns oldest→newest; reverse for display (newest first)
+    const vers = [...(data.versions || [])].reverse();
+    cfg._files = data.files || {};
+    cfg.versions = vers.map(function(v) {
+      const m = cfg._meta[v] || {};
+      // releases.1c.ru: ready links from the server, built from the real file paths
+      // the import read (they differ per product). Until a version's files are
+      // read, its file list page — that link always works.
+      const links = (cfg._files[v] || {}).links || {};
+      const nick = data.releases_nick || cfg.nick;
+      const page = links.page || (nick ? 'https://releases.1c.ru/version_files?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(v) : '');
+      const dl = links.update || page;
+      const docs = { full: links.full || '', tech: links.tech || '', news: links.news || '', order: links.order || '', page };
+      const cfuPath = cfg._cfu[v] || '';
+      const dlIts = cfuPath ? 'https://downloads.v8.1c.ru/tmplts/' + cfuPath : '';
+      const sizeBytes = m.file_size_bytes || 0;
+      const lts = !!(cfg.ltsLine && (v === cfg.ltsLine || v.startsWith(cfg.ltsLine + '.')));
+      return { v, date: m.release_date || null, mb: sizeBytes ? Math.round(sizeBytes / 1024 / 1024 * 10) / 10 : 0, plat: m.min_platform || null, req: false, patches: null, dl, dlIts, lts, ...docs };
+    });
+    if (cfg.versions.length && !cfg.latestV) {
+      cfg.latestV = cfg.versions[0].v;
+      cfg.latestDate = cfg.versions[0].date;
+      cfg.latestPlat = cfg.versions[0].plat;
+    }
+  } catch(e) {
+    console.error('loadVersions(' + cfgId + ') failed:', e);
+  }
+  return cfg;
+}
+
+async function find_configs_by_version_api(ver) {
+  try {
+    const [rows] = await Promise.all([apiFetch('/api/configs', { version: ver }), CONFIGS_LOADED ? null : initData()]);
+    if (!CONFIGS_LOADED) return [];
+    return rows.map(r => CONFIGS.find(c => c.id === String(r.id))).filter(Boolean);
+  } catch(e) {
+    // No server: the graphs of «Мои конфигурации» kept by the service worker know their versions.
+    const out = [];
+    for (const id of FAV) {
+      const g = await graph_cached(id);
+      if (g && g.edges.some(e => e[0] === ver || e[1] === ver)) { const c = CONFIGS.find(x => x.id === String(id)); if (c) out.push(c); }
+    }
+    return out;
+  }
+}
+
+/* ── Chains without the server ──
+   /api/chain is the answer; when it cannot be reached, the configuration's edge list
+   (/api/graph, cached by the service worker for «Мои конфигурации») and the same
+   breadth-first search as the server's: the shortest chain inside the edition. */
+const GRAPHS = {};
+async function graph_cached(cfgId) {
+  if (GRAPHS[cfgId]) return GRAPHS[cfgId];
+  try { const g = await apiFetch('/api/graph', { config_id: cfgId }); GRAPHS[cfgId] = g; return g; } catch (e) { return null; }
+}
+function chain_bfs(graph, from, to) {
+  const ed = v => v.split('.')[0];
+  if (ed(from) !== ed(to)) return { found: false, steps: [], length: 0, note: 'Версии в разных редакциях. Переход между редакциями — отдельная процедура, цепочкой обновлений не строится.' };
+  if (from === to) return { found: true, steps: [], length: 0 };
+  const next = new Map();
+  for (const [f, t, cfu] of graph.edges) { if (ed(t) !== ed(to)) continue; if (!next.has(f)) next.set(f, []); next.get(f).push([t, cfu]); }
+  const pred = new Map([[from, null]]);
+  let frontier = [from];
+  for (let depth = 0; frontier.length && depth < 64; depth++) {
+    const nf = [];
+    for (const v of frontier) for (const [t, cfu] of (next.get(v) || [])) {
+      if (pred.has(t)) continue;
+      pred.set(t, [v, cfu]);
+      if (t === to) {
+        const steps = []; let cur = to;
+        while (pred.get(cur)) { const [p, c] = pred.get(cur); steps.unshift({ fromVersion: p, toVersion: cur, cfuPath: c }); cur = p; }
+        return { found: true, steps, length: steps.length, offline: true };
+      }
+      nf.push(t);
+    }
+    frontier = nf;
+  }
+  return { found: false, steps: [], length: 0, note: 'Цепочка не найдена — нет пути в сохранённых данных.' };
+}
+async function chain_api(cfg, from, to) {
+  try { return await apiFetch('/api/chain', { config_id: cfg.id, from, to }); }
+  catch (e) {
+    const g = await graph_cached(cfg.id);
+    if (!g) throw e;
+    set_offline(true);
+    return chain_bfs(g, from, to);
+  }
+}
+// «Мои конфигурации» for the road: their versions and graphs are fetched once a day so the
+// service worker has them; also right after a star is set.
+const PREFETCH_KEY = 'uc_prefetch';
+async function prefetch_favourites(onlyId) {
+  if (!navigator.onLine || !('serviceWorker' in navigator)) return;
+  let done = {}; try { done = JSON.parse(localStorage.getItem(PREFETCH_KEY) || '{}'); } catch (e) {}
+  const today = new Date().toISOString().slice(0, 10);
+  const ids = onlyId ? [String(onlyId)] : [...FAV];
+  for (const id of ids) {
+    if (done[id] === today) continue;
+    try {
+      await apiFetch('/api/versions', { config_id: id });
+      await apiFetch('/api/graph', { config_id: id });
+      done[id] = today;
+    } catch (e) { break; }
+    await new Promise(r => setTimeout(r, 400));
+  }
+  try { localStorage.setItem(PREFETCH_KEY, JSON.stringify(done)); } catch (e) {}
+}
+
+const CHAIN_OFFICIAL = {};   // "config:from" → the 1C update service's answer (from /api/chain)
+function chain_response_to_steps(apiResult, cfg) {
+  if (!apiResult || !apiResult.found || !apiResult.steps?.length) return null;
+  if (cfg && apiResult.official) CHAIN_OFFICIAL[cfg.id + ':' + apiResult.steps[0].fromVersion] = apiResult.official;
+  return apiResult.steps.map(s => {
+    const ver = cfg?.versions?.find(x => x.v === s.toVersion);
+    return {
+      v: s.toVersion,
+      from: s.fromVersion,
+      cfuPath: s.cfuPath || '',
+      date: cfg?._meta?.[s.toVersion]?.release_date || s.releaseDate || null,
+      mb: (b => b ? Math.round(b / 1024 / 1024 * 10) / 10 : 0)(cfg?._meta?.[s.toVersion]?.file_size_bytes || s.sizeBytes || 0),
+      plat: cfg?._meta?.[s.toVersion]?.min_platform || null,
+      req: false,
+      patches: s.patches || [],
+      patchesUrl: s.patchesUrl || '',
+      news: s.news || '',
+      dl: ver?.dl || '',
+      order: ver?.order || '',
+    };
+  });
+}
+
+/* ================================================================
+   STATE
+   ================================================================ */
+const state = {
+  page: '/',
+  catalogFilters: { types: [], statuses: [], search: '', sort: 'date_desc' },
+};
+
+/* ================================================================
+   UTILS
+   ================================================================ */
+function fmt_date(d) {
+  if (!d) return '—';
+  const [y, m, day] = d.split('-');
+  return `${day}.${m}.${y}`;
+}
+function fmt_mb(mb) {
+  if (!mb) return '—';
+  if (mb >= 1000) return (mb/1000).toFixed(1) + ' ГБ';
+  return mb + ' МБ';
+}
+function days_ago(dateStr) {
+  if (!dateStr) return '';
+  const diff = (new Date() - new Date(dateStr)) / 864e5;
+  if (diff < 1) return 'сегодня';
+  if (diff < 2) return 'вчера';
+  if (diff < 30) return `${Math.round(diff)} дн. назад`;
+  if (diff < 365) return `${Math.round(diff/30)} мес. назад`;
+  return `${Math.round(diff/365)} г. назад`;
+}
+function esc_html(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Region for editions without a releases.1c.ru group: "…ДляКазахстана" in the
+// name, else the template's country suffix ("1c/HRMKz", "1c/AccountingBe20").
+var REGION_BY_STEM = [
+  [/казахстан/i, 'kz'], [/беларус|белорус/i, 'by'], [/украин/i, 'ua'], [/кыргыз|киргиз/i, 'kg'],
+  [/азербайджан/i, 'az'], [/узбекистан/i, 'uz'], [/молдов/i, 'md'], [/таджикистан/i, 'tj'],
+  [/армени/i, 'am'], [/грузи/i, 'ge'], [/эстони/i, 'ee'], [/латви/i, 'lv'], [/литв/i, 'lt'],
+  [/болгари/i, 'bg'], [/туркменистан/i, 'tm'], [/стран\s*балтии/i, 'baltics']
+];
+var REGION_BY_SUFFIX = { Kz: 'kz', KZ: 'kz', Ky: 'kg', Az: 'az', Uz: 'uz', UZ: 'uz', Md: 'md', Tj: 'tj', TJ: 'tj',
+  Ukr: 'ua', Tm: 'tm', Am: 'am', Ge: 'ge', Est: 'ee', Be: 'by', Bel: 'by', Balt: 'baltics' };
+function infer_region(row) {
+  var text = (row.display_name || '') + ' ' + humanize_name(row.name || '');
+  var m = text.match(/для\s+([^\s,.;)]+(?:\s+балтии)?)/i);
+  if (m) {
+    for (var i = 0; i < REGION_BY_STEM.length; i++) if (REGION_BY_STEM[i][0].test(m[1])) return REGION_BY_STEM[i][1];
+  }
+  var t = (row.template_code || '').split('/').pop();
+  var sm = t.match(/(Kz|KZ|Ky|Az|Uz|UZ|Md|Tj|TJ|Ukr|Tm|Am|Ge|Est|Bel|Be|Balt)(?:Base|Corp|Prof|Micro)*\d*$/);
+  return sm ? REGION_BY_SUFFIX[sm[1]] : null;
+}
+
+// Edition level ("уровень поставки") — Базовая / ПРОФ / КОРП.
+// Explicit: a level token in the template name (not at its start: "CorpUniversity"
+// is a corporate university, not КОРП; "KnowledgeBases" is not "Base") or in the
+// Russian name ("…КОРП", "ДокументооборотКорп", "…базовая", "…ПРОФ").
+// Implied ПРОФ: a template without a level whose sibling (same vendor folder,
+// same name minus the level token) has one — 1C ships the ПРОФ as the bare name
+// (Accounting next to AccountingBase / AccountingCorp).
+var LEVEL_TOKEN = { corp: /.(Corp|CORP|corp)(?=[A-Z0-9_]|$)/, prof: /.(Prof|PROF)(?=[A-Z0-9_]|$)/, base: /.(Base|BASE)(?=[A-Z0-9_]|$)/ };
+var LEVEL_WORD = { corp: /(КОРП|Корп)(?![а-яё])/, prof: /(ПРОФ|Проф)(?![а-яё])/, base: /базов/i };
+function level_explicit(templateCode, text) {
+  var t = (templateCode || '').split('/').pop();
+  var order = ['corp', 'prof', 'base'];
+  for (var i = 0; i < order.length; i++) {
+    var l = order[i];
+    if (LEVEL_TOKEN[l].test(t) || LEVEL_WORD[l].test(text)) return l;
+  }
+  return null;
+}
+function level_stem(templateCode) {
+  var parts = (templateCode || '').toLowerCase().split('/');
+  var t = parts.pop().replace(/(corp|prof|base)(?=[a-z0-9_]*$)/, '');
+  return parts.join('/') + '/' + t;
+}
+// Kind of product: typical 1C / industry / partner / code library / developer tool.
+function type_from_group(gn) {
+  if (!gn) return null;
+  if (/конфигурации проекта/i.test(gn)) return 'partner';
+  if (/отраслев/i.test(gn)) return 'industry';
+  if (/библиотек/i.test(gn)) return 'library';
+  if (/технологическ/i.test(gn)) return 'tech';
+  if (/типовые|международн/i.test(gn)) return 'standard';
+  return null;
+}
+// Standard libraries and developer tools are recognisable by name even without a portal group.
+function type_from_name(name, templateCode) {
+  const n = name || '', t = (templateCode || '').toLowerCase();
+  if (/^Библиотека(Стандартных|Электронных|Подключаемого|Интернет|Регламентированной|Технологии)|^(БСП|БЭД|БПО|БИП|БРО|БТС)\b/.test(n) || /^1c\/(ssl|led|pel|bip|bro|bts)\b/.test(t)) return 'library';
+  if (/^(АвтоматизированнаяПроверкаКонфигураций|КонвертацияДанных|ТестЦентр|СценарноеТестирование|1СКлиентТестирования)/.test(n) || /^1c\/(acc|conversion|testcenter)\b/.test(t)) return 'tech';
+  return null;
+}
+// Without a portal group (older editions, unlinked projects): the type of a sibling edition of
+// the same template, else 1С:Решения («1С-Совместно» = industry), else the vendor folder.
+function assign_types(configs) {
+  var byTpl = {};
+  configs.forEach(function(c) { if (c.type && c.groupName && !byTpl[c.templateKey]) byTpl[c.templateKey] = c.type; });
+  configs.forEach(function(c) {
+    if (c.type) return;
+    c.type = byTpl[c.templateKey]
+      || (/совместно/i.test(c.sol.kind) ? 'industry' : /типовой/i.test(c.sol.kind) ? 'standard' : null)
+      || (c.templateKey.split('/')[0] === '1c' ? 'standard' : 'partner');
+  });
+}
+function assign_levels(configs) {
+  var byTpl = {};
+  configs.forEach(function(c) {
+    var text = (c.name || '') + ' ' + (c.configName || '');
+    var l = level_explicit(c.templateCode, text);
+    if (l && !byTpl[c.templateKey]) byTpl[c.templateKey] = l;
+  });
+  // Levels present among the siblings of each stem.
+  var stemLevels = {};
+  Object.keys(byTpl).forEach(function(k) {
+    var st = level_stem(k);
+    (stemLevels[st] = stemLevels[st] || {})[byTpl[k]] = true;
+  });
+  configs.forEach(function(c) {
+    var sib = stemLevels[level_stem(c.templateCode)] || {};
+    // Bare name = ПРОФ only when the family has Базовая/КОРП but no explicit ПРОФ
+    // (next to "BibliotekaProf" the bare "Biblioteka" is the junior edition).
+    var implied = (sib.base || sib.corp) && !sib.prof ? 'prof' : null;
+    c.level = byTpl[c.templateKey] || implied;
+  });
+}
+var LEVEL_LABEL = { base: 'Базовая', prof: 'ПРОФ', corp: 'КОРП' };
+var PLATFORM_NEWEST = '8.5';
+function platform_cmp(a, b) {   // '8.5' > '8.3' > '8.2' > '8.1'
+  var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+}
+// The user's country (Settings): its products come first in the catalog.
+function pref_country() {
+  try { return localStorage.getItem('uc_country') || 'ru'; } catch (e) { return 'ru'; }
+}
+function in_pref_country(c) { return c.allRegions || c.regions.indexOf(pref_country()) >= 0; }
+
+// "AccountingCorpKz20" → "accounting": level, country and edition suffixes stripped.
+function template_stem(code) {
+  var t = String(code || '').split('/').pop().toLowerCase(), prev;
+  do {
+    prev = t;
+    t = t.replace(/\d+$/, '').replace(/(corp|prof|base|micro)$/, '')
+         .replace(/(kz|ky|az|uz|md|tj|ukr|tm|am|ge|est|bel|be|balt|cr)$/, '');
+  } while (t !== prev && t);
+  return t || prev;
+}
+// The line's original product (БП, not БНКО) — any level or country variant of it.
+function is_core_product(c) {
+  return c.tags.some(function(t) {
+    if (t.kind !== 'own') return false;
+    var d = TAG_DICT.filter(function(x) { return x.tag === t.tag; })[0];
+    return d && d.core && template_stem(c.templateCode) === template_stem(d.core);
+  });
+}
+var LEVEL_RANK = { prof: 0, corp: 1, base: 2 };
+
+// "Устаревшая": platform 8.2 or older, or no new version for 1.5 years.
+// Hidden from the catalog by default (like previous editions); search finds it.
+var STALE_MONTHS = 18;
+// How long ago the newest release came out — buckets shared by the catalog
+// filter "Последний релиз" and the stats card.
+var RELEASE_AGES = [
+  { key: 'm1',   max: 1,        label: 'за месяц',        ago: 'за последний месяц' },
+  { key: 'm3',   max: 3,        label: '1–3 месяца',      ago: '1–3 месяца назад' },
+  { key: 'm6',   max: 6,        label: '3–6 месяцев',     ago: '3–6 месяцев назад' },
+  { key: 'm12',  max: 12,       label: '6–12 месяцев',    ago: '6–12 месяцев назад' },
+  { key: 'm18',  max: 18,       label: '1–1,5 года',      ago: '1–1,5 года назад' },
+  { key: 'old',  max: Infinity, label: 'больше 1,5 года', ago: 'больше 1,5 года назад' },
+  { key: 'none', max: null,     label: 'нет данных',      ago: 'дата неизвестна (нет проекта на releases.1c.ru)' },
+];
+function release_age(c) {
+  if (!c.latestDate) return 'none';
+  var m = (Date.now() - new Date(c.latestDate)) / (30.44 * 864e5);
+  for (var i = 0; i < RELEASE_AGES.length - 1; i++) if (m < RELEASE_AGES[i].max) return RELEASE_AGES[i].key;
+  return 'old';
+}
+function is_stale(c) {
+  if (c.platform && platform_cmp(c.platform, '8.3') < 0) return true;
+  if (!c.latestDate) return false;
+  var limit = new Date(); limit.setMonth(limit.getMonth() - STALE_MONTHS);
+  return new Date(c.latestDate) < limit;
+}
+function stale_badge(c) {
+  // 8.2 is already shown by the orange platform badge.
+  if (!c.stale || (c.platform && platform_cmp(c.platform, '8.3') < 0)) return '';
+  return '<span class="badge badge-gray badge-link"' + fattr('stale', '1', 'Нет новых версий с ' + fmt_date(c.latestDate)
+    + '. Показать все устаревшие') + '>не обновляется</span>';
+}
+
+// A badge that opens the catalog filtered by its meaning ("БУХ" → line=БУХ).
+// Inside the catalog it adds to the current filters instead of replacing them.
+function fattr(field, value, title) {
+  return ' role="link" tabindex="0" data-ff="' + field + '" data-fv="' + esc_html(value) + '"'
+    + ' title="' + esc_html(title) + '" onclick="return open_filter(event,this)"'
+    + ' onkeydown="if(event.key===\'Enter\')return open_filter(event,this)"';
+}
+var FILTER_FIELD = { line: 'lines', level: 'levels', plat: 'platforms', age: 'ages', lts: 'lts', trans: 'trans', type: 'types',
+  region: 'regions', ind: 'industries', task: 'tasks', org: 'orgs' };
+function open_filter(e, el) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  const field = el.dataset.ff, value = el.dataset.fv;
+  // 8.2 and older are "stale" — hidden unless that toggle is on.
+  const needsStale = field === 'plat' && platform_cmp(value, '8.3') < 0;
+  if (ROUTE_PATH === '/catalog' && CAT) {
+    if (needsStale) CAT.stale = true;
+    if (field === 'legacy') CAT.legacy = true;
+    else if (field === 'stale') CAT.stale = true;
+    else value.split(CAT_SEP).forEach(v => { const f = CAT[FILTER_FIELD[field]]; if (f.indexOf(v) < 0) f.push(v); });
+    apply_filters();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  } else {
+    navigate('/catalog?' + field + '=' + encodeURIComponent(field === 'legacy' || field === 'stale' ? '1' : value) + (needsStale ? '&stale=1' : ''));
+  }
+  return false;
+}
+function region_badge(c, always) {
+  // On cards only foreign products are marked; the config page always says it.
+  if (c.allRegions) return always ? '<span class="badge badge-gray badge-link"' + fattr('region', 'all', 'Все продукты для всех стран') + '>Для всех стран</span>' : '';
+  if (!always && in_pref_country(c)) return '';
+  const r = c.regions[0];
+  return r ? '<span class="badge badge-gray badge-link"' + fattr('region', r, 'Все продукты: ' + region_label(r)) + '>' + region_label(r) + '</span>' : '';
+}
+
+function lts_ended(c) { return c.ltsUntil && new Date(c.ltsUntil) < new Date(new Date().toDateString()); }
+function lts_badge(c) {
+  if (!c.ltsVersion) return '';
+  return '<span class="badge badge-lts badge-link' + (lts_ended(c) ? ' ended' : '') + '"' + fattr('lts', 'yes',
+    'Ветка длительной поддержки ' + c.ltsLine + '.x (сейчас ' + c.ltsVersion + ')' + (lts_ended(c) ? ' — поддержка завершена' : '')
+    + '. Показать все с ДП') + '>ДП до ' + fmt_date(c.ltsUntil) + '</span>';
+}
+function trans_badge(c) {
+  if (!c.transOut.length) return '';
+  var what = c.transOut.map(function(k) { return k === 'edition' ? 'на новую редакцию' : 'на другой продукт'; }).join(' и ');
+  return '<span class="badge badge-trans badge-link"' + fattr('trans', c.transOut.join(CAT_SEP),
+    'Можно перейти обновлением ' + what + '. Показать все такие') + '>⇢ переход</span>';
+}
+function platform_badge(c) {
+  if (!c.platform) return '';
+  var cls = platform_cmp(c.platform, PLATFORM_NEWEST) >= 0 ? 'badge-plat-new'
+          : platform_cmp(c.platform, '8.3') >= 0 ? 'badge-plat-cur' : 'badge-plat-old';
+  return '<span class="badge badge-plat badge-link ' + cls + '"' + fattr('plat', c.platform,
+    'Платформа 1С:Предприятие ' + c.platform + ' (по последней версии). Показать все на ' + c.platform) + '>' + c.platform + '</span>';
+}
+function level_badge(c) {
+  return c.level ? '<span class="badge badge-level badge-link"' + fattr('level', c.level,
+    'Уровень поставки. Показать все ' + LEVEL_LABEL[c.level]) + '>' + LEVEL_LABEL[c.level] + '</span>' : '';
+}
+
+// "Фирма ""1С"", ООО ""ЦентрПрограммСистем""" → "ЦентрПрограммСистем": legal forms
+// and quotes go, and with several developers the partner is what tells products apart.
+var LEGAL_FORMS = /(^|[\s,(])(ООО|ЗАО|ОАО|ПАО|АО|ТОО|ИП|ЧУП|УП|ЧП|НПФ|НПП|НПО|ПКФ|Фирма|Компания|ГК|Группа компаний|LLC|Ltd\.?)(?=[\s"«,.)]|$)/gi;
+function clean_vendor(v) {
+  var parts = String(v || '').split(',').map(function(p) {
+    return p.replace(/["«»“”]/g, ' ').replace(LEGAL_FORMS, '$1').replace(/\s+/g, ' ')
+      .replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\(\)/g, '').replace(/^[\s.]+|[\s.,;]+$/g, '');
+  }).filter(function(p) { return p && !/^(https?:\/\/|www\.)/i.test(p); });  // "…, www.appius.ru"
+  // "ООО Тиражные решения 1С-Рарус" is 1С-Рарус's own publishing arm — one developer for the user.
+  parts = parts.map(function(p) { return /^Тиражные решения 1[СC]-Рарус$/i.test(p) ? '1С-Рарус' : p; });
+  var partners = parts.filter(function(p) { return !/^1[СC]$/i.test(p); });
+  return (partners.length ? partners : parts).join(', ') || '1С';
+}
+function country_code(name) {
+  var n = String(name || '').trim().toLowerCase();
+  if (n === 'россия') return 'ru';
+  for (var i = 0; i < REGION_BY_STEM.length; i++) if (REGION_BY_STEM[i][0].test(n)) return REGION_BY_STEM[i][1];
+  return null;
+}
+
+function region_label(r) {
+  var labels = {
+    ua: 'Украина', tm: 'Туркменистан',
+    ru: 'Россия', kz: 'Казахстан', az: 'Азербайджан', by: 'Беларусь',
+    am: 'Армения', ge: 'Грузия', kg: 'Кыргызстан', tj: 'Таджикистан',
+    uz: 'Узбекистан', md: 'Молдова', lt: 'Литва', lv: 'Латвия',
+    ee: 'Эстония', bg: 'Болгария', baltics: 'Страны Балтии',
+    intl: 'Международные', stdlib: 'Библиотеки'
+  };
+  return labels[r] || r;
+}
+function type_label(t) {
+  return { standard: 'Типовая', partner: 'Партнёрская', industry: 'Отраслевая', library: 'Библиотека', tech: 'Технологическая' }[t] || t;
+}
+function type_badge(t) {
+  const cls = { standard: 'badge-blue', partner: 'badge-purple', industry: 'badge-green', library: 'badge-gray', tech: 'badge-gray' }[t] || 'badge-gray';
+  const icons = { standard: icn_star(), partner: icn_partner(), industry: icn_industry(), library: icn_copy(), tech: icn_term() };
+  return `<span class="badge ${cls} badge-link"${fattr('type', t, 'Показать все: ' + type_label(t))}>${icons[t]||''} ${type_label(t)}</span>`;
+}
+// Where the releases.1c.ru "Общая информация о конфигурации" link points to.
+function info_link_label(url) {
+  if (/\/\/solutions\.1c\.ru\//.test(url)) return 'О продукте на 1С:Решения';
+  if (/\/\/(www\.)?1c\.ru\/news\//.test(url)) return 'Информационное письмо 1С';
+  if (/\/\/([a-z0-9-]+\.)*1c\.ru\//i.test(url)) return 'О продукте на сайте 1С';
+  return 'Сайт разработчика';
+}
+function tag_title(tag) {
+  var d = TAG_DICT.filter(function(x) { return x.tag === tag; })[0];
+  return d ? d.title : tag;
+}
+function tag_chips(cfg) {
+  return (cfg.tags || []).map(function(t) {
+    return t.kind === 'based'
+      ? '<span class="badge badge-tag-based badge-link"' + fattr('line', t.tag, 'Решение на базе: ' + tag_title(t.tag) + '. Показать линейку') + '>на базе ' + t.tag + '</span>'
+      : '<span class="badge badge-tag badge-link"' + fattr('line', t.tag, tag_title(t.tag) + '. Показать линейку и решения на её базе') + '>' + t.tag + '</span>';
+  }).join(' ');
+}
+function status_badge(s) {
+  if (s === 'discontinued') return `<span class="badge badge-red">${icn_x()} Поддержка прекращена</span>`;
+  if (s === 'legacy') return `<span class="badge badge-gray badge-link"${fattr('legacy', '1', 'Показать предыдущие редакции')}>Предыдущая редакция</span>`;
+  return `<span class="badge badge-green">${icn_check()} Поддерживается</span>`;
+}
+function avatar_cls(t) {
+  return { standard: 'std', partner: 'partner', industry: 'industry' }[t] || 'std';
+}
+function config_avatar(cfg) {
+  const src = cfg.short || cfg.name || '';
+  const abbr = src.replace(/[^A-ZА-ЯЁ0-9\s]/gi,'').split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,3) || '?';
+  return `<div class="config-avatar ${avatar_cls(cfg.type)}">${abbr}</div>`;
+}
+function config_detail_avatar(cfg) {
+  const src = cfg.short || cfg.name || '';
+  const abbr = src.replace(/[^A-ZА-ЯЁ0-9\s]/gi,'').split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,3) || '?';
+  return `<div class="config-detail-avatar ${avatar_cls(cfg.type)}">${abbr}</div>`;
+}
+function toast(msg, dur=2200) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+function get_its() {
+  return {
+    login: localStorage.getItem('uc_its_login') || '',
+    password: localStorage.getItem('uc_its_pw') ? atob(localStorage.getItem('uc_its_pw')) : ''
+  };
+}
+function save_its(login, pw) {
+  localStorage.setItem('uc_its_login', login);
+  localStorage.setItem('uc_its_pw', btoa(pw));
+}
+function current_theme() {
+  return document.documentElement.getAttribute('data-theme') || 'auto';
+}
+function apply_theme(th) {
+  if (th === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', th);
+  localStorage.setItem('uc_theme', th);
+  update_theme_icon();
+  // The browser / installed app bar: the system's choice, or the one picked here
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    const own = m.media.includes('dark') ? '#0C1120' : '#EEF1F8';
+    m.content = th === 'auto' ? own : (th === 'dark' ? '#0C1120' : '#EEF1F8');
+  });
+}
+function update_theme_icon() {
+  const dark = current_theme() === 'dark' ||
+    (current_theme() !== 'light' && window.matchMedia('(prefers-color-scheme:dark)').matches);
+  document.getElementById('icon-sun').style.display = dark ? '' : 'none';
+  document.getElementById('icon-moon').style.display = dark ? 'none' : '';
+}
+function toggleTheme() {
+  apply_theme(current_theme() === 'dark' ? 'light' : 'dark');
+}
+
+/* ================================================================
+   SVG ICONS
+   ================================================================ */
+function icn(path, extra='') {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${path}</svg>`;
+}
+const icn_check   = () => icn('<polyline points="20 6 9 17 4 12"/>');
+const icn_x       = () => icn('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+const icn_ext     = () => icn('<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>');
+const icn_dl      = () => icn('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+const icn_copy    = () => icn('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>');
+const icn_term    = () => icn('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>');
+const icn_share   = () => icn('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>');
+const icn_link    = () => icn('<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>');
+const icn_clock   = () => icn('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+const icn_pkg     = () => icn('<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>');
+const icn_alert   = () => icn('<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
+const icn_info    = () => icn('<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>');
+const icn_star    = () => icn('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>');
+const icn_partner = () => icn('<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>');
+const icn_industry= () => icn('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/>');
+const icn_chevron_r=() => icn('<polyline points="9 18 15 12 9 6"/>');
+const icn_search  = () => icn('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+const icn_hist    = () => icn('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>');
+const icn_filter  = () => icn('<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>');
+const icn_bar     = () => icn('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');
+const icn_spin_svg= () => `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;display:block;margin:0 auto 8px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>`;
+
+function render_loading(msg) {
+  return `<div class="wrap" style="padding-top:80px"><div class="empty">${icn_spin_svg()}<div class="empty-title">${msg || 'Загрузка...'}</div></div></div>`;
+}
+/* The shape of the page that is coming, instead of a spinner: the first visit waits
+   for /api/configs (~2.5 s even compressed), and the layout must not jump after. */
+function render_skeleton(kind) {
+  const line = (w, h) => `<div class="skel skel-line" style="width:${w};${h ? 'height:' + h + ';' : ''}"></div>`;
+  const cards = (n) => `<div class="skel-grid">${'<div class="skel skel-card"></div>'.repeat(n)}</div>`;
+  if (kind === 'catalog') {
+    return `<div class="wrap">${line('220px', '26px')}<div class="skel" style="height:44px;margin:18px 0"></div>${cards(6)}</div>`;
+  }
+  if (kind === 'config') {
+    return `<div class="wrap">${line('58%', '26px')}${line('34%')}${line('26%')}<div class="skel" style="height:190px;margin-top:22px"></div>${cards(2)}</div>`;
+  }
+  if (kind === 'page') {
+    return `<div class="wrap">${line('240px', '26px')}<div class="skel" style="height:150px;margin:18px 0"></div>${cards(3)}</div>`;
+  }
+  return `<div class="wrap"><div class="hero">
+      ${line('340px', '26px')}${line('420px')}
+      <div class="skel" style="height:52px;margin:18px 0 12px"></div>
+      <div class="skel-grid" style="grid-template-columns:repeat(3,1fr);gap:12px">${'<div class="skel" style="height:64px"></div>'.repeat(3)}</div>
+    </div></div>`;
+}
+
+/* ================================================================
+   CHAIN RENDERING
+   ================================================================ */
+// Update sizes are known for the newest versions only (read from the portal one
+// by one): a step without one gets the median known size of the configuration («≈»).
+function chain_median_mb(cfg) {
+  const sizes = Object.values(cfg?._meta || {}).map(m => m.file_size_bytes).filter(b => b > 0).sort((a, b) => a - b);
+  if (!sizes.length) return 0;
+  return Math.round(sizes[Math.floor(sizes.length / 2)] / 1024 / 1024 * 10) / 10;
+}
+const SPEED_KEY = 'uc_speed';
+const SPEEDS = [10, 30, 100, 300];   // Мбит/с
+function chain_speed() { try { const v = Number(localStorage.getItem(SPEED_KEY)); return SPEEDS.includes(v) ? v : 30; } catch (e) { return 30; } }
+function set_chain_speed(v) { try { localStorage.setItem(SPEED_KEY, String(v)); } catch (e) {} document.querySelectorAll('[data-chain-time]').forEach(el => el.textContent = chain_time_text(el.dataset.sizes, Number(el.dataset.plat), Number(v))); document.querySelectorAll('select.chain-speed').forEach(sel => sel.value = String(v)); }
+// Time: download of the volume at the chosen speed + applying each update, weighted by its
+// size (dump, /UpdateCfg, /UpdateDBCfg, handlers grow with the package: 10–40 min, 15 when the
+// size is unknown) + 20–40 min for every platform upgrade the chain needs.
+function step_minutes(mb) { return mb > 0 ? Math.min(40, Math.max(10, 8 + mb / 20)) : 15; }
+function chain_time_text(sizes, platUps, mbit) {
+  const list = Array.isArray(sizes) ? sizes : String(sizes || '').split(',').filter(Boolean).map(Number);
+  const mb = list.reduce((a, b) => a + (b || 0), 0);
+  const dl = mb ? mb * 8 / mbit / 60 : 0;
+  const inst = list.reduce((a, b) => a + step_minutes(b), 0);
+  const fmt = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} ч${r ? ' ' + r + ' мин' : ''}` : `${m} мин`; };
+  return `≈ ${fmt(dl + inst * 0.8 + platUps * 20)} – ${fmt(dl + inst * 1.3 + platUps * 40)}`;
+}
+// The user's platform build (shared with the stats page's check, localStorage uc_platform):
+// steps whose minimum is above it get a «обновите платформу» item.
+function chain_set_platform(v, blockId) {
+  v = v.trim();
+  try { if (v) localStorage.setItem(PC_KEY, v); else localStorage.removeItem(PC_KEY); } catch (e) {}
+  const st = CHAIN_RENDER_STATE[blockId]; const el = document.getElementById(blockId);
+  if (st && el) el.outerHTML = render_chain_steps(st.steps, st.fromV, st.cfg, st.reversed);
+}
+function plat_build(req) { return (String(req || '').match(/\d+\.\d+\.\d+\.\d+/g) || []).sort(platform_cmp_v)[0] || ''; }
+// «Что нового» of the step's version: a teaser line, the full text loads on demand.
+function step_news_html(s, cfg) {
+  if (!s.news || !cfg) return '';
+  const id = 'sn-' + Math.random().toString(36).slice(2, 8);
+  return `<div class="step-news">
+    <button type="button" class="step-patches-head" onclick="news_expand('${id}','${cfg.id}','${s.v}',this)">${icn_chevron_r()} Что нового</button>
+    <span class="step-news-teaser">${esc_html(s.news.slice(0, 160))}${s.news.length > 160 ? '…' : ''}</span>
+    <div id="${id}" class="version-news" hidden></div></div>`;
+}
+async function news_expand(id, cfgId, ver, btn) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  if (!box.hidden) { box.hidden = true; btn.classList.remove('open'); return; }
+  btn.classList.add('open');
+  if (!box.innerHTML) {
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Загрузка…</div>';
+    try {
+      const d = await apiFetch('/api/version-news', { config_id: cfgId, version: ver });
+      box.innerHTML = d.html + (d.source ? `<div class="version-news-src"><a href="${esc_html(d.source)}" target="_blank" rel="noopener">${icn_link()} Источник ${icn_ext()}</a></div>` : '');
+    } catch (e) { box.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Текста нет</div>'; }
+  }
+  box.hidden = false;
+  const t = btn.closest('.step-news')?.querySelector('.step-news-teaser'); if (t) t.hidden = true;
+}
+// The version's patches («исправления» on releases.1c.ru): a line with the count and the
+// newest date, the list unfolds; every link leads to the portal's page of this version.
+function step_patches_html(s) {
+  const list = s.patches || [];
+  if (!list.length) return '';
+  const last = list[0].patch_date ? fmt_date(list[0].patch_date) : '';
+  const id = 'sp-' + Math.random().toString(36).slice(2, 8);
+  return `<div class="step-patches">
+    <button type="button" class="step-patches-head" onclick="const b=document.getElementById('${id}'); b.hidden=!b.hidden; this.classList.toggle('open', !b.hidden)" title="Исправления, выпущенные для этой версии">
+      ${icn_chevron_r()} Патчи: <b>${list.length}</b>${last ? ` · последний ${last}` : ''}</button>
+    <div id="${id}" class="patches-list" hidden>
+      ${list.map(p => `<a href="${s.patchesUrl || '#'}" target="_blank" rel="noopener" class="patch-row" title="${esc_html(p.description || '')}">
+        <span class="patch-date">${p.patch_date ? fmt_date(p.patch_date) : ''}</span>
+        <span class="patch-title"><span class="mono">${esc_html(p.title || p.uuid.slice(0, 8))}</span>${p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : ''}${p.metadata ? `<span class="patch-meta" title="Что меняет: ${esc_html(p.metadata)}">${esc_html(p.metadata.split(',')[0].split('.').slice(0, 2).join('.'))}</span>` : ''}</span>${p.size_bytes ? `<span class="patch-size">${p.size_bytes < 1048576 ? Math.max(1, Math.round(p.size_bytes / 1024)) + ' КБ' : (p.size_bytes / 1048576).toFixed(1) + ' МБ'}</span>` : ''}</a>`).join('')}
+      ${s.patchesUrl ? `<a href="${s.patchesUrl}" target="_blank" rel="noopener" class="patch-row patch-all">${icn_link()} Все патчи версии на releases.1c.ru ${icn_ext()}</a>` : ''}
+    </div></div>`;
+}
+// What 1C's own update service says for this start version (typical configurations, checked
+// nightly): the next version and the number of files — next to our chain.
+function chain_official_html(cfg, fromV, steps) {
+  const o = cfg && CHAIN_OFFICIAL[cfg.id + ':' + fromV];
+  if (!o) return '';
+  const label = { match: 'совпадает с нашей', ours_longer: 'у нас длиннее', ours_shorter: 'у нас короче', no_path: 'у нас нет пути', behind: 'у нас пока нет этой версии', unknown: 'сервис не знает эту версию' }[o.status] || o.status;
+  const cls = o.status === 'match' ? 'ok' : (o.status === 'unknown' || o.status === 'behind') ? 'muted' : 'warn';
+  const what = o.next ? `до <b class="mono">${esc_html(o.next)}</b>${o.files != null ? `, ${o.files} ${plural(o.files, 'файл', 'файла', 'файлов')}` : ''}${o.size ? `, ${fmt_mb(Math.round(o.size / 1024 / 1024 * 10) / 10)}` : ''}` : 'версия актуальна';
+  return `<div class="chain-official ${cls}" title="Сервис обновлений 1С (update-api.1c.ru), которым типовые конфигурации проверяют обновления; проверено ${o.checked ? fmt_date(o.checked) : ''}">
+    ${icn_check()} Сервис 1С: ${what} — ${label}${o.note && o.status !== 'match' ? ` <span class="chain-official-note">(${esc_html(o.note)})</span>` : ''}</div>`;
+}
+function render_chain_steps(steps, fromV, cfg, reversed) {
+  const est_mb = chain_median_mb(cfg);
+  if (!steps || !steps.length) return `<div class="empty"><p>Обновление не требуется или цепочка не найдена</p></div>`;
+  const toV = steps[steps.length - 1].v;
+  const blockId = 'chain-' + (cfg?.id||'x') + '-' + fromV.replace(/\./g,'') + '-' + toV.replace(/\./g,'');
+  CHAIN_RENDER_STATE[blockId] = { steps, fromV, cfg, reversed: !!reversed };
+  // Platform upgrades along the way: from the user's build, each step whose minimum is higher.
+  const myPlat = pc_saved();
+  let curPlat = myPlat, platUps = 0;
+  steps.forEach(s => {
+    const req = plat_build(s.plat);
+    s._platUp = (myPlat && req && platform_cmp_v(req, curPlat) > 0) ? req : '';
+    if (s._platUp) { curPlat = req; platUps++; }
+  });
+  // One glanceable answer per chain: does the user's build take it? The per-step
+  // «обновите платформу» items stay, this is the summary at the top.
+  const maxReq = steps.map(s => plat_build(s.plat)).filter(Boolean).sort(platform_cmp_v).pop() || '';
+  const platBadge = myPlat && maxReq
+    ? (platUps
+        ? `<span class="badge badge-orange" title="Минимальная платформа цепочки выше вашей сборки">нужна платформа &ge; ${esc_html(maxReq)}</span>`
+        : `<span class="badge badge-green" title="Ваша сборка не ниже минимумов всех шагов">платформа ${esc_html(myPlat)} хватает</span>`)
+    : '';
+
+  const display = reversed ? [...steps].reverse() : steps;
+  const startLabel = reversed ? 'Целевая версия' : 'Текущая версия';
+  const startV = reversed ? toV : fromV;
+  const endV = reversed ? fromV : toV;
+
+  let html = `<div class="chain-wrap" id="${blockId}"><div class="chain-group fade-up">`;
+  html += `<div class="chain-group-header">
+    <span class="chain-group-title">${cfg ? cfg.name : ''}</span>
+    <div class="chain-group-meta">
+      <span class="badge badge-blue">${steps.length} шаг${steps.length===1?'':steps.length<5?'а':'ов'}</span>
+      ${platBadge}
+      <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:2px 8px" onclick="toggle_chain_dir('${blockId}')">
+        ${reversed ? '↓ Старые первыми' : '↑ Новые первыми'}
+      </button>
+    </div>
+  </div>`;
+
+  // Start node
+  html += `<div class="chain-step">
+    <div class="step-indicator"><div class="step-dot start">${icn_check()}</div><div class="step-line"></div></div>
+    <div class="step-content"><div class="step-version">${startV}</div><div class="step-date">${startLabel}</div></div>
+  </div>`;
+
+  display.forEach((s, i) => {
+    const is_final = i === display.length - 1;
+    const dot_cls = is_final ? 'final' : (s.req ? 'required' : '');
+    const dot_icon = is_final ? icn_check() : (reversed ? display.length - i : i + 1);
+    const dl_1c = s.dl || (cfg?.nick
+      ? 'https://releases.1c.ru/version_files?nick=' + encodeURIComponent(cfg.nick) + '&ver=' + encodeURIComponent(s.v)
+      : '');
+    const dl_its = s.cfuPath
+      ? 'https://downloads.v8.1c.ru/tmplts/' + s.cfuPath
+      : '';
+    const mb = s.mb || 0;
+    const mb_str = mb > 0 ? `${mb} МБ` : est_mb ? `≈ ${est_mb} МБ` : '';
+    const step_label = reversed
+      ? (is_final ? 'Текущая версия' : '')
+      : (is_final ? 'Целевая версия' : '');
+    html += `<div class="chain-step">
+      <div class="step-indicator">
+        <div class="step-dot ${dot_cls}">${dot_icon}</div>
+        ${!is_final ? '<div class="step-line"></div>' : ''}
+      </div>
+      <div class="step-content">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="step-version">${s.v}</div>
+          ${step_label ? `<span class="badge badge-blue">${step_label}</span>` : ''}
+          ${s.req && !is_final ? '<span class="badge badge-orange">Обязательный</span>' : ''}
+          ${mb_str ? `<span class="badge badge-gray" title="${mb > 0 ? 'Размер дистрибутива обновления' : 'Размер этой версии ещё не прочитан с портала — медиана известных размеров конфигурации'}">${mb_str}</span>` : ''}
+        </div>
+        ${s.date ? `<div class="step-date">${fmt_date(s.date)}</div>` : ''}
+        <div class="step-meta">
+          ${s.plat ? `<span class="step-platform">Платформа &ge; ${s.plat}</span>` : ''}
+        </div>
+        ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
+        ${s._platUp ? `<div class="step-note step-note-plat">${icn_alert()} Перед этим шагом обновите платформу до <b class="mono">${s._platUp}</b> — у вас ${esc_html(myPlat)}.
+          <a href="/platform?build=${encodeURIComponent(s._platUp)}">Сборки</a> · <a href="/install">Установка платформы</a></div>` : ''}
+        ${is_final ? `<div class="step-actions">
+          ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru ${icn_ext()}</a>` : ''}
+          ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} downloads.v8.1c.ru ${icn_ext()}</a>` : ''}
+          ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления ${icn_ext()}</a>` : ''}
+        </div>`
+        // Intermediate steps: the same three links, but as one line of small text links —
+        // six steps of buttons made 202 links in the chain.
+        : `<div class="step-links-compact">
+          ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} дистрибутив</a>` : ''}
+          ${dl_its ? `<a href="${dl_its}" target="_blank" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} .cfu</a>` : ''}
+          ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" title="Инструкция 1С к этому обновлению">${icn_link()} порядок</a>` : ''}
+        </div>`}
+        ${step_news_html(s, cfg)}
+        ${step_patches_html(s)}
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  html += chain_official_html(cfg, fromV, steps);
+  html += `<div class="card fade-up fade-up-1">
+    <div class="chain-summary">
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        <div class="chain-stat"><div class="chain-stat-val">${steps.length}</div><div class="chain-stat-lbl">Шагов</div></div>
+        ${(() => { const n = steps.reduce((a, x) => a + ((x.patches || []).length), 0); return n ? `<div class="chain-stat" title="Исправления, выпущенные для версий цепочки"><div class="chain-stat-val">${n}</div><div class="chain-stat-lbl">Патчей</div></div>` : ''; })()}
+        ${steps[steps.length-1]?.date ? `<div class="chain-stat"><div class="chain-stat-val">${fmt_date(steps[steps.length-1].date)}</div><div class="chain-stat-lbl">Дата релиза</div></div>` : ''}
+        ${(()=>{
+          const known = steps.filter(x => x.mb > 0).length;
+          const total_mb = Math.round(steps.reduce((s,x)=>s+(x.mb||est_mb||0),0)*10)/10;
+          if (!total_mb) return '';
+          const approx = known < steps.length;
+          const speed = chain_speed();
+          return `<div class="chain-stat" title="${approx ? `Размер известен для ${known} из ${steps.length} шагов, остальное — оценка` : 'Сумма размеров дистрибутивов обновлений'}"><div class="chain-stat-val">${approx ? '≈ ' : ''}${fmt_mb(total_mb)}</div><div class="chain-stat-lbl">Объём обновлений</div></div>
+          <div class="chain-stat" title="Скачивание объёма на выбранной скорости + применение каждого обновления (10–40 мин по размеру, 15 без размера)${platUps ? ` + обновление платформы (${platUps})` : ''}"><div class="chain-stat-val" data-chain-time data-sizes="${steps.map(x => x.mb || est_mb || 0).join(',')}" data-plat="${platUps}">${chain_time_text(steps.map(x => x.mb || est_mb || 0), platUps, speed)}</div>
+            <div class="chain-stat-lbl">Время · <select class="chain-speed" onchange="set_chain_speed(this.value)" title="Скорость скачивания">${SPEEDS.map(v => `<option value="${v}"${v === speed ? ' selected' : ''}>${v} Мбит/с</option>`).join('')}</select></div></div>
+          <div class="chain-stat chain-plat" title="Ваша сборка платформы: шаги, которым нужна выше, получат пункт «обновите платформу», время учтёт её установку"><input class="input input-mono chain-plat-input" value="${esc_html(myPlat)}" placeholder="8.3.24.1691" inputmode="decimal" aria-label="Ваша платформа" onchange="chain_set_platform(this.value, '${blockId}')"><div class="chain-stat-lbl">Ваша платформа${platUps ? ` · обновить ${platUps} ${plural(platUps, 'раз', 'раза', 'раз')}` : myPlat ? ' · хватает' : ''}</div></div>`; })()}
+      </div>
+      <div class="chain-actions">
+        ${cfg ? `<button class="btn btn-secondary" onclick="do_share_chain('${cfg.id}','${fromV}','${toV}')">${icn_share()} Поделиться</button>` : ''}
+        <button class="btn btn-secondary" onclick="do_copy_chain('${cfg?.id||''}','${fromV}','${toV}')">${icn_copy()} Скопировать</button>
+        ${cfg && steps.length ? `<button class="btn btn-secondary" onclick="open_chain_script('${cfg.id}','${fromV}','${steps[steps.length-1].v}',${steps.length})" title="Скрипт для Windows или Linux: скачает обновления и накатит их на базу">${icn_term()} Скрипт</button>` : ''}
+      </div>
+    </div>
+  </div></div>`;
+  return html;
+}
+function toggle_chain_dir(blockId) {
+  const s = CHAIN_RENDER_STATE[blockId];
+  if (!s) return;
+  const el = document.getElementById(blockId);
+  if (!el) return;
+  const newHtml = render_chain_steps(s.steps, s.fromV, s.cfg, !s.reversed);
+  el.outerHTML = newHtml;
+}
+function handle_dl(e, url) {
+  if (!url) { e.preventDefault(); toast('Ссылка для скачивания не указана'); return; }
+  goal('download');
+}
+function do_share_chain(cfgId, fromV, toV) {
+  const url = `${location.origin}/chain?config=${cfgId}&from=${encodeURIComponent(fromV)}&to=${encodeURIComponent(toV)}`;
+  goal('chain_share');
+  navigator.clipboard.writeText(url).then(() => toast('Ссылка скопирована')).catch(() => prompt('Скопируйте ссылку:', url));
+}
+async function do_copy_chain(cfgId, fromV, toV) {
+  const cfg = CONFIGS.find(c => c.id === cfgId);
+  if (!cfg) return;
+  const key = `${cfgId}:${fromV}:${toV}`;
+  let steps = CHAIN_CACHE[key];
+  if (!steps) {
+    try {
+      const r = await chain_api(cfg, fromV, toV);
+      steps = chain_response_to_steps(r, cfg);
+      if (steps) CHAIN_CACHE[key] = steps;
+    } catch(e) { toast('Ошибка при получении цепочки'); return; }
+  }
+  if (!steps?.length) return;
+  goal('chain_copy');
+  let txt = `Цепочка обновлений: ${cfg.name}\nОт: ${fromV}\nДо: ${steps[steps.length-1].v}\nШагов: ${steps.length}\n\nПорядок установки:\n`;
+  steps.forEach((s,i) => { txt += `${i+1}. ${s.v}${s.date ? ' (' + fmt_date(s.date) + ')' : ''}\n`; });
+  txt += `\nСгенерировано: ${new Date().toLocaleString('ru')} | updatecon`;
+  navigator.clipboard.writeText(txt).then(() => toast('Цепочка скопирована')).catch(() => {
+    const el = document.createElement('textarea');
+    el.value = txt; document.body.appendChild(el); el.select();
+    document.execCommand('copy'); document.body.removeChild(el);
+    toast('Цепочка скопирована');
+  });
+}
+
+/* ================================================================
+   ROUTER
+   ================================================================ */
+// Clean URLs (/config/96, /catalog?plat=8.5) through the History API; the
+// server answers every unknown path with index.html. In-app links are plain
+// hrefs — the click handler below routes them without a page reload.
+function current_url() { return location.pathname + location.search; }
+function navigate(path) {
+  const u = new URL(path, location.origin);   // "1с" and "1%D1%81" are the same page
+  if (u.pathname + u.search === current_url()) return;
+  history.pushState(null, '', u.pathname + u.search);
+  route();
+}
+function parse_route() {
+  const path = location.pathname.replace(/\/+$/, '') || '/';
+  const params = {};
+  const qs = location.search.replace(/^\?/, '');
+  if (qs) qs.split('&').forEach(p => { const [k,v] = p.split('='); params[k] = decodeURIComponent(v||''); });
+  return { path, params };
+}
+// Old links: /#/config/96, or /%23/config/96 from proxies that encode the fragment.
+(function legacy_hash_url() {
+  let h = location.hash;
+  if (!h.startsWith('#/') && /^\/%23\//i.test(location.pathname)) h = decodeURIComponent(location.pathname.slice(1));
+  if (h.startsWith('#/')) history.replaceState(null, '', h.slice(1));
+})();
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';   // route() places the page
+document.addEventListener('click', e => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return;
+  const href = a.getAttribute('href');
+  // Only in-app pages: not other sites, not the API or the admin UI.
+  if (!href.startsWith('/') || href.startsWith('//') || /^\/(api|admin)(\/|\?|$)/.test(href)) return;
+  e.preventDefault();
+  navigate(href);
+});
+// Mobile menu (≤760px): closes on a link, on Escape, on a tap outside, and
+// when the window gets wide enough for the header links.
+function toggle_menu(open) {
+  const m = document.getElementById('mobile-menu'), btn = document.getElementById('menu-btn'), bd = document.getElementById('menu-backdrop');
+  if (!m || !btn) return;
+  const on = open === undefined ? m.hidden : open;
+  if (on === !m.hidden) return;
+  m.hidden = !on; bd.hidden = !on;
+  btn.setAttribute('aria-expanded', String(on));
+  if (on) (m.querySelector('.nav-link.active') || m.querySelector('.nav-link')).focus();
+  else if (m.contains(document.activeElement)) btn.focus();
+}
+document.getElementById('mobile-menu').addEventListener('click', e => { if (e.target.closest('a')) toggle_menu(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') toggle_menu(false); });
+// The catalog is a long page: reach its search from anywhere with 「/」 (as on GitHub) or
+// ⌘/Ctrl+K (as in most apps). Typing in a field keeps the normal characters.
+document.addEventListener('keydown', e => {
+  const a = document.activeElement;
+  const in_field = /^(INPUT|TEXTAREA|SELECT)$/.test(a?.tagName || '') || !!a?.isContentEditable;
+  const is_slash = e.key === '/' && !in_field && !e.metaKey && !e.ctrlKey && !e.altKey;
+  const is_cmd_k = (e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey);
+  if (!is_slash && !is_cmd_k) return;
+  e.preventDefault();
+  const focus_search = () => { const el = document.getElementById('catalog-search'); if (el) { el.focus(); el.select(); } };
+  if (document.getElementById('catalog-search')) focus_search();
+  else { navigate('/catalog'); setTimeout(focus_search, 350); }
+});
+matchMedia('(min-width: 761px)').addEventListener('change', e => { if (e.matches) toggle_menu(false); });
+
+/* Яндекс Метрика: when a counter is set in the admin panel, the server puts its
+   code into the page (window.UC_METRIKA = counter). The counter's init counts
+   the first page; in-app page changes are reported here. Filter changes
+   (replaceState) are not page views. Goal ids are listed in the admin card. */
+let METRIKA_URL = null;
+function metrika_hit() {
+  if (!window.UC_METRIKA || typeof window.ym !== 'function') return;
+  const url = location.href;
+  if (METRIKA_URL === null) { METRIKA_URL = url; return; }
+  if (url === METRIKA_URL) return;
+  ym(window.UC_METRIKA, 'hit', url, { referer: METRIKA_URL, title: document.title });
+  METRIKA_URL = url;
+}
+function goal(name) {
+  if (window.UC_METRIKA && typeof window.ym === 'function') ym(window.UC_METRIKA, 'reachGoal', name);
+}
+
+let ROUTE_PATH = null;
+async function route() {
+  const { path, params } = parse_route();
+  document.body.style.overflow = '';
+  const tip = document.getElementById('st-tip'); if (tip) tip.classList.remove('on');
+  // Leaving the catalog: remember the scroll position for this exact filter set.
+  if (ROUTE_PATH === '/catalog' && path !== '/catalog') CAT_SCROLL = { hash: CAT_URL, y: window.scrollY };
+  const el = document.getElementById('main-content');
+  document.querySelectorAll('.nav-link').forEach(a => {
+    a.classList.remove('active');
+    const href = a.getAttribute('href');
+    if ((path === '/' && href === '/') || (path !== '/' && href !== '/' && path.startsWith(href)))
+      a.classList.add('active');
+  });
+  if (!CONFIGS_LOADED) {
+    el.innerHTML = render_skeleton(path === '/catalog' ? 'catalog' : path.startsWith('/config/') ? 'config' : path === '/' ? 'home' : 'page');
+    await initData();
+    if (!CONFIGS_LOADED) {
+      el.innerHTML = `<div class="wrap"><div class="empty" style="padding-top:48px"><div class="empty-title">Не удалось загрузить данные</div>
+        <div class="empty-sub">Сервер не ответил или нет связи. Повторим сами, когда появится сеть — или нажмите кнопку.</div>
+        <button class="btn btn-primary" style="margin-top:16px" onclick="init_retry()">Повторить</button></div></div>`;
+      ROUTE_PATH = path;
+      return;
+    }
+  }
+  if (!path.startsWith('/config/')) el.classList.remove('no-anim');
+  if (path === '/') { el.innerHTML = render_home(); bind_home(); }
+  else if (path === '/catalog') { el.innerHTML = render_catalog(); bind_catalog(); }
+  else if (path.startsWith('/config/')) {
+    const id = path.split('/')[2];
+    // Config → config (another edition from the header): keep the page until the data is
+    // here (a placeholder only when it takes a while) and skip the fade-in — no blink.
+    const swap = (ROUTE_PATH || '').startsWith('/config/') && CONFIGS.some(c => c.id === id);
+    const placeholder = setTimeout(() => { el.innerHTML = render_skeleton('config'); }, swap ? 300 : 0);
+    await loadVersionsForConfig(id);
+    clearTimeout(placeholder);
+    el.classList.toggle('no-anim', swap);
+    el.innerHTML = render_config(id);
+    bind_config(id);
+  }
+  else if (path === '/chain') {
+    el.innerHTML = render_chain_page_shell();
+    await bind_chain_page(params);
+  }
+  else if (path === '/stats') { el.innerHTML = render_stats(); bind_stats(); }
+  else if (path === '/platform') { el.innerHTML = render_platform(); await bind_platform(); }
+  else if (path === '/news') { el.innerHTML = render_news(); await bind_news(); }
+  else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
+  else if (path === '/install') {
+    if (!PLATFORM_DATA) { try { PLATFORM_DATA = await apiFetch('/api/platform'); } catch (e) {} }
+    el.innerHTML = render_install();
+  }
+  else { el.innerHTML = `<div class="wrap"><div class="empty"><div class="empty-title">Страница не найдена</div></div></div>`; }
+  ROUTE_PATH = path;
+  metrika_hit();
+  // Back to the same filtered catalog → back to the same place in it.
+  // 'instant': html has scroll-behavior: smooth, which would animate page changes.
+  const top = path === '/catalog' && CAT_SCROLL && CAT_SCROLL.hash === CAT_URL ? CAT_SCROLL.y : 0;
+  window.scrollTo({ top, behavior: 'instant' });
+}
+window.addEventListener('popstate', () => route());
+
+/* ================================================================
+   HOME VIEW
+   ================================================================ */
+function render_home() {
+  const latest = [...CONFIGS].filter(c => c.latestDate && c.isLatestEdition && in_pref_country(c)).sort((a,b) => new Date(b.latestDate) - new Date(a.latestDate)).slice(0,3);
+  return `<div class="wrap">
+    <div class="page-head"><div></div></div>
+    <div class="hero fade-up">
+      <div class="hero-title">Построить цепочку обновлений</div>
+      <div class="hero-sub">Введите текущую версию конфигурации 1С — мы найдём путь до актуальной версии</div>
+      <div class="field name-field" style="margin:0 0 14px">
+        <label class="label">Поиск по названию</label>
+        <input id="inp-name" class="input input-lg" placeholder="Бухгалтерия, ЗУП, Розница, разработчик…" autocomplete="off" spellcheck="false"
+          oninput="name_suggest(this.value)" onkeydown="name_suggest_key(event)" onblur="name_suggest_blur()" onfocus="name_suggest(this.value)">
+        <div id="name-suggest" class="ver-suggest name-suggest" hidden></div>
+      </div>
+      <div class="chain-builder">
+        <div class="field ver-field" style="margin:0">
+          <label class="label">Текущая версия</label>
+          <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" autocomplete="off" spellcheck="false"
+            oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="ver_suggest_blur()" onfocus="home_version_input(this.value)">
+          <div id="ver-suggest" class="ver-suggest" hidden></div>
+        </div>
+        <div class="field ver-field" style="margin:0">
+          <label class="label">Целевая версия <span style="font-weight:400;text-transform:none;font-size:11px">(оставьте пустым — до последней)</span></label>
+          <input id="inp-target" class="input input-mono input-lg" placeholder="Последняя" autocomplete="off" inputmode="decimal"
+            oninput="ver_suggest(this.value,'ver-suggest-target','inp-target')"
+            onkeydown="ver_suggest_key(event,'ver-suggest-target','inp-target')"
+            onblur="ver_suggest_blur('ver-suggest-target','inp-target')"
+            onfocus="ver_suggest(this.value,'ver-suggest-target','inp-target')">
+          <div id="ver-suggest-target" class="ver-suggest" hidden></div>
+        </div>
+        <div class="field" style="margin:0">
+          <label class="label">Версия платформы <span style="font-weight:400;text-transform:none;font-size:11px">(необязательно)</span></label>
+          <input id="inp-platform" class="input input-mono input-lg" placeholder="8.3.24.1691" inputmode="decimal" autocomplete="off"
+            value="${esc_html(pc_saved())}" onchange="home_platform_input(this.value)" oninput="home_platform_hint(this.value)"
+            onkeydown="if (event.key === 'Enter') { event.preventDefault(); this.blur(); }">
+          <div id="plat-hint" class="plat-hint"></div>
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="home_build_chain()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
+          Построить
+        </button>
+      </div>
+      <div id="home-matches" style="margin-top:14px"></div>
+      ${(() => { const n = CONFIGS.filter(c => c.isLatestEdition && c.platform === PLATFORM_NEWEST).length;
+        return n ? `<a class="plat-callout" href="/catalog?plat=${PLATFORM_NEWEST}">Уже на платформе ${PLATFORM_NEWEST}: ${n} ${n % 10 === 1 && n % 100 !== 11 ? 'конфигурация' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'конфигурации' : 'конфигураций'} →</a>` : ''; })()}
+    </div>
+    <div id="home-chain-result"></div>
+    <div id="home-extra">
+    <div class="stats-banner fade-up fade-up-2">
+      <div>
+        <div class="stats-banner-title">База данных обновлений Апдейкон</div>
+        <div style="font-size:12px;opacity:.7;margin-top:2px">${DB_META.last_updated ? 'Обновлено: ' + fmt_date(DB_META.last_updated) + ' · ' + days_ago(DB_META.last_updated) : CONFIGS_LOADED ? 'Дата обновления неизвестна' : 'Загрузка...'}</div>
+      </div>
+      <div class="stats-banner-grid">
+        <div class="stats-banner-item"><div class="val">${DB_META.total_configs}</div><div class="lbl">Конфигураций</div></div>
+        <div class="stats-banner-item"><div class="val">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="lbl">Версий</div></div>
+      </div>
+      <div class="stats-banner-action">
+        <a href="/stats" class="btn btn-secondary btn-sm" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff">${icn_bar()} Статистика</a>
+      </div>
+    </div>
+    ${latest.length ? `<div style="margin-bottom:16px" class="fade-up fade-up-3">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:16px;font-weight:700">Последние обновления</div>
+        <a href="/news" class="btn btn-ghost btn-sm">Все новости ${icn_chevron_r()}</a>
+      </div>
+      <div class="catalog-grid">${latest.map(c => config_card_html(c)).join('')}</div>
+    </div>` : ''}
+    </div>
+  </div>`;
+}
+// While a search result is under the version field (matches, a chosen configuration,
+// a chain) the stats banner and «Последние обновления» are hidden: they read as part of it.
+function home_extra_sync() {
+  const extra = document.getElementById('home-extra');
+  if (!extra) return;
+  const busy = !!document.getElementById('home-matches')?.innerHTML.trim() || !!document.getElementById('home-chain-result')?.innerHTML.trim();
+  extra.hidden = busy;
+}
+function bind_home() {
+  const { params } = parse_route();
+  if (params.v) {
+    document.getElementById('inp-version').value = params.v;
+    home_version_input(params.v);
+  }
+}
+
+let _verSearchTimer, _verSuggestTimer;
+const MATCH_SHOW = 6;
+function plural(n, one, few, many) { const m = n % 100, d = n % 10; return (m > 10 && m < 20) ? many : d === 1 ? one : (d > 1 && d < 5) ? few : many; }
+const TYPE_RANK = { standard: 1, industry: 2, partner: 3 };
+function match_sort(a, b) {
+  const fa = fav_has(a.id) ? 0 : 1, fb = fav_has(b.id) ? 0 : 1;
+  if (fa !== fb) return fa - fb;
+  const ta = TYPE_RANK[a.type] || 4, tb = TYPE_RANK[b.type] || 4;
+  if (ta !== tb) return ta - tb;
+  return a.name.localeCompare(b.name, 'ru');
+}
+function home_version_input(ver) {
+  ver = ver.trim();
+  const el = document.getElementById('home-matches');
+  if (!el) return;
+  delete el.dataset.selected;
+  ver_suggest(ver);
+  const chainEl = document.getElementById('home-chain-result');
+  if (chainEl) chainEl.innerHTML = '';
+  if (!ver || ver.length < 5) { el.innerHTML = ''; delete el.dataset.found; home_extra_sync(); return; }
+  clearTimeout(_verSearchTimer);
+  _verSearchTimer = setTimeout(async () => {
+    const found = (await find_configs_by_version_api(ver)).sort(match_sort);
+    if (!found.length) {
+      delete el.dataset.found;
+      el.innerHTML = `<div style="font-size:12px;color:var(--text-light)">Версия <code style="font-family:var(--mono)">${ver}</code> не найдена в базе</div>`;
+      home_extra_sync();
+      return;
+    }
+    el.dataset.found = found.map(c=>c.id).join(',');
+    el.dataset.ver = ver;
+    // Single match — auto-select silently, no list needed
+    if (found.length === 1) { home_select_config(found[0].id, ver); return; }
+    home_render_matches(found, ver, false);
+  }, 300);
+}
+function home_render_matches(found, ver, all) {
+  const el = document.getElementById('home-matches');
+  const shown = all ? found : found.slice(0, MATCH_SHOW);
+  let html = `<div class="matched-list">`;
+  html += `<div class="matched-list-header">Версия встречается в ${found.length} конфигурациях — выберите нужную:</div>`;
+  shown.forEach(c => {
+    const sub = [c.vendor, c.edition ? 'ред. ' + c.edition : '', c.version_count ? c.version_count + ' версий' : ''].filter(Boolean).join(' · ');
+    html += `<div class="matched-config-item" onclick="home_select_config('${c.id}','${ver}')" data-cfg-id="${c.id}">
+      ${fav_has(c.id) ? `<span class="badge badge-yellow matched-fav" title="Мои конфигурации">${ICN_STAR}</span>` : ''}${type_badge(c.type)}
+      <span class="matched-cfg-name">${c.name}</span>
+      <span class="matched-cfg-sub">${sub}</span>
+    </div>`;
+  });
+  if (!all && found.length > shown.length) html += `<div class="matched-more" onclick="home_matches_all()">Ещё ${found.length - shown.length} ${plural(found.length - shown.length, 'конфигурация','конфигурации','конфигураций')}</div>`;
+  html += `</div>`;
+  el.innerHTML = html;
+  home_extra_sync();
+}
+function home_matches_all() {
+  const el = document.getElementById('home-matches');
+  const found = (el.dataset.found || '').split(',').map(id => CONFIGS.find(c => c.id === id)).filter(Boolean);
+  home_render_matches(found, el.dataset.ver || '', true);
+}
+// After the choice the list collapses to one line: the goal is the file list, not the picker.
+function home_select_config(id, ver) {
+  const el = document.getElementById('home-matches');
+  const c = CONFIGS.find(x => x.id === String(id));
+  if (!c) return;
+  el.dataset.selected = c.id;
+  const many = (el.dataset.found || '').split(',').filter(Boolean).length > 1;
+  el.innerHTML = `<div class="matched-picked">${type_badge(c.type)}<span>Конфигурация: <strong>${c.name}</strong>${c.edition ? ', ред. ' + c.edition : ''}</span>
+    ${many ? `<span class="change" onclick="home_matches_reopen()">изменить</span>` : ''}</div>`;
+  home_extra_sync();
+  // Source chosen, target empty → the chain to the newest version at once.
+  if (!document.getElementById('inp-target')?.value.trim()) home_build_chain();
+  else if (many) document.getElementById('inp-target')?.focus();
+}
+function home_matches_reopen() {
+  const el = document.getElementById('home-matches');
+  delete el.dataset.selected;
+  document.getElementById('home-chain-result').innerHTML = '';
+  home_matches_all();
+}
+// ── name search on the home page: the catalog's own matcher, current editions first ──
+/* ================================================================
+   RECENT QUERIES of the home fields — localStorage uc_hist_name / uc_hist_ver
+   ================================================================
+   Focus an empty field and the last queries are right there instead of a blank
+   box. Written only when a search led somewhere (a chain was built, a config was
+   picked, Enter went to the catalog). Local only, like «Мои конфигурации». */
+const HIST_MAX = 8;
+function hist_get(kind) {
+  try {
+    const v = JSON.parse(localStorage.getItem('uc_hist_' + kind) || '[]');
+    return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.trim()).slice(0, HIST_MAX) : [];
+  } catch (e) { return []; }
+}
+function hist_put(kind, value) {
+  value = String(value || '').replace(/\s+/g, ' ').trim();
+  if (value.length < 2) return;
+  const rest = hist_get(kind).filter(x => x.toLowerCase() !== value.toLowerCase());
+  rest.unshift(value);
+  try { localStorage.setItem('uc_hist_' + kind, JSON.stringify(rest.slice(0, HIST_MAX))); } catch (e) {}
+}
+function hist_drop(kind, value) {
+  try { localStorage.setItem('uc_hist_' + kind, JSON.stringify(hist_get(kind).filter(x => x !== value))); } catch (e) {}
+}
+function hist_clear(kind) {
+  try { localStorage.removeItem('uc_hist_' + kind); } catch (e) {}
+}
+function hist_rows(kind, q) {
+  q = String(q || '').trim().toLowerCase();
+  return hist_get(kind).filter(v => !q || v.toLowerCase().includes(q));
+}
+function hist_head_html(kind) {
+  return `<div class="hist-head">${kind === 'ver' ? 'Недавние версии' : 'Недавние запросы'}
+    <button type="button" class="hist-clear" onmousedown="event.preventDefault()" onclick="hist_clear_click(event,'${kind}')">очистить</button></div>`;
+}
+function hist_clear_click(ev, kind) {
+  ev.preventDefault(); ev.stopPropagation();
+  hist_clear(kind);
+  if (kind === 'ver') ver_suggest_hide();
+  else if (kind === 'cat') { if (typeof cat_hist_hide === 'function') cat_hist_hide(); }
+  else name_suggest_hide();
+}
+function hist_drop_click(ev, kind, value, boxId, inpId) {
+  ev.preventDefault(); ev.stopPropagation();
+  hist_drop(kind, value);
+  const id = inpId || (kind === 'ver' ? 'inp-version' : kind === 'cat' ? 'catalog-search' : 'inp-name');
+  const inp = document.getElementById(id);
+  const val = inp ? inp.value : '';
+  if (kind === 'ver') ver_suggest(val, boxId || 'ver-suggest', id);
+  else if (kind === 'cat') cat_hist_show(val);
+  else name_suggest(val);
+}
+/** Recent name queries into #name-suggest; false when there is nothing to show. */
+function name_hist_render(q) {
+  const box = document.getElementById('name-suggest');
+  if (!box) return false;
+  const rows = hist_rows('name', q);
+  if (!rows.length) return false;
+  box.innerHTML = hist_head_html('name') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}">
+      <a class="hist-link" href="/catalog?q=${encodeURIComponent(v)}" onclick="name_hist_pick(event, this)">${icn_hist()}<span class="name-suggest-name">${esc_html(v)}</span></a>
+      <span class="hist-del" title="Убрать из истории" onclick="hist_drop_click(event,'name',this.parentElement.dataset.v)">×</span></div>`).join('');
+  box.hidden = false;
+  return true;
+}
+function name_hist_pick(ev, el) {
+  ev.preventDefault();
+  const row = el.closest('.hist-item');
+  const v = (row && row.dataset.v) || '';
+  const inp = document.getElementById('inp-name');
+  if (inp) { inp.value = v; inp.focus(); }
+  name_suggest(v);
+}
+/** A config was picked from the suggestions: remember what was typed to find it. */
+function name_suggest_pick() {
+  const inp = document.getElementById('inp-name');
+  if (inp) hist_put('name', inp.value);
+  name_suggest_hide();
+}
+/** Recent versions into the given box — the home form has two version fields
+    («Текущая версия» and the optional «Целевая версия»), both share uc_hist_ver. */
+function ver_hist_render(q, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const box = document.getElementById(boxId);
+  if (!box) return false;
+  const rows = hist_rows('ver', q);
+  if (!rows.length) return false;
+  box.innerHTML = hist_head_html('ver') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}" onmousedown="ver_suggest_pick(this.dataset.v,'${boxId}','${inpId}')">
+      <span>${esc_html(v)}</span>
+      <span class="hist-del" title="Убрать из истории" onmousedown="event.preventDefault(); event.stopPropagation(); hist_drop_click(event,'ver',this.parentElement.dataset.v,'${boxId}','${inpId}')">×</span></div>`).join('');
+  box.hidden = false;
+  return true;
+}
+/* The blur timer of 150ms only exists so a click on a suggestion lands before the box
+   hides; it must not fire when focus already came back (history would vanish). */
+let _nameHideTimer = 0;
+const _verTimers = {};   // boxId → {suggest, hide}: two version inputs share this code
+function name_suggest_blur() {
+  clearTimeout(_nameHideTimer);
+  _nameHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'inp-name') name_suggest_hide(); }, 150);
+}
+function name_suggest(q) {
+  const box = document.getElementById('name-suggest');
+  if (!box) return;
+  clearTimeout(_nameHideTimer);
+  q = String(q || '').trim().toLowerCase();
+  if (!CONFIGS_LOADED) { name_suggest_hide(); return; }
+  // Nothing typed yet: the recent queries are more useful than an empty box.
+  if (q.length < 2) { if (!name_hist_render(q)) name_suggest_hide(); return; }
+  const found = CONFIGS.filter(c => cfg_matches_search(c, q));
+  if (!found.length) { box.innerHTML = '<div class="ver-suggest-item name-suggest-empty">Ничего не найдено</div>'; box.hidden = false; return; }
+  const exact = c => ((c.name || '').toLowerCase().startsWith(q) || (c.short || '').toLowerCase().startsWith(q)) ? 0 : 1;
+  found.sort((a, b) => (fav_has(b.id) - fav_has(a.id)) || (exact(a) - exact(b)) || ((b.isLatestEdition ? 1 : 0) - (a.isLatestEdition ? 1 : 0)) || main_cmp(a, b));
+  const shown = found.slice(0, 8);
+  box.innerHTML = shown.map(c => `<a class="ver-suggest-item name-suggest-item" href="/config/${c.id}" onmousedown="event.preventDefault()" onclick="name_suggest_pick()">
+      <span class="name-suggest-main">${type_badge(c.type)}<span class="name-suggest-name">${esc_html(c.name)}</span></span>
+      <span class="n">${esc_html([c.vendorName, c.edition ? 'ред. ' + c.edition : '', c.latestV || ''].filter(Boolean).join(' · '))}</span></a>`).join('')
+    + (found.length > shown.length ? `<a class="ver-suggest-item name-suggest-all" href="/catalog?q=${encodeURIComponent(q)}" onmousedown="event.preventDefault()">Все ${found.length} в каталоге ${icn_chevron_r()}</a>` : '');
+  box.hidden = false;
+}
+function name_suggest_hide() { const box = document.getElementById('name-suggest'); if (box) { box.hidden = true; box.innerHTML = ''; } }
+function name_suggest_key(e) {
+  const box = document.getElementById('name-suggest');
+  const items = box && !box.hidden ? [...box.querySelectorAll('a.ver-suggest-item, a.hist-link')] : [];
+  let i = items.findIndex(x => x.classList.contains('active'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!items.length) return;
+    e.preventDefault();
+    i = e.key === 'ArrowDown' ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
+    items.forEach((x, k) => x.classList.toggle('active', k === i));
+    items[i]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const q = e.target.value.trim();
+    if (i >= 0) items[i].click();
+    else if (q) { hist_put('name', q); navigate('/catalog?q=' + encodeURIComponent(q)); }
+  } else if (e.key === 'Escape') name_suggest_hide();
+}
+// ── version suggestions under the input ──
+/* One implementation for both version fields: the box id and the input id are
+   arguments, so «Целевая версия» gets the same history, debounce and keys as
+   «Текущая версия» without a second copy of the code. */
+function ver_timers(boxId) { return (_verTimers[boxId] ||= { suggest: 0, hide: 0 }); }
+function ver_suggest_blur(boxId = 'ver-suggest', inpId = 'inp-version') {
+  const t = ver_timers(boxId);
+  clearTimeout(t.hide);
+  t.hide = setTimeout(() => { if (document.activeElement?.id !== inpId) ver_suggest_hide(boxId); }, 150);
+}
+function ver_suggest(q, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  const t = ver_timers(boxId);
+  clearTimeout(t.suggest);
+  clearTimeout(t.hide);
+  q = String(q || '').trim();
+  // Empty, or not a version yet — the recent versions beat an empty box.
+  if (!/^\d[\d.]{1,}$/.test(q) || q.length < 3) { if (!ver_hist_render(q, boxId, inpId)) ver_suggest_hide(boxId); return; }
+  t.suggest = setTimeout(async () => {
+    let rows = [];
+    try { rows = await apiFetch('/api/versions/suggest', { q }); } catch (e) {}
+    rows = rows.filter(r => r.version !== q);
+    if (!rows.length || document.activeElement?.id !== inpId) { ver_suggest_hide(boxId); return; }
+    box.innerHTML = rows.map(r => `<div class="ver-suggest-item" data-v="${esc_html(r.version)}" onmousedown="ver_suggest_pick(this.dataset.v,'${boxId}','${inpId}')"><span>${esc_html(r.version)}</span><span class="n">${r.configs} ${plural(r.configs,'конфигурация','конфигурации','конфигураций')}</span></div>`).join('');
+    box.hidden = false;
+  }, 200);
+}
+function ver_suggest_hide(boxId = 'ver-suggest') { const box = document.getElementById(boxId); if (box) { box.hidden = true; box.innerHTML = ''; } }
+function ver_suggest_pick(v, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const inp = document.getElementById(inpId);
+  if (inp) inp.value = v;
+  ver_suggest_hide(boxId);
+  if (inpId === 'inp-version') home_version_input(v);   // the chain form reacts to the current version only
+}
+function ver_suggest_key(e, boxId = 'ver-suggest', inpId = 'inp-version') {
+  const box = document.getElementById(boxId);
+  if (!box || box.hidden) return;
+  const items = [...box.querySelectorAll('.ver-suggest-item')];
+  let i = items.findIndex(x => x.classList.contains('active'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    i = e.key === 'ArrowDown' ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
+    items.forEach((x, k) => x.classList.toggle('active', k === i));
+    items[i]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); ver_suggest_pick(items[i].dataset.v || items[i].textContent.trim(), boxId, inpId); }
+  else if (e.key === 'Escape') ver_suggest_hide(boxId);
+}
+/* The home form's optional platform build. It goes into the same localStorage key
+   the chain summary and the /stats check use (uc_platform), so the value is already
+   there when the chain renders — «обновите платформу» items and the time estimate
+   follow it. «8.3.24» means the line (any build), «8.3.24.1691» a build. */
+function home_platform_hint(v) {
+  const el = document.getElementById('plat-hint');
+  if (!el) return;
+  v = String(v || '').trim();
+  if (!v) { el.textContent = ''; el.classList.remove('bad'); return; }
+  if (!/^\d+\.\d+(\.\d+){0,2}$/.test(v)) {
+    el.textContent = 'не версия — нужно 8.3.24 или 8.3.24.1691';
+    el.classList.add('bad');
+    return;
+  }
+  el.classList.remove('bad');
+  el.textContent = v.split('.').length === 2 ? 'линейка: подойдёт любая сборка' : '';
+}
+function home_platform_input(v) {
+  v = String(v || '').trim();
+  home_platform_hint(v);
+  // Garbage is not stored: /stats reads the same key and would check nonsense.
+  if (/^\d+\.\d+(\.\d+){0,2}$/.test(v) || !v) {
+    try { if (v) localStorage.setItem(PC_KEY, v); else localStorage.removeItem(PC_KEY); } catch (e) {}
+  }
+  // Already-built results follow the field in place — no second request.
+  Object.keys(CHAIN_RENDER_STATE).forEach(id => {
+    const el = document.getElementById(id), st = CHAIN_RENDER_STATE[id];
+    if (el && st) el.outerHTML = render_chain_steps(st.steps, st.fromV, st.cfg, st.reversed);
+  });
+}
+async function home_build_chain() {
+  const fromV = document.getElementById('inp-version').value.trim();
+  const toVRaw = document.getElementById('inp-target').value.trim();
+  const result = document.getElementById('home-chain-result');
+  if (!fromV) { toast('Введите текущую версию'); return; }
+
+  const matchesEl = document.getElementById('home-matches');
+  const selectedId = matchesEl?.dataset.selected;
+  const foundIds = (matchesEl?.dataset.found || '').split(',').filter(Boolean);
+
+  let configs_to_check = [];
+  if (selectedId) {
+    configs_to_check = [CONFIGS.find(c => c.id === selectedId)].filter(Boolean);
+  } else if (foundIds.length) {
+    configs_to_check = foundIds.map(id => CONFIGS.find(c => c.id === id)).filter(Boolean);
+  } else {
+    result.innerHTML = `<div class="card card-body">${render_loading('Ищем конфигурацию...')}</div>`;
+    configs_to_check = await find_configs_by_version_api(fromV);
+    if (!configs_to_check.length) {
+      result.innerHTML = `<div class="card card-body fade-up"><div class="empty"><p>Версия <code style="font-family:var(--mono)">${fromV}</code> не найдена в базе данных</p></div></div>`;
+      return;
+    }
+  }
+
+  result.innerHTML = `<div class="card card-body">${render_loading('Строим цепочку...')}</div>`;
+  home_extra_sync();
+  await Promise.all(configs_to_check.map(c => loadVersionsForConfig(c.id)));
+
+  // The likeliest chain goes first and open; the rest wait behind one button. A version like
+  // 3.0.207.25 is shared by a dozen configurations, and ten open chains put the answer
+  // eight screens down — the button also tells the user that there were more.
+  const rank = c => (selectedId && c.id === selectedId ? -2 : FAV.has(c.id) ? -1 : c.isLatestEdition ? 0 : 1);
+  configs_to_check = [...configs_to_check].sort((a, b) => rank(a) - rank(b));
+
+  let html = '', reached = false;
+  const items = [];
+  for (const cfg of configs_to_check) {
+    const toV = toVRaw || cfg.latestV;
+    if (!toV) continue;
+    let r;
+    try { r = await chain_api(cfg, fromV, toV); }
+    catch(e) { continue; }
+    if (r.found && !reached) { reached = true; goal('chain'); }
+
+    if (r.note && !r.found) {
+      items.push({ html: `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br><span style="color:var(--text-muted);font-size:14px">${r.note}</span></div></div>` });
+      continue;
+    }
+    if (!r.found) {
+      const msg = r.length === 0
+        ? `<span style="color:var(--green)">${icn_check()} Версия ${fromV} уже является актуальной</span>`
+        : `<span style="color:var(--text-muted)">Цепочка не найдена</span>`;
+      items.push({ html: `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br>${msg}</div></div>` });
+      continue;
+    }
+    const steps = chain_response_to_steps(r, cfg);
+    if (!steps?.length) continue;
+    CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
+    items.push({ html: `<div style="margin-bottom:24px">${render_chain_steps(steps, fromV, cfg)}</div>`, chain: true });
+  }
+  if (items.length > 1) {
+    const rest = items.slice(1);
+    const word = items.length % 10 === 1 && items.length % 100 !== 11 ? 'конфигурации'
+      : items.length % 10 >= 2 && items.length % 10 <= 4 && (items.length % 100 < 10 || items.length % 100 >= 20) ? 'конфигураций' : 'конфигураций';
+    html = `<div class="results-note">Версия <code>${esc_html(fromV)}</code> есть у ${items.length} ${word} — открыта самая вероятная, остальные ${rest.length} ниже.</div>`
+      + items[0].html
+      + `<button class="btn btn-secondary more-chains-btn" onclick="home_more_toggle(this)" data-more="${rest.length}">
+           Ещё ${rest.length} ${rest.length % 10 === 1 && rest.length % 100 !== 11 ? 'цепочка' : 'цепочек'} этой версии ↓
+         </button>
+         <div id="home-more-chains" hidden>${rest.map(i => i.html).join('')}</div>`;
+  } else {
+    html = items.map(i => i.html).join('');
+  }
+  // A chain was built — the query is worth remembering for the next visit.
+  if (reached) {
+    hist_put('ver', fromV);
+    if (toVRaw) hist_put('ver', toVRaw);
+    const nameInp = document.getElementById('inp-name');
+    if (nameInp) hist_put('name', nameInp.value);
+  }
+  result.innerHTML = html || `<div class="empty"><p>Цепочка не найдена</p></div>`;
+  // The hero is ~700 px tall, so without this nothing visibly happens after «Построить».
+  if (html && result.getBoundingClientRect().top > innerHeight * 0.6) {
+    result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+function home_more_toggle(btn) {
+  const box = document.getElementById('home-more-chains');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  const n = btn.dataset.more;
+  btn.innerHTML = box.hidden ? `Ещё ${n} ${n === '1' ? 'цепочка' : 'цепочек'} этой версии ↓` : 'Свернуть ↑';
+}
+
+/* ================================================================
+   SCRIPTS — download and apply an update chain / install a platform
+   build on the user's own machine (server: scripts.ts, /api/script/*)
+   ================================================================ */
+let SCRIPT_DLG = null;   // { kind: 'chain'|'platform', os, ... }
+function script_default_os() {
+  return /Linux|X11/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent) ? 'linux' : 'windows';
+}
+function linux_installer_ok(v) {          // the unified Linux installer exists from 8.3.20 on
+  const [a, b, c] = v.split('.').map(Number);
+  return a > 8 || (a === 8 && (b > 3 || (b === 3 && c >= 20)));
+}
+function open_chain_script(cfgId, fromV, toV, count) {
+  const cfg = CONFIGS.find(c => c.id === String(cfgId));
+  if (!cfg) return;
+  const slug = (cfg.templateCode || '').split(/[\\/]/).pop().replace(/[^A-Za-z0-9_-]/g, '') || 'config' + cfg.id;
+  SCRIPT_DLG = { kind: 'chain', os: script_default_os(), cfgId: cfg.id, fromV, toV, count, name: cfg.name,
+    base: `updatecon-${slug}-${fromV}-${toV}`, partner: !/^1c\//i.test(cfg.templateCode || '') };
+  script_dialog_render();
+}
+function open_platform_script(version) {
+  SCRIPT_DLG = { kind: 'platform', os: script_default_os(), version, base: `updatecon-platform-${version}` };
+  if (SCRIPT_DLG.os === 'linux' && !linux_installer_ok(version)) SCRIPT_DLG.os = 'windows';
+  script_dialog_render();
+}
+function script_set_os(os) { if (SCRIPT_DLG) { SCRIPT_DLG.os = os; script_dialog_render(); } }
+function script_dialog_render() {
+  const d = SCRIPT_DLG;
+  let dlg = document.getElementById('script-dlg');
+  if (!dlg) {
+    dlg = document.createElement('dialog');
+    dlg.id = 'script-dlg'; dlg.className = 'sdlg';
+    dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });   // a click on the backdrop
+    document.body.appendChild(dlg);
+  }
+  const win = d.os === 'windows';
+  const file = d.base + (win ? '.ps1' : '.sh');
+  const chain = d.kind === 'chain';
+  const href = chain
+    ? `/api/script/chain?os=${d.os}&config_id=${encodeURIComponent(d.cfgId)}&from=${encodeURIComponent(d.fromV)}&to=${encodeURIComponent(d.toV)}`
+    : `/api/script/platform?os=${d.os}&version=${encodeURIComponent(d.version)}`;
+  const linuxOff = !chain && !linux_installer_ok(d.version);
+  const run = win
+    ? `powershell -ExecutionPolicy Bypass -File .\\${file}`
+    : (chain ? `bash ${file}` : `sudo bash ${file}`);
+  const what = chain ? [
+    `Скачает ${d.count} ${ru_plural(d.count, 'файл', 'файла', 'файлов')} обновлений с сервера 1С под вашей учётной записью ИТС. Логин и пароль скрипт спросит при запуске и отправит только на сервер 1С.`,
+    'Сделает выгрузку базы (.dt), чтобы можно было откатиться.',
+    'Поставит обновления по порядку в пакетном режиме конфигуратора и обновит конфигурацию базы данных.',
+    'Запустит базу, чтобы выполнились обработчики обновления. При ошибке остановится и покажет журнал.',
+  ] : [
+    `Войдёт на портал 1С под вашей учётной записью ИТС и скачает дистрибутив платформы ${d.version} (64-bit) для ${win ? 'Windows' : 'Linux'}. Логин и пароль скрипт спросит при запуске.`,
+    win ? 'Установит без вопросов клиент и конфигуратор. С параметром -Server ещё и сервер 1С со службой «Агент сервера».'
+        : 'Установит без вопросов сервер 1С и модули веб-сервера и включит службу в systemd. С параметром --client ещё и клиент с конфигуратором.',
+    'Уже установленные версии платформы не удаляются.',
+  ];
+  const notes = chain ? [
+    'Запускайте на компьютере, где установлена платформа 1С и есть доступ к базе: файловой или на сервере.',
+    'Все пользователи должны выйти из базы. Нужен пользователь базы с административными правами.',
+    'Доработанные конфигурации скрипт не обновит, их обновляют вручную в конфигураторе.',
+    d.partner ? 'Это партнёрское решение: файлы обновлений скачиваются только при подписке на этот продукт.' : '',
+    win ? '' : 'Без графического сеанса нужен xvfb (apt install xvfb).',
+  ] : [
+    win ? 'Запускайте PowerShell от имени администратора. Для распаковки .rar нужен Windows 11 или 7-Zip.'
+        : 'Нужны права root. Скрипт ставит зависимости через apt или dnf.',
+  ];
+  const opts = chain
+    ? (win ? '<code>-Base "C:\\Bases\\Buh"</code> или <code>-Server srv1c -Ref buh</code>, <code>-User</code>, <code>-NoBackup</code>, <code>-DownloadOnly</code> — только скачать файлы.'
+           : '<code>--base /srv/1c/buh</code> или <code>--server srv1c --ref buh</code>, <code>--user</code>, <code>--no-backup</code>, <code>--download-only</code> — только скачать файлы.')
+    : (win ? '<code>-Server</code> — ещё и сервер 1С, <code>-DryRun</code> — только проверить вход на портал, ничего не скачивая.'
+           : '<code>--client</code> — ещё и клиент, <code>--no-service</code> — не включать службу, <code>--dry-run</code> — только проверить вход на портал.');
+  dlg.innerHTML = `<div class="sdlg-body">
+    <div class="sdlg-head">
+      <div><div class="sdlg-title">${chain ? 'Скрипт обновления' : 'Скрипт установки платформы'}</div>
+        <div class="sdlg-sub">${chain ? `${esc_html(d.name)}: <span class="mono">${esc_html(d.fromV)} → ${esc_html(d.toV)}</span>` : `1С:Предприятие <span class="mono">${esc_html(d.version)}</span>`}</div></div>
+      <button type="button" class="sdlg-close" onclick="this.closest('dialog').close()" aria-label="Закрыть">×</button>
+    </div>
+    <div class="sdlg-tabs" role="tablist" aria-label="Операционная система">
+      <button type="button" role="tab" aria-selected="${win}" onclick="script_set_os('windows')">Windows</button>
+      <button type="button" role="tab" aria-selected="${!win}" onclick="script_set_os('linux')"${linuxOff ? ' disabled title="Для Linux — сборки 8.3.20 и новее: в старых нет единого установщика"' : ''}>Linux</button>
+    </div>
+    <div><div class="sdlg-label">Что сделает скрипт</div><ol>${what.map(t => `<li>${t}</li>`).join('')}</ol></div>
+    <div><div class="sdlg-label">Как запустить</div>
+      <div class="sdlg-run"><code id="sdlg-cmd">${esc_html(run)}</code><button type="button" class="btn btn-secondary btn-sm" onclick="script_copy_cmd(this)">Копировать</button></div>
+      <div class="sdlg-opts" style="margin-top:8px">Параметры: ${opts} Без параметров скрипт сам спросит всё нужное.</div>
+    </div>
+    <ul>${notes.filter(Boolean).map(t => `<li>${t}</li>`).join('')}</ul>
+    <div class="sdlg-actions">
+      <a class="btn btn-primary" href="${href}" download="${file}" onclick="goal('${chain ? 'script_chain' : 'script_platform'}')">${icn_dl()} Скачать ${file.slice(-3) === '.sh' ? '.sh' : '.ps1'}</a>
+      <span class="sdlg-note">Скрипт откроется в любом редакторе: в нём нет ничего скрытого.</span>
+    </div>
+  </div>`;
+  if (!dlg.open) dlg.showModal();
+}
+function script_copy_cmd(btn) {
+  const t = document.getElementById('sdlg-cmd').textContent;
+  navigator.clipboard.writeText(t).then(() => { btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1500); })
+    .catch(() => prompt('Скопируйте команду:', t));
+}
+
+/* ================================================================
+   CATALOG VIEW
+   ================================================================ */
+// ── Catalog state ──────────────────────────────────────────────────────────
+// Mirrored into the URL (/catalog?line=БУХ&region=kz…): "back" from a card
+// restores the filters, and a filtered catalog can be shared as a link.
+const CAT_SEP = '|';
+let CAT = null;          // current catalog state
+const CAT_PORTION = 90;  // cards rendered at once: 530 cards = 91 screens and 15k nodes
+let CAT_SHOWN = CAT_PORTION, CAT_SIG = '';
+let CAT_URL = '';       // URL of the catalog as last written
+let CAT_SCROLL = null;   // { hash, y } — where the user left the catalog
+
+function catalog_state(params) {
+  const list = k => params[k] ? params[k].split(CAT_SEP).filter(Boolean) : [];
+  return {
+    q: params.q || '', lines: list('line'), industries: list('ind'), tasks: list('task'), levels: list('level'),
+    platforms: list('plat'), ages: list('age'), trans: list('trans'), lts: list('lts'), regions: list('region'), orgs: list('org'), types: list('type'),
+    vendors: list('vendor'), legacy: params.legacy === '1', stale: params.stale === '1', fav: params.fav === '1', sort: params.sort || 'main',
+    vendorQuery: '', vendorsAll: false, industriesAll: false, regionsAll: false, panelOpen: false,
+  };
+}
+function catalog_sync_url() {
+  const parts = [];
+  const add = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
+  add('q', CAT.q.trim()); add('line', CAT.lines.join(CAT_SEP)); add('level', CAT.levels.join(CAT_SEP));
+  add('plat', CAT.platforms.join(CAT_SEP)); add('age', CAT.ages.join(CAT_SEP)); add('ind', CAT.industries.join(CAT_SEP));
+  add('task', CAT.tasks.join(CAT_SEP)); add('org', CAT.orgs.join(CAT_SEP)); add('trans', CAT.trans.join(CAT_SEP));
+  add('lts', CAT.lts.join(CAT_SEP));
+  add('region', CAT.regions.join(CAT_SEP));
+  add('type', CAT.types.join(CAT_SEP)); add('vendor', CAT.vendors.join(CAT_SEP));
+  if (CAT.legacy) parts.push('legacy=1');
+  if (CAT.fav) parts.push('fav=1');
+  if (CAT.stale) parts.push('stale=1');
+  if (CAT.sort !== 'main') add('sort', CAT.sort);
+  CAT_URL = '/catalog' + (parts.length ? '?' + parts.join('&') : '');
+  // replaceState: no popstate → no re-render, the search box keeps focus.
+  if (current_url() !== CAT_URL) history.replaceState(null, '', CAT_URL);
+}
+
+// Facets: each one is matched against the others, so counts stay honest
+// ("Казахстан" selected → "БУХ" shows how many БУХ there are for Kazakhstan).
+const CAT_FACETS = {
+  lines:   (c, v) => c.tags.some(t => v.includes(t.tag)),   // the line itself + solutions built on it
+  levels:  (c, v) => v.includes(c.level),
+  platforms: (c, v) => v.includes(c.platform || 'none'),   // 'none' = не определена
+  ages:    (c, v) => v.includes(release_age(c)),
+  trans:   (c, v) => c.transOut.some(k => v.includes(k)),
+  lts:     (c, v) => !!c.ltsVersion && !lts_ended(c) && v.includes('yes'),
+  regions: (c, v) => c.allRegions || c.regions.some(r => v.includes(r)),   // "Для всех стран" fits any region
+  industries: (c, v) => c.sol.industries.some(x => v.includes(x)),
+  tasks:   (c, v) => c.sol.tasks.some(x => v.includes(x)),
+  orgs:    (c, v) => c.sol.orgTypes.some(x => v.includes(x)),
+  types:   (c, v) => v.includes(c.type),
+  vendors: (c, v) => v.includes(c.vendorName.toLowerCase()),
+};
+function cfg_matches_search(c, q) {
+  return (c.name || '').toLowerCase().includes(q)
+    || (c.configName || '').toLowerCase().includes(q)
+    || (c.vendor || '').toLowerCase().includes(q)
+    || c.vendorName.toLowerCase().includes(q)
+    || c.sol.industries.some(x => x.toLowerCase().includes(q))
+    || c.sol.tasks.some(x => x.toLowerCase().includes(q))
+    || c.templateKey.includes(q)
+    || c.tags.some(t => t.tag.toLowerCase() === q)
+    || (c.level && LEVEL_LABEL[c.level].toLowerCase().startsWith(q) && q.length >= 3);
+}
+// What the list shows. Previous editions and stale products are hidden unless
+// their toggle is on — but a search finds them anyway (someone on БП 2.0 or
+// "Бухгалтерия для Крыма 2014" must find their configuration). mode
+// 'legacy' / 'stale' = what that toggle would add (for its count).
+function catalog_base(mode) {
+  const q = CAT.q.trim().toLowerCase();
+  return CONFIGS.filter(c => {
+    if (q && !cfg_matches_search(c, q)) return false;
+    if (mode === 'legacy') return !c.isLatestEdition;
+    if (mode === 'stale') return c.isLatestEdition && c.stale;
+    if (CAT.fav) return fav_has(c.id);   // «★ Мои»: every starred edition, old or stale included
+    return !!q || ((c.isLatestEdition || CAT.legacy) && (!c.stale || CAT.stale));
+  });
+}
+function catalog_filter(base, except) {
+  return base.filter(c => Object.keys(CAT_FACETS).every(f =>
+    f === except || !CAT[f].length || CAT_FACETS[f](c, CAT[f])));
+}
+function count_by(list, keysOf) {
+  const m = new Map();
+  list.forEach(c => keysOf(c).forEach(k => m.set(k, (m.get(k) || 0) + 1)));
+  return m;
+}
+
+function render_catalog() {
+  CAT = catalog_state(parse_route().params);
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Каталог конфигураций</div></div>
+    <div class="catalog-layout">
+      <aside class="filters-panel fade-up" id="filters-panel">
+        <div class="filters-title">
+          <span>${icn_filter()} Фильтры</span>
+          <button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить</button>
+        </div>
+        <!-- What people pick most, as compact chips; the rest folds into "Ещё фильтры". -->
+        <div class="filter-group"><div class="fchips"><button type="button" id="f-fav" class="fchip" onclick="CAT.fav=!CAT.fav; apply_filters()">★ Мои конфигурации</button></div></div>
+        <div class="filter-group"><div class="filter-group-label">Тип</div><div id="f-types" class="fchips"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Линейка</div><div id="f-lines" class="fchips"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Страна</div><div id="f-regions"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Платформа</div><div id="f-platforms" class="fchips"></div></div>
+        <div class="filter-group"><div class="filter-group-label">Уровень</div><div id="f-levels" class="fchips"></div></div>
+        <div class="filter-group">
+          <div class="filter-group-label">Разработчик</div>
+          <input class="input filter-search" id="f-vendor-q" placeholder="Найти разработчика…" autocomplete="off"
+                 oninput="CAT.vendorQuery=this.value; render_facets()">
+          <div id="f-vendors"></div>
+        </div>
+        <div class="filter-group"><div class="filter-group-label">Показывать также</div><div id="f-legacy" class="fchips"></div></div>
+        <details class="filters-more" id="filters-more"${filters_more_open() ? ' open' : ''}>
+          <summary onclick="setTimeout(() => filters_more_save(this.parentNode.open))">
+            <span>Ещё фильтры<span class="filters-more-count" id="f-more-count"></span></span>${icn_chevron_r()}</summary>
+          <div class="filter-group"><div class="filter-group-label">Последний релиз</div><div id="f-ages" class="fchips"></div></div>
+          <div class="filter-group"><div class="filter-group-label">Поддержка и переходы</div><div id="f-features" class="fchips"></div></div>
+          <div class="filter-group" id="g-industries"><div class="filter-group-label">Отрасль</div><div id="f-industries"></div></div>
+          <div class="filter-group" id="g-tasks"><div class="filter-group-label">Задачи</div><div id="f-tasks"></div></div>
+          <div class="filter-group" id="g-orgs"><div class="filter-group-label">Для кого</div><div id="f-orgs"></div></div>
+          <div class="filter-note">Отрасль, задачи и «для кого» — из карточек 1С:Решений, они есть не у всех конфигураций.</div>
+        </details>
+        <button class="btn btn-primary filters-done" id="filters-done" onclick="toggle_filters_panel()">Показать</button>
+      </aside>
+      <div>
+        <div class="catalog-toolbar fade-up">
+          <button class="btn btn-secondary filters-toggle" id="filters-toggle" onclick="toggle_filters_panel()">${icn_filter()} Фильтры</button>
+          <div class="search-wrap" style="flex:1">
+            ${icn_search()}
+            <input class="input search-input" id="catalog-search" placeholder="Название, разработчик, шаблон или линейка (бух, зуп…)"
+                   value="${esc_html(CAT.q)}" autocomplete="off"
+                   oninput="CAT.q=this.value; apply_filters(); cat_hist_show(this.value)"
+                   onkeydown="cat_hist_key(event)" onblur="cat_hist_blur()" onfocus="cat_hist_show(this.value)">
+            <div id="cat-suggest" class="ver-suggest name-suggest" hidden></div>
+          </div>
+          <div class="sort-seg" id="catalog-sort" role="group" aria-label="Сортировка"></div>
+        </div>
+        <div class="catalog-summary" id="catalog-summary"></div>
+        <div id="catalog-grid" class="catalog-grid"></div>
+      </div>
+    </div>
+  </div>`;
+}
+function config_card_html(c) {
+  const freq = c.avg_update_days;
+  const freq_cls = !freq ? 'badge-gray' : freq <= 40 ? 'badge-green' : freq <= 80 ? 'badge-yellow' : 'badge-gray';
+  const freq_text = freq ? `~${freq} дн.` : 'нет данных';
+  return `<div class="card config-card card-clickable fade-up" onclick="cat_hist_record(); navigate('/config/${c.id}')">
+    ${fav_btn(c.id)}
+    <div class="config-card-body">
+      <div class="config-card-top">
+        ${config_avatar(c)}
+        <div>
+          <div class="config-card-name">${c.name}</div>
+          <div class="config-card-short">${esc_html(c.vendorName)}${c.edition ? ' · ред. ' + c.edition : ''}</div>
+        </div>
+      </div>
+      <div class="config-card-badges">
+        ${tag_chips(c)}
+        ${level_badge(c)}
+        ${platform_badge(c)}
+        ${stale_badge(c)}
+        ${region_badge(c, false)}
+        ${lts_badge(c)}
+        ${trans_badge(c)}
+        ${type_badge(c.type)}
+        ${c.status !== 'active' ? status_badge(c.status) : ''}
+        <span class="badge ${freq_cls}">${icn_clock()} ${freq_text}</span>
+      </div>
+      <div class="config-card-desc">${c.sol.industries.length ? 'Отрасль: ' + esc_html(c.sol.industries.join(', '))
+        : c.sol.tasks.length ? 'Задачи: ' + esc_html(c.sol.tasks.join(', ')) : (c.description || c.short || c.name)}</div>
+    </div>
+    <div class="config-card-footer">
+      <div>
+        <div class="config-card-version">${c.latestV || '—'}</div>
+        <div class="config-card-date">${c.latestDate ? fmt_date(c.latestDate) + ' · ' + days_ago(c.latestDate) : '—'}</div>
+      </div>
+      <div class="config-card-platform">${c.latestPlat ? 'Платформа ≥ ' + c.latestPlat : ''}</div>
+    </div>
+  </div>`;
+}
+function bind_catalog() { apply_filters(); }
+
+// Sort buttons; a second click on Новые / А–Я flips the direction.
+const SORTS = [
+  { key: 'main', modes: ['main'], label: () => 'Основные', title: 'Типовые вашей страны, затем отраслевые и партнёрские, затем другие страны' },
+  { key: 'date', modes: ['date_desc', 'date_asc'], label: m => m === 'date_asc' ? 'Старые' : 'Новые', title: 'По дате выхода последней версии' },
+  { key: 'name', modes: ['name_asc', 'name_desc'], label: m => m === 'name_desc' ? 'Я–А' : 'А–Я', title: 'По названию' },
+  { key: 'freq', modes: ['freq_asc'], label: () => 'Частые', title: 'Чаще всего выходят обновления' },
+];
+function render_sort() {
+  const el = document.getElementById('catalog-sort');
+  if (!el) return;
+  el.innerHTML = SORTS.map(s => {
+    const on = s.modes.includes(CAT.sort);
+    return `<button class="${on ? 'active' : ''}" title="${s.title}" onclick="set_sort('${s.key}')">${s.label(on ? CAT.sort : s.modes[0])}</button>`;
+  }).join('');
+}
+function set_sort(key) {
+  const s = SORTS.find(x => x.key === key);
+  const i = s.modes.indexOf(CAT.sort);
+  CAT.sort = i >= 0 ? s.modes[(i + 1) % s.modes.length] : s.modes[0];
+  apply_filters();
+}
+function toggle_filters_panel() {
+  CAT.panelOpen = !CAT.panelOpen;
+  const p = document.getElementById('filters-panel');
+  if (p) p.classList.toggle('open', CAT.panelOpen);
+  // The sheet covers the page on phones: keep the page itself from scrolling under it.
+  document.body.style.overflow = CAT.panelOpen && window.innerWidth <= 900 ? 'hidden' : '';
+  if (!CAT.panelOpen) window.scrollTo({ top: 0, behavior: 'instant' });
+}
+function toggle_facet(field, value) {
+  const i = CAT[field].indexOf(value);
+  if (i >= 0) CAT[field].splice(i, 1); else CAT[field].push(value);
+  apply_filters();
+}
+function remove_filter(field, value) {
+  if (field === 'q') { CAT.q = ''; const s = document.getElementById('catalog-search'); if (s) s.value = ''; }
+  else if (field === 'legacy') CAT.legacy = false;
+  else if (field === 'fav') CAT.fav = false;
+  else if (field === 'stale') CAT.stale = false;
+  else CAT[field] = CAT[field].filter(v => v !== value);
+  apply_filters();
+}
+function reset_filters() {
+  const keep = { sort: CAT.sort, panelOpen: CAT.panelOpen };
+  CAT = Object.assign(catalog_state({}), keep);
+  const s = document.getElementById('catalog-search'); if (s) s.value = '';
+  const vq = document.getElementById('f-vendor-q'); if (vq) vq.value = '';
+  apply_filters();
+}
+
+// Short enumerations as toggle chips: a whole group fits in a line or two.
+function facet_chip(field, value, label, count, title) {
+  const on = CAT[field].includes(value);
+  return `<button type="button" class="fchip${on ? ' on' : ''}${count === 0 && !on ? ' is-empty' : ''}" aria-pressed="${on}"`
+    + ` data-v="${esc_html(value)}" onclick="toggle_facet('${field}', this.dataset.v)"${title ? ` title="${esc_html(title)}"` : ''}>`
+    + `${esc_html(label)}<span>${count}</span></button>`;
+}
+// "Ещё фильтры": open when one of its filters is on (a link from the stats
+// page), otherwise as the visitor left it.
+const MORE_FIELDS = ['ages', 'lts', 'trans', 'industries', 'tasks', 'orgs'];
+function filters_more_active() { return MORE_FIELDS.reduce((n, f) => n + CAT[f].length, 0); }
+function filters_more_open() {
+  if (filters_more_active()) return true;
+  try { return localStorage.getItem('uc_more_filters') === '1'; } catch (e) { return false; }
+}
+function filters_more_save(open) { try { localStorage.setItem('uc_more_filters', open ? '1' : '0'); } catch (e) {} }
+
+function facet_opt(field, value, label, count, title) {
+  const on = CAT[field].includes(value);
+  return `<label class="filter-opt${count === 0 && !on ? ' is-empty' : ''}"${title ? ` title="${esc_html(title)}"` : ''}>`
+    + `<input type="checkbox"${on ? ' checked' : ''} data-v="${esc_html(value)}" onchange="toggle_facet('${field}', this.dataset.v)">`
+    + ` <span class="filter-opt-label">${esc_html(label)}</span> <span class="filter-opt-count">${count}</span></label>`;
+}
+
+function render_facets() {
+  const base = catalog_base();
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+
+  // Линейка — dictionary order; hide lines with nothing in them (unless selected).
+  const lineCnt = count_by(catalog_filter(base, 'lines'), c => c.tags.map(t => t.tag));
+  set('f-lines', TAG_DICT
+    .filter(d => lineCnt.get(d.tag) || CAT.lines.includes(d.tag))
+    .sort((a, b) => (lineCnt.get(b.tag) || 0) - (lineCnt.get(a.tag) || 0))
+    .map(d => facet_chip('lines', d.tag, d.tag, lineCnt.get(d.tag) || 0, d.title + ' — сама линейка и решения на её базе'))
+    .join('') || '<span class="fchips-empty">нет</span>');
+
+  // Платформа — newest first; "не определена" last (partner packages the ITS
+  // account can't read and without a releases.1c.ru project).
+  const platCnt = count_by(catalog_filter(base, 'platforms'), c => [c.platform || 'none']);
+  CAT.platforms.forEach(p => { if (!platCnt.has(p)) platCnt.set(p, 0); });
+  const plats = [...platCnt.keys()].filter(p => p !== 'none').sort((a, b) => platform_cmp(b, a));
+  if (platCnt.has('none')) plats.push('none');
+  set('f-platforms', plats
+    .map(p => p === 'none'
+      ? facet_chip('platforms', p, 'не определена', platCnt.get(p) || 0, 'Нет проекта на releases.1c.ru (партнёрские, БАС-линейка) — минимальной платформы нет в данных')
+      : facet_chip('platforms', p, p, platCnt.get(p) || 0, 'Платформа 1С:Предприятие ' + p + (p === PLATFORM_NEWEST ? ' (новая)' : '') + ' — по последней версии конфигурации'))
+    .join('') || '<span class="fchips-empty">нет данных</span>');
+
+  // Последний релиз — fixed order, empty buckets hidden unless selected.
+  const ageCnt = count_by(catalog_filter(base, 'ages'), c => [release_age(c)]);
+  set('f-ages', RELEASE_AGES.filter(a => ageCnt.get(a.key) || CAT.ages.includes(a.key))
+    .map(a => facet_chip('ages', a.key, a.label, ageCnt.get(a.key) || 0, 'Последний релиз — ' + a.ago)).join('')
+    || '<span class="fchips-empty">нет данных</span>');
+
+  const ltsCnt = catalog_filter(base, 'lts').filter(c => c.ltsVersion && !lts_ended(c)).length;
+  const trCnt = count_by(catalog_filter(base, 'trans'), c => c.transOut);
+  // "на новую редакцию" starts from older editions — hidden unless they are shown.
+  set('f-features', facet_chip('lts', 'yes', 'ветка ДП', ltsCnt, 'Версия с длительной поддержкой (ДП) параллельно основной ветке')
+    + [['product', 'переход на другой продукт'], ['edition', 'переход на новую редакцию']]
+      .filter(([k]) => trCnt.get(k) || CAT.trans.includes(k))
+      .map(([k, l]) => facet_chip('trans', k, l, trCnt.get(k) || 0, 'Есть пакет обновления: ' + l)).join(''));
+
+  const lvlCnt = count_by(catalog_filter(base, 'levels'), c => c.level ? [c.level] : []);
+  set('f-levels', ['base', 'prof', 'corp']
+    .map(l => facet_chip('levels', l, LEVEL_LABEL[l], lvlCnt.get(l) || 0)).join(''));
+
+  // Регион — Россия first, then by size. "Для всех стран" products count for every
+  // region (that is what selecting one would show) and have an option of their own.
+  const regBase = catalog_filter(base, 'regions');
+  const allCnt = regBase.filter(c => c.allRegions).length;
+  const regCnt = count_by(regBase.filter(c => !c.allRegions), c => c.regions);
+  CAT.regions.forEach(r => { if (r !== 'all' && !regCnt.has(r)) regCnt.set(r, 0); });
+  // My country first, then the selected ones, then by size; four + "все страны".
+  const mine = pref_country();
+  let regs = [...regCnt.entries()]
+    .sort((a, b) => (b[0] === mine) - (a[0] === mine) || CAT.regions.includes(b[0]) - CAT.regions.includes(a[0]) || b[1] - a[1]);
+  const REG_LIMIT = 4;
+  const regHidden = CAT.regionsAll ? 0 : Math.max(0, regs.length - REG_LIMIT);
+  if (regHidden) regs = regs.slice(0, REG_LIMIT);
+  set('f-regions', regs.map(([r, n]) => facet_opt('regions', r, region_label(r), n + allCnt)).join('')
+    + (allCnt || CAT.regions.includes('all') ? facet_opt('regions', 'all', 'Для всех стран', allCnt, 'Продукты без привязки к стране — они есть в каждой стране') : '')
+    + (regHidden ? `<button class="filter-more" onclick="CAT.regionsAll=true; render_facets()">Все страны (${regHidden + REG_LIMIT})</button>`
+      : CAT.regionsAll ? `<button class="filter-more" onclick="CAT.regionsAll=false; render_facets()">Свернуть</button>` : ''));
+
+  // Отрасль / Задачи / Для кого — from 1С:Решения; groups hide when nobody has data.
+  const facetList = (field, keysOf, opts) => {
+    const cnt = count_by(catalog_filter(base, field), keysOf);
+    CAT[field].forEach(v => { if (!cnt.has(v)) cnt.set(v, 0); });
+    let entries = [...cnt.entries()].sort((a, b) => CAT[field].includes(b[0]) - CAT[field].includes(a[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
+    const limit = opts && opts.limit, allFlag = opts && opts.allFlag;
+    const hidden = limit && !CAT[allFlag] ? Math.max(0, entries.length - limit) : 0;
+    if (hidden) entries = entries.slice(0, limit);
+    return { total: cnt.size, html: entries.map(([v, n]) => facet_opt(field, v, v, n)).join('')
+      + (hidden ? `<button class="filter-more" onclick="CAT.${allFlag}=true; render_facets()">Показать все (${hidden + limit})</button>`
+        : limit && CAT[allFlag] ? `<button class="filter-more" onclick="CAT.${allFlag}=false; render_facets()">Свернуть</button>` : '') };
+  };
+  const showGroup = (id, r) => { const g = document.getElementById(id); if (g) g.style.display = r.total ? '' : 'none'; };
+  const ind = facetList('industries', c => c.sol.industries, { limit: 6, allFlag: 'industriesAll' });
+  set('f-industries', ind.html); showGroup('g-industries', ind);
+  const tsk = facetList('tasks', c => c.sol.tasks);
+  set('f-tasks', tsk.html); showGroup('g-tasks', tsk);
+  const org = facetList('orgs', c => c.sol.orgTypes);
+  set('f-orgs', org.html); showGroup('g-orgs', org);
+
+  const typeCnt = count_by(catalog_filter(base, 'types'), c => [c.type]);
+  set('f-types', ['standard', 'industry', 'partner', 'library', 'tech'].filter(t => typeCnt.get(t) || CAT.types.includes(t))
+    .map(t => facet_chip('types', t, { standard: 'Типовые', industry: 'Отраслевые', partner: 'Партнёрские', library: 'Библиотеки', tech: 'Технологические' }[t], typeCnt.get(t) || 0,
+      { standard: 'Типовые решения фирмы 1С', industry: 'Отраслевые решения (1С и партнёры)', partner: 'Конфигурации партнёров', library: 'Стандартные библиотеки для разработчиков (БСП, БЭД…)', tech: 'Инструменты разработчика: проверка конфигураций, конвертация данных' }[t])).join(''));
+
+  // Разработчик — ~300 of them: search box, top 8, "show all"; selected ones always visible.
+  // Keyed by the cleaned name, case-insensitively ("1С-Рарус" = "1С-РАРУС").
+  const venBase = catalog_filter(base, 'vendors');
+  const venCnt = count_by(venBase, c => [c.vendorName.toLowerCase()]);
+  const venLabel = new Map();
+  venBase.forEach(c => { if (!venLabel.has(c.vendorName.toLowerCase())) venLabel.set(c.vendorName.toLowerCase(), c.vendorName); });
+  CAT.vendors.forEach(v => { if (!venCnt.has(v)) venCnt.set(v, 0); });
+  const vq = CAT.vendorQuery.trim().toLowerCase();
+  let vendors = [...venCnt.entries()]
+    .filter(([v, n]) => (n > 0 || CAT.vendors.includes(v)) && (!vq || v.includes(vq)))
+    .sort((a, b) => CAT.vendors.includes(b[0]) - CAT.vendors.includes(a[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
+  const LIMIT = 4;
+  const hidden = vq || CAT.vendorsAll ? 0 : Math.max(0, vendors.length - LIMIT);
+  if (hidden) vendors = vendors.slice(0, LIMIT);
+  set('f-vendors', (vendors.map(([v, n]) => facet_opt('vendors', v, venLabel.get(v) || v, n)).join('')
+      || '<div class="filter-opt is-empty">никого не нашлось</div>')
+    + (hidden ? `<button class="filter-more" onclick="CAT.vendorsAll=true; render_facets()">Показать все (${hidden + LIMIT})</button>`
+      : CAT.vendorsAll && !vq ? `<button class="filter-more" onclick="CAT.vendorsAll=false; render_facets()">Свернуть</button>` : ''));
+
+  const moreN = filters_more_active();
+  set('f-more-count', moreN ? ' · ' + moreN : '');
+  const more = document.getElementById('filters-more');
+  if (more && moreN && !more.open) more.open = true;
+
+  const legacyCnt = catalog_filter(catalog_base('legacy'), null).length;
+  const staleCnt = catalog_filter(catalog_base('stale'), null).length;
+  const flag = (key, label, n, title) => `<button type="button" class="fchip${CAT[key] ? ' on' : ''}${n === 0 && !CAT[key] ? ' is-empty' : ''}"
+      aria-pressed="${CAT[key]}" onclick="CAT.${key}=!CAT.${key}; apply_filters()" title="${title}">${label}<span>${n}</span></button>`;
+  set('f-legacy', flag('legacy', 'предыдущие редакции', legacyCnt, 'Старые редакции продуктов (БП 2.0, УТ 10…) — скрыты по умолчанию')
+    + flag('stale', 'устаревшие', staleCnt, 'Платформа 8.2 или нет новых версий больше 1,5 лет — скрыты по умолчанию'));
+}
+
+function catalog_show_more() {
+  CAT_SHOWN += CAT_PORTION;
+  apply_filters();
+}
+function render_summary(found, shown) {
+  const chips = [];
+  const chip = (field, value, label) => chips.push(
+    `<button class="filter-chip" data-v="${esc_html(value)}" onclick="remove_filter('${field}', this.dataset.v)" title="Убрать фильтр">${esc_html(label)} ✕</button>`);
+  if (CAT.q.trim()) chip('q', '', '«' + CAT.q.trim() + '»');
+  CAT.lines.forEach(v => chip('lines', v, v));
+  CAT.industries.forEach(v => chip('industries', v, v));
+  CAT.tasks.forEach(v => chip('tasks', v, v));
+  CAT.levels.forEach(v => chip('levels', v, LEVEL_LABEL[v]));
+  CAT.platforms.forEach(v => chip('platforms', v, v === 'none' ? 'Платформа не определена' : 'Платформа ' + v));
+  CAT.ages.forEach(v => chip('ages', v, 'Релиз: ' + (RELEASE_AGES.find(a => a.key === v) || { label: v }).label));
+  if (CAT.lts.length) chip('lts', 'yes', 'Ветка ДП');
+  CAT.trans.forEach(v => chip('trans', v, v === 'edition' ? 'Переход на новую редакцию' : 'Переход на другой продукт'));
+  CAT.regions.forEach(v => chip('regions', v, v === 'all' ? 'Для всех стран' : region_label(v)));
+  CAT.orgs.forEach(v => chip('orgs', v, v));
+  CAT.types.forEach(v => chip('types', v, type_label(v)));
+  CAT.vendors.forEach(v => chip('vendors', v, (CONFIGS.find(c => c.vendorName.toLowerCase() === v) || { vendorName: v }).vendorName));
+  if (CAT.fav) chip('fav', '', '★ Мои конфигурации');
+  if (CAT.legacy) chip('legacy', '', 'Предыдущие редакции');
+  if (CAT.stale) chip('stale', '', 'Устаревшие');
+  const el = document.getElementById('catalog-summary');
+  if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b>${shown != null && shown < found ? ` · показано ${shown}` : ''}</span>` + chips.join('')
+    + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
+  const favBtn = document.getElementById('f-fav');
+  if (favBtn) { favBtn.classList.toggle('on', CAT.fav); favBtn.setAttribute('aria-pressed', CAT.fav); favBtn.innerHTML = '★ Мои конфигурации<span>' + FAV.size + '</span>'; }
+  const active = (CAT.fav ? 1 : 0) + CAT.lines.length + CAT.industries.length + CAT.tasks.length + CAT.orgs.length
+    + CAT.levels.length + CAT.platforms.length + CAT.ages.length + CAT.trans.length + CAT.lts.length + CAT.regions.length + CAT.types.length + CAT.vendors.length + (CAT.legacy ? 1 : 0) + (CAT.stale ? 1 : 0);
+  const t = document.getElementById('filters-toggle');
+  if (t) t.innerHTML = `${icn_filter()} Фильтры${active ? ' (' + active + ')' : ''}`;
+  const done = document.getElementById('filters-done');
+  if (done) done.textContent = `Показать ${found}`;
+}
+
+// "Основные" order (catalog default, also used by the stats tables):
+// group 1 typical of my country, 2 industry/partner of my country, 3 other
+// countries, 4 previous editions, 5 stale. Inside a group: the line's original
+// product first (БП before БНКО), then newest release, then ПРОФ → КОРП → базовая.
+function main_group(c) { return !c.isLatestEdition ? 4 : c.stale ? 5 : !in_pref_country(c) ? 3 : c.type === 'standard' ? 1 : 2; }
+function main_cmp(a, b) {
+  const subRank = c => c.type === 'standard' ? (is_core_product(c) ? 0 : c.tags.some(t => t.kind === 'own') ? 1 : 2) : 3;
+  const levelRank = c => c.level in LEVEL_RANK ? LEVEL_RANK[c.level] : 3;
+  return main_group(a) - main_group(b)
+    || subRank(a) - subRank(b)
+    || new Date(b.latestDate||0) - new Date(a.latestDate||0)
+    || levelRank(a) - levelRank(b)
+    || (a.name||'').localeCompare(b.name||'','ru');
+}
+/* ── Recent queries of the catalog's search field ──
+   Same storage as the home fields (uc_hist_cat), shown while the field is empty:
+   the grid is the answer once you type, so the dropdown is only about starting
+   points. A query is remembered when it led somewhere — Enter, or a card opened
+   from the filtered list. */
+let _catHideTimer = 0;
+function cat_hist_hide() { const b = document.getElementById('cat-suggest'); if (b) { b.hidden = true; b.innerHTML = ''; } }
+function cat_hist_show(q) {
+  const box = document.getElementById('cat-suggest');
+  if (!box) return;
+  clearTimeout(_catHideTimer);
+  q = String(q || '').trim();
+  if (q.length >= 2) { cat_hist_hide(); return; }
+  const rows = hist_rows('cat', q);
+  if (!rows.length) { cat_hist_hide(); return; }
+  box.innerHTML = hist_head_html('cat') + rows.map(v => `<div class="ver-suggest-item hist-item" data-v="${esc_html(v)}">
+      <span class="hist-link" onclick="cat_hist_pick(event, this)">${icn_hist()}<span class="name-suggest-name">${esc_html(v)}</span></span>
+      <span class="hist-del" title="Убрать из истории" onclick="hist_drop_click(event,'cat',this.parentElement.dataset.v)">×</span></div>`).join('');
+  box.hidden = false;
+}
+function cat_hist_blur() {
+  clearTimeout(_catHideTimer);
+  _catHideTimer = setTimeout(() => { if (document.activeElement?.id !== 'catalog-search') cat_hist_hide(); }, 150);
+}
+function cat_hist_pick(ev, el) {
+  ev.preventDefault();
+  const v = el.closest('.hist-item')?.dataset.v || '';
+  const inp = document.getElementById('catalog-search');
+  if (inp) inp.value = v;
+  CAT.q = v;
+  apply_filters();
+  cat_hist_hide();
+}
+function cat_hist_key(e) {
+  if (e.key === 'Escape') { cat_hist_hide(); return; }
+  if (e.key === 'Enter') { hist_put('cat', e.target.value); cat_hist_hide(); }
+}
+/** A card was opened from the filtered catalog: the query did its job. */
+function cat_hist_record() {
+  const inp = document.getElementById('catalog-search');
+  if (inp && CAT.q.trim().length >= 2) hist_put('cat', inp.value);
+}
+function apply_filters() {
+  if (!CAT) return;
+  // A new filter/search/sort starts the list from the first portion again, «показать ещё»
+  // only widens the same result set.
+  const sig = JSON.stringify([CAT.q, CAT.lines, CAT.industries, CAT.tasks, CAT.levels, CAT.platforms, CAT.ages,
+    CAT.trans, CAT.lts, CAT.regions, CAT.orgs, CAT.types, CAT.vendors, CAT.legacy, CAT.stale, CAT.fav, CAT.sort]);
+  if (sig !== CAT_SIG) { CAT_SIG = sig; CAT_SHOWN = CAT_PORTION; }
+  const list = catalog_filter(catalog_base(), null);
+  const visible = list.slice(0, CAT_SHOWN);
+
+  // With a line filter on, the line's own products come before the ones built on it.
+  const ownRank = c => CAT.lines.length && c.tags.some(t => t.kind === 'own' && CAT.lines.includes(t.tag)) ? 0 : 1;
+  const sortVal = CAT.sort;
+  // "Основные": groups in this order, each with a header —
+  //   1 typical 1C of my country · 2 industry/partner of my country ·
+  //   3 other countries · 4 previous editions · 5 stale (8.2 / not updated).
+  // Inside a group: the line's original product first (БП before БНКО), then
+  // freshest; siblings released the same day go ПРОФ → КОРП → Базовая.
+  const groupOf = main_group;
+  list.sort((a,b) => {
+    if (sortVal==='main') return main_cmp(a, b);
+    if (CAT.lines.length && ownRank(a) !== ownRank(b)) return ownRank(a) - ownRank(b);
+    if (sortVal==='date_desc') return new Date(b.latestDate||0) - new Date(a.latestDate||0);
+    if (sortVal==='date_asc')  return new Date(a.latestDate||0) - new Date(b.latestDate||0);
+    if (sortVal==='name_asc')  return (a.name||'').localeCompare(b.name||'','ru');
+    if (sortVal==='name_desc') return (b.name||'').localeCompare(a.name||'','ru');
+    if (sortVal==='freq_asc')  return (a.avg_update_days||9999) - (b.avg_update_days||9999);
+    return 0;
+  });
+
+  const grid = document.getElementById('catalog-grid');
+  let html = '';
+  if (sortVal === 'main') {
+    const country = region_label(pref_country());
+    const titles = { 1: 'Типовые 1С · ' + country, 2: 'Отраслевые и партнёрские · ' + country, 3: 'Другие страны',
+      4: 'Предыдущие редакции', 5: 'Устаревшие — 8.2 или нет новых версий больше 1,5 лет' };
+    const counts = {};
+    list.forEach(c => { const g = groupOf(c); counts[g] = (counts[g] || 0) + 1; });
+    let prev = 0;
+    visible.forEach(c => {
+      const g = groupOf(c);
+      if (g !== prev) { html += `<div class="catalog-group-title">${titles[g]} <span>${counts[g]}</span></div>`; prev = g; }
+      html += config_card_html(c);
+    });
+  } else {
+    html = visible.map(config_card_html).join('');
+  }
+  if (grid) {
+    grid.innerHTML = list.length ? html
+      : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте убрать часть фильтров</div></div>`;
+    const more = document.getElementById('catalog-more');
+    if (more) more.remove();
+    if (list.length > visible.length) {
+      const left = list.length - visible.length;
+      const box = document.createElement('div');
+      box.id = 'catalog-more';
+      box.className = 'catalog-more';
+      box.innerHTML = `<button class="btn btn-secondary" onclick="catalog_show_more()">Показать ещё ${Math.min(CAT_PORTION, left)}</button>` +
+        `<div class="catalog-more-sub">показано ${visible.length} из ${list.length}</div>`;
+      grid.after(box);
+    }
+  }
+  render_sort();
+  render_facets();
+  render_summary(list.length, visible.length);
+  catalog_sync_url();
+}
+
+/* ================================================================
+   CONFIG DETAIL VIEW
+   ================================================================ */
+// Product card from 1С:Решения: developer, base, industries, tasks, support line.
+function editions_nav_html(cfg) {
+  if (!cfg.templateKey) return '';
+  var sibs = CONFIGS.filter(function(c) { return c.templateKey === cfg.templateKey; })
+    .sort(function(a, b) { return (b.editionNum || 0) - (a.editionNum || 0); });
+  if (sibs.length < 2) return '';
+  // Inline in the header's sub line: " · Редакции: 3.0 · 2.0"
+  return '<span class="cfg-editions"> · Редакции: ' + sibs.map(function(c) {
+    var label = c.edition || String(c.editionNum);
+    return c.id === cfg.id
+      ? '<strong>' + label + '</strong>'
+      : '<a href="/config/' + c.id + '">' + label + '</a>';
+  }).join(' · ') + '</span>';
+}
+
+function render_config(id) {
+  const cfg = CONFIGS.find(c=>c.id===id);
+  if (!cfg) return `<div class="wrap"><div class="empty"><div class="empty-title">Конфигурация не найдена</div></div></div>`;
+  const SHOW_INIT = 5;
+  const latest = cfg.versions[0] || { v: cfg.latestV, date: cfg.latestDate, plat: cfg.latestPlat };
+
+  let versions_html = '';
+  cfg.versions.forEach((ver, i) => {
+    const hidden = i >= SHOW_INIT;
+    versions_html += `<div class="version-item${hidden?' hidden-version':''}">
+      <div class="version-item-head" onclick="toggle_version('ver-${id}-${i}')">
+        <span class="version-num">${ver.v}</span>
+        <span class="version-date">${ver.date ? fmt_date(ver.date) : '—'}</span>
+        <div class="version-tags">
+          ${ver.req ? `<span class="badge badge-orange">Обязательный</span>` : ''}
+          ${ver.lts ? `<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>` : ''}
+        </div>
+        ${ver.plat ? `<span class="version-size" style="margin-left:auto;font-family:var(--mono);font-size:11px">≥ ${ver.plat}</span>` : ''}
+      </div>
+      <div class="version-body" id="ver-${id}-${i}">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          ${ver.plat ? `<span class="step-platform">Платформа ≥ ${ver.plat}</span>` : ''}
+          ${ver.dl ? `<a href="${ver.dl}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${ver.dl}')">${icn_dl()} ${ver.dl === ver.page ? 'Файлы на releases.1c.ru' : 'Обновление'}</a>` : ''}
+          ${ver.full ? `<a href="${ver.full}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Полный дистрибутив: установка конфигурации и создание новой базы" onclick="handle_dl(event,'${ver.full}')">${icn_dl()} Полный дистрибутив</a>` : ''}
+          ${ver.tech ? `<a href="${ver.tech}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Технологический дистрибутив (для разработчиков)" onclick="handle_dl(event,'${ver.tech}')">${icn_dl()} Технологический</a>` : ''}
+          ${ver.dlIts ? `<a href="${ver.dlIts}" target="_blank" class="btn btn-sm btn-secondary" title="Файл обновления .cfu — как его скачивает конфигуратор">${icn_dl()} downloads.v8.1c.ru</a>` : ''}
+          ${ver.news ? `<a href="${ver.news}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">${icn_link()} Новое в версии</a>` : ''}
+          ${ver.order ? `<a href="${ver.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">${icn_link()} Порядок обновления</a>` : ''}
+          ${ver.page && ver.dl !== ver.page ? `<a href="${ver.page}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Все файлы версии на портале 1С: переходы с других продуктов, ReadMe">${icn_link()} Все файлы</a>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="cfg_build_from_ver('${id}','${ver.v}')">${icn_chevron_r()} Цепочка отсюда</button>
+        </div>
+        ${cfg._meta?.[ver.v]?.news ? `<div class="version-news-wrap"><button type="button" class="step-patches-head" onclick="news_expand('vn-${id}-${i}','${id}','${ver.v}',this)">${icn_chevron_r()} Что нового в ${ver.v}</button><div id="vn-${id}-${i}" class="version-news" hidden></div></div>` : ''}
+        <div id="patches-${id}-${i}"></div>
+      </div>
+    </div>`;
+  });
+  if (cfg.versions.length > SHOW_INIT) {
+    versions_html += `<div class="version-show-more" id="ver-show-more">
+      <button class="btn btn-ghost btn-sm" onclick="show_more_versions()">Показать все ${cfg.versions.length} версии</button>
+    </div>`;
+  }
+  if (!cfg.versions.length) {
+    versions_html = `<div class="empty" style="padding:32px"><p>История версий не загружена</p></div>`;
+  }
+
+  const tab = cfg_tab_current();
+  const nVer = cfg.versions.length || cfg.version_count || 0;
+  const panel = (key, html) => `<div class="cfg-panel" role="tabpanel" id="cfg-panel-${key}" aria-labelledby="cfg-tab-${key}" data-tab="${key}"${key === tab ? '' : ' hidden'}>${html}</div>`;
+  const tabBtn = (key, label, count, hide) => `<button type="button" class="cfg-tab" role="tab" id="cfg-tab-${key}" data-tab="${key}"${hide ? ' hidden' : ''}
+      aria-controls="cfg-panel-${key}" aria-selected="${key === tab}" tabindex="${key === tab ? 0 : -1}"
+      onclick="cfg_set_tab('${id}','${key}')">${label}${count != null ? `<span class="cnt" id="cfg-cnt-${key}">${count}</span>` : ''}</button>`;
+  const latestPlat = latest?.plat || (cfg.platform_min !== '—' ? cfg.platform_min : '') || (cfg.platform ? cfg.platform + '.x' : '');
+
+  return `<div class="wrap">
+    <div class="breadcrumb" style="padding-top:20px">
+      <a href="/catalog">Каталог</a>${icn_chevron_r()}<span>${cfg.name}</span>
+    </div>
+    <div class="config-detail-header fade-up">
+      ${config_detail_avatar(cfg)}
+      <div class="config-detail-info">
+        <div class="config-detail-name">${cfg.name}</div>
+        <div class="config-detail-sub">${esc_html(cfg.vendorName)}${editions_nav_html(cfg) || (cfg.edition ? ' · Редакция ' + cfg.edition : '')}</div>
+        <div class="config-detail-badges">${tag_chips(cfg)} ${level_badge(cfg)} ${platform_badge(cfg)} ${lts_badge(cfg)} ${trans_badge(cfg)} ${type_badge(cfg.type)} ${cfg.status === 'active' ? '' : status_badge(cfg.status)}
+          ${region_badge(cfg, false)}
+        </div>
+        <!-- What people come for, in one line: the newest version and what it needs. -->
+        <div class="cfg-facts">
+          <div><div class="meta-item-label">Последняя версия</div><div class="meta-item-value mono">${latest?.v || '—'}</div>
+            ${latest?.date ? `<div class="meta-item-sub">${fmt_date(latest.date)} · ${days_ago(latest.date)}</div>` : ''}</div>
+          <div><div class="meta-item-label">Платформа</div><div class="meta-item-value mono">${latestPlat
+            ? `<a class="fact-link" href="/platform?build=${encodeURIComponent((String(latestPlat).match(/\d+\.\d+\.\d+\.\d+/) || [''])[0])}" title="Сборки этой линейки, ОС и известные ошибки">≥ ${esc_html(latestPlat)}</a>` : '—'}</div></div>
+          ${cfg.nextReleaseVersion ? `<div><div class="meta-item-label">Следующий релиз</div><div class="meta-item-value mono">${esc_html(cfg.nextReleaseVersion)}</div>${cfg.nextReleasePlannedDate || cfg.nextReleasePlanUpdated ? `<div class="meta-item-sub">${esc_html(cfg.nextReleasePlannedDate || '')}${cfg.nextReleasePlannedDate && cfg.nextReleasePlanUpdated ? ' · ' : ''}${cfg.nextReleasePlanUpdated ? 'план от ' + fmt_date(cfg.nextReleasePlanUpdated) : ''}</div>` : ''}</div>` : ''}
+          ${cfg.ltsVersion ? `<div><div class="meta-item-label">Ветка ДП</div><div class="meta-item-value mono">${esc_html(cfg.ltsLine)}.x</div><div class="meta-item-sub">поддержка до ${fmt_date(cfg.ltsUntil)}${lts_ended(cfg) ? ' (завершена)' : ''}</div></div>` : ''}
+        </div>
+      </div>
+      <div class="config-detail-actions">
+        ${fav_btn(cfg.id, true)}
+        ${cfg.infoUrl ? `<a href="${esc_html(cfg.infoUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Общая информация о конфигурации">${icn_link()} ${info_link_label(cfg.infoUrl)}</a>` : ''}
+        ${cfg.url_1c ? `<a href="${cfg.url_1c}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icn_link()} На releases.1c.ru</a>` : ''}
+        ${cfg.bugsUrl ? `<a href="${esc_html(cfg.bugsUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Известные ошибки и сроки исправления">${icn_link()} Каталог ошибок</a>` : ''}
+        ${(() => { const lv = (cfg.versions || []).find(x => x.full); return lv ? `<a href="${lv.full}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" title="Полный дистрибутив ${esc_html(lv.v)}: установка конфигурации и создание новой базы" onclick="handle_dl(event,'${lv.full}')">${icn_dl()} Полный дистрибутив ${esc_html(lv.v)}</a>` : ''; })()}
+        ${cfg.status==='discontinued'?`<span class="badge badge-red" style="padding:8px 14px">${icn_alert()} Поддержка прекращена</span>`:''}
+      </div>
+    </div>
+
+    <div class="cfg-tabs fade-up fade-up-1" role="tablist" aria-label="Разделы" onkeydown="cfg_tabs_key(event,'${id}')">
+      ${tabBtn('chain', 'Цепочка обновлений')}
+      ${tabBtn('versions', 'Версии', nVer)}
+      ${tabBtn('about', 'О продукте')}
+      ${tabBtn('trans', 'Переходы', '', tab !== 'trans')}
+      ${tabBtn('exch', 'Обмены')}
+    </div>
+
+    ${panel('chain', `<div class="card" style="margin-bottom:32px">
+      <div class="card-header" style="padding-bottom:16px">
+        <div style="font-size:13px;color:var(--text-muted)">Выберите исходную версию и целевую (по умолчанию — до последней)</div>
+      </div>
+      <div class="card-body" style="padding-top:0">
+        ${cfg.versions.length ? `
+        <div class="cfg-chain-grid">
+          <div class="field" style="margin:0">
+            <label class="label">Из версии</label>
+            <select class="select input-mono" id="cfg-from-ver">
+              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===cfg.versions.length-1?' selected':''}>${v.v}${v.lts ? ' · ДП' : ''}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin:0">
+            <label class="label">До версии</label>
+            <select class="select input-mono" id="cfg-to-ver">
+              ${cfg.versions.map((v,i) => `<option value="${v.v}"${i===0?' selected':''}>${v.v}${v.lts ? ' · ДП' : ''}${v.date ? ' (' + fmt_date(v.date) + ')' : ''}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        ${lts_quick_html(cfg, id)}
+        <button class="btn btn-primary" onclick="cfg_do_chain('${id}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
+          Построить цепочку
+        </button>` : `<div class="hint">Список версий не загружен</div>`}
+      </div>
+      <div id="cfg-chain-result" style="padding:0 20px 20px"></div>
+    </div>`)}
+
+    ${panel('versions', `<div class="version-list" style="margin-bottom:32px">${versions_html}</div>`)}
+
+    ${panel('about', about_html(cfg))}
+
+    ${panel('trans', `<div id="cfg-transitions" class="card cfg-about">${'<div class="hint">Загрузка…</div>'}</div>`)}
+
+    ${panel('exch', `<div id="cfg-exchanges" class="card cfg-about">${'<div class="hint">Загрузка…</div>'}</div>`)}
+  </div>`;
+}
+
+// ── Config page tabs: chain (default) · versions · about · transitions ──
+const CFG_TABS = ['chain', 'versions', 'about', 'trans', 'exch'];
+function cfg_tab_current() { const t = parse_route().params.tab; return CFG_TABS.includes(t) ? t : 'chain'; }
+function cfg_set_tab(id, tab, focus) {
+  document.querySelectorAll('.cfg-tab').forEach(b => {
+    const on = b.dataset.tab === tab;
+    b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1;
+    if (on && focus) b.focus();
+  });
+  document.querySelectorAll('.cfg-panel').forEach(p => { p.hidden = p.dataset.tab !== tab; });
+  // The tab is part of the link (/config/96?tab=versions); no history entry per click.
+  history.replaceState(null, '', '/config/' + id + (tab === 'chain' ? '' : '?tab=' + tab));
+}
+function cfg_tabs_key(e, id) {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const tabs = [...document.querySelectorAll('.cfg-tab')].filter(b => !b.hidden);
+  const i = tabs.findIndex(b => b.getAttribute('aria-selected') === 'true');
+  const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  if (next) { e.preventDefault(); cfg_set_tab(id, next.dataset.tab, true); }
+}
+
+// «О продукте»: who makes it, what it is built on, for whom; 1С:Решения data
+// when there is a card, our own data otherwise.
+function about_html(cfg) {
+  const s = cfg.sol;
+  const chips = (list, param) => list.map(x => `<a class="badge badge-gray" href="/catalog?${param}=${encodeURIComponent(x)}">${esc_html(x)}</a>`).join(' ');
+  const rows = [];
+  rows.push(['Разработчик', esc_html(s.developers.length ? s.developers.join(', ') : cfg.vendorName)
+    + (s.kind ? ` <span style="color:var(--text-muted)">· ${esc_html(s.kind)}</span>` : '')]);
+  rows.push(['Тип', esc_html(type_label(cfg.type))]);
+  if (s.base) rows.push(['Основа', /Оригинальн/i.test(s.base) ? 'Оригинальная разработка' : 'на базе ' + esc_html(s.base)]);
+  if (s.industries.length) rows.push(['Отрасли', chips(s.industries, 'ind')]);
+  if (s.tasks.length) rows.push(['Задачи', chips(s.tasks, 'task')]);
+  rows.push(['Для', esc_html([s.orgTypes.join(', '), s.countries.length ? s.countries.join(', ')
+    : cfg.allRegions ? 'всех стран' : cfg.regions.map(region_label).join(', ')].filter(Boolean).join(' · '))]);
+  if (s.editions.length) rows.push(['Поставки', esc_html(s.editions.join(', '))]);
+  if (s.phone || s.email) rows.push(['Сопровождение', [
+    s.phone ? `<a href="tel:${esc_html(s.phone.replace(/[^+\d]/g, ''))}">${esc_html(s.phone)}</a>` : '',
+    s.email ? `<a href="mailto:${esc_html(s.email)}">${esc_html(s.email)}</a>` : ''].filter(Boolean).join(' · ')]);
+  if (cfg.avg_update_days) rows.push(['Релизы', `примерно раз в ${cfg.avg_update_days} ${ru_plural(cfg.avg_update_days, 'день', 'дня', 'дней')}`]);
+  if (cfg.templateCode) rows.push(['Шаблон', `<span style="font-family:var(--mono);font-size:13px">${esc_html(cfg.templateCode)}</span>`]);
+  const hasSol = s.developers.length || s.base || s.industries.length || s.tasks.length || s.phone || s.email;
+  return `<div class="card cfg-about" style="margin-bottom:32px"><div class="sol-info cfg-about-grid">`
+    + rows.map(r => `<div class="sol-row"><div class="meta-item-label">${r[0]}</div><div class="sol-val">${r[1]}</div></div>`).join('')
+    + (hasSol ? `<div class="sol-src">Основа, отрасли, задачи и сопровождение — по данным <a href="${esc_html(cfg.infoUrl)}" target="_blank" rel="noopener">1С:Решения</a></div>` : '')
+    + `</div></div>`;
+}
+
+function bind_config(id) { load_transitions(id); load_exchanges(id); }
+
+// "Обмены": synchronisations and data migrations between standard
+// configurations from the 1CExchenge registry (exchanges.ts). Every
+// configuration has the tab; without data it says so.
+async function load_exchanges(id) {
+  const box = document.getElementById('cfg-exchanges');
+  if (!box) return;
+  const cfg = CONFIGS.find(c => c.id === String(id));
+  let data;
+  try { data = await apiFetch('/api/exchanges', { config_id: id }); }
+  catch (e) { box.innerHTML = '<div class="hint">Не удалось загрузить обмены</div>'; return; }
+  const reg = data.registry || 'https://imiron.ru/1CExchenge/';
+  const src = `<div class="sol-src">Источник — <a href="${esc_html(reg)}" target="_blank" rel="noopener">реестр обменов и переходов типовых конфигураций</a>: сканы полных поставок (файлы обмена, планы обмена и обработки внутри CF, пакеты перехода на портале). Там же матрица «из → в» по всем типовым.</div>`;
+  const cnt = document.getElementById('cfg-cnt-exch');
+  if (!data.links.length) {
+    if (cnt) cnt.textContent = '';
+    box.innerHTML = `<div class="exch-empty">Данных об обменах этой конфигурации пока нет: её поставка ещё не просканирована.</div>${src}`;
+    return;
+  }
+  if (cnt) cnt.textContent = data.links.length;
+  const me = String(id);
+  const other = l => {
+    const o = String(l.from.config_id) === me ? l.to : l.from;
+    return o.config_id ? `<a href="/config/${o.config_id}">${esc_html(o.config_name || o.label)}</a>` : esc_html(o.label);
+  };
+  const arrow = l => {
+    const out = String(l.from.config_id) === me;
+    if (l.direction === 'двусторонняя') return '⇄';
+    return out ? '→' : '←';
+  };
+  const objs = l => l.objects ? Object.entries(l.objects).map(([k, n]) => `${k}: ${n}`).join(', ') : '';
+  const srcText = l => (l.sources || []).map(x => ({ cf: 'внутри CF', files: 'файлы поставки', releases: 'портал 1С' })[x] || x).join(', ');
+  const row = l => `<div class="exch-row${l.actual === 'устаревшая сторона' ? ' old' : ''}">
+      <div class="exch-main"><span class="exch-arrow" title="${l.direction === 'двусторонняя' ? 'двусторонний обмен' : String(l.from.config_id) === me ? 'из этой конфигурации' : 'в эту конфигурацию'}">${arrow(l)}</span>${other(l)}</div>
+      <div class="exch-meta">${esc_html(l.mechanism)}${l.exchange_plan ? ` · план <span class="mono">${esc_html(l.exchange_plan)}</span>` : ''}${l.format_versions && l.format_versions.length ? ` · EnterpriseData ${esc_html(l.format_versions[l.format_versions.length - 1])}` : ''}${l.task ? ` · ${esc_html(l.task)}` : ''}${l.actual === 'устаревшая сторона' ? ' · <span class="exch-old">устаревшая сторона</span>' : ''}</div>
+      ${objs(l) ? `<div class="exch-meta">Объекты: ${esc_html(objs(l))}</div>` : ''}
+      <div class="exch-meta exch-src">${srcText(l)}${l.shipped_in && l.shipped_in.length ? ' · поставка ' + esc_html(l.shipped_in.map(x => `${x.product} ${x.version}`).join(', ')) : ''}${(l.urls || []).map(u => ` · <a href="${esc_html(u)}" target="_blank" rel="noopener">файл на портале</a>`).join('')}</div>
+    </div>`;
+  const sync = data.links.filter(l => l.kind === 'синхронизация'), move = data.links.filter(l => l.kind === 'переход');
+  const col = (title, hint, list) => list.length ? `<div class="exch-col"><div class="trans-col-title">${title} <span>${list.length}</span></div>
+      <div class="trans-col-hint">${hint}</div><div class="exch-list">${list.map(row).join('')}</div></div>` : '';
+  const fmt = data.formats && data.formats.length ? `<div class="exch-formats"><b>EnterpriseData</b> в версии ${esc_html(data.formats[0].version || '')}: объявлены версии формата ${esc_html((data.formats[0].declared || []).join(', '))}${data.formats[0].packages && data.formats[0].packages.length ? `; пакеты в поставке ${esc_html(data.formats[0].packages.join(', '))}` : ''}</div>` : '';
+  box.innerHTML = `${col('Синхронизация', 'регулярный обмен данными между базами', sync)}${col('Переход', 'разовый перенос данных при смене программы или редакции', move)}${fmt}${src}`;
+}
+
+// "Переходы": update packages to/from other products or editions. Information
+// only — chains are still built inside one edition.
+async function load_transitions(id) {
+  const box = document.getElementById('cfg-transitions');
+  const cfg = CONFIGS.find(c => c.id === String(id));
+  if (!box || !cfg) return;
+  let data;
+  try { data = await apiFetch('/api/transitions', { config_id: id }); } catch (e) { box.innerHTML = '<div class="hint">Не удалось загрузить</div>'; return; }
+  const app = (cid, name, ed) => {
+    const c = cid != null ? CONFIGS.find(x => x.id === String(cid)) : null;
+    const label = c ? c.name + (c.edition ? ' · ред. ' + c.edition : '') : humanize_name(name) + (ed ? ' · ред. ' + ed : '');
+    return c ? `<a href="/config/${c.id}">${esc_html(label)}</a>` : esc_html(label);
+  };
+  const kindText = k => k === 'edition' ? 'новая редакция' : 'другой продукт';
+  const out = data.out.map(t => `<div class="trans-item">${app(t.to_config_id, '', t.to_edition)}
+      <div class="trans-meta">${kindText(t.kind)} · из версий ${esc_html(t.from_min)}${t.from_max !== t.from_min ? '…' + esc_html(t.from_max) : ''}</div></div>`);
+  const inc = data.in.map(t => `<div class="trans-item">${app(t.from_config_id, t.from_name, t.from_edition)}
+      <div class="trans-meta">${kindText(t.kind)} · в версии ${esc_html(t.to_min)}${t.to_max !== t.to_min ? '…' + esc_html(t.to_max) : ''}</div></div>`);
+  // An older edition with no update package to its newer one (Розница 2.3 → 3.0):
+  // say so — that move is a separate data migration, not an update.
+  const newer = CONFIGS.filter(c => c.templateKey === cfg.templateKey && (c.editionNum || 0) > (cfg.editionNum || 0));
+  const note = !cfg.isLatestEdition && newer.length && !data.out.some(t => t.kind === 'edition')
+    ? `<div class="trans-note">На ${newer.map(c => 'редакцию ' + (c.edition || c.editionNum)).join(', ')} обновлением не перейти — в каталоге обновлений 1С нет пакета перехода (переход выполняется отдельно, переносом данных).</div>` : '';
+  const cnt = document.getElementById('cfg-cnt-trans');
+  if (!out.length && !inc.length && !note) {
+    // Nothing to show: no tab either (back to the default one if it was open).
+    const btn = document.getElementById('cfg-tab-trans');
+    const wasOpen = btn && btn.getAttribute('aria-selected') === 'true';
+    if (btn) btn.hidden = true;
+    if (wasOpen) cfg_set_tab(id, 'chain');
+    return;
+  }
+  if (cnt) cnt.textContent = out.length + inc.length || '';
+  const tbtn = document.getElementById('cfg-tab-trans');
+  if (tbtn) tbtn.hidden = false;
+  const col = (title, hint, list) => `<div class="trans-col"><div class="trans-col-title">${title} <span>${list.length}</span></div>
+      <div class="trans-col-hint">${hint}</div><div class="trans-list">${list.join('')}</div></div>`;
+  box.innerHTML = `${note}<div class="trans-cols">
+    ${out.length ? col('Можно перейти на', 'есть пакет обновления из этой конфигурации', out) : ''}
+    ${inc.length ? col('Можно перейти с', 'есть пакет обновления в эту конфигурацию', inc) : ''}
+    </div>
+    <div class="sol-src">Переходы — пакеты обновления из каталога 1С (v8cscdsc.lst). Цепочка обновлений через них не строится.</div>`;
+}
+function toggle_version(bodyId) {
+  const el = document.getElementById(bodyId); if (!el) return;
+  el.classList.toggle('open');
+  const chev = document.getElementById(bodyId.replace('ver-','chev-'));
+  if (chev) chev.classList.toggle('open');
+  // Lazy-load patches on first expand
+  if (el.classList.contains('open')) {
+    const parts = bodyId.replace('ver-', '').split('-');
+    // bodyId format: ver-{cfgId}-{verIndex}
+    // cfgId might contain dashes, verIndex is the last part
+    const verIdx = Number(parts[parts.length - 1]);
+    const cfgId = parts.slice(0, parts.length - 1).join('-');
+    const cfg = CONFIGS.find(function(c) { return c.id === cfgId; });
+    if (cfg && cfg.versions[verIdx] && cfg.versions[verIdx].patches === null) {
+      load_version_patches(cfgId, verIdx);
+    }
+  }
+}
+async function load_version_patches(cfgId, verIdx) {
+  const cfg = CONFIGS.find(function(c) { return c.id === String(cfgId); });
+  if (!cfg || !cfg.versions[verIdx]) return;
+  const ver = cfg.versions[verIdx];
+  const patchesElId = 'patches-' + cfgId + '-' + verIdx;
+  const el = document.getElementById(patchesElId);
+  if (el) el.innerHTML = '<span style="color:var(--text-muted);font-size:13px">Загрузка патчей…</span>';
+  try {
+    const data = await apiFetch('/api/patches', { config_id: cfg.id, ver: ver.v });
+    ver.patches = data.patches || [];
+  } catch(e) {
+    ver.patches = [];
+  }
+  const el2 = document.getElementById(patchesElId);
+  if (el2) el2.innerHTML = render_patches(cfgId, verIdx, ver.patches);
+}
+function cfg_nick(cfgId) { const c = CONFIGS.find(x => x.id === String(cfgId)); return (c && (c.nick || nick_from_href(c.url_1c || ''))) || ''; }
+function render_patches(cfgId, verIdx, patchList) {
+  if (!patchList || patchList.length === 0) return '';
+  var last = patchList[0];
+  var lastDate = last && last.patch_date ? fmt_date(last.patch_date) : '';
+  var badge = '<span class="badge badge-gray">' + patchList.length + '</span>';
+  var title = '<div class="patches-title">Патчи ' + badge + (lastDate ? ' · последний ' + lastDate : '') + '</div>';
+  var links = '';
+  for (var i = 0; i < patchList.length; i++) {
+    var p = patchList[i];
+    var pDate = p.patch_date ? fmt_date(p.patch_date) : '';
+    var pTitle = '<span class="mono">' + esc_html(p.title || p.uuid.slice(0, 8)) + '</span>' + (p.description ? ' — ' + esc_html(p.description.split('\n')[0].slice(0, 140)) : '')
+      + (p.metadata ? '<span class="patch-meta" title="Что меняет: ' + esc_html(p.metadata) + '">' + esc_html(p.metadata.split(',')[0].split('.').slice(0, 2).join('.')) + '</span>' : '');
+    var nick = cfg_nick(cfgId);
+    var href = nick ? 'https://releases.1c.ru/patches/total?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(CONFIGS.find(function(c){ return c.id === String(cfgId); }).versions[verIdx].v) : '#';
+    links += '<a href="' + href + '" target="_blank" rel="noopener" class="patch-row" title="' + esc_html(p.description || '') + '">' +
+      (pDate ? '<span class="patch-date">' + pDate + '</span>' : '') +
+      '<span class="patch-title">' + pTitle + '</span>' +
+      '</a>';
+  }
+  return '<div class="patches-section" id="patches-' + cfgId + '-' + verIdx + '">' + title + '<div class="patches-list">' + links + '</div></div>';
+}
+function show_more_versions() {
+  document.querySelectorAll('.hidden-version').forEach(el => el.classList.remove('hidden-version'));
+  document.getElementById('ver-show-more')?.remove();
+}
+// Two targets when the edition has a long-term support branch: stay on it, or
+// move to the main line. Both are ordinary chains inside one edition.
+function lts_quick_html(cfg, id) {
+  if (!cfg.ltsLine || !cfg.versions.length) return '';
+  const ltsLast = cfg.versions.find(v => v.lts);           // versions are newest first
+  const mainLast = cfg.versions.find(v => !v.lts && platform_cmp_v(v.v, cfg.ltsLine) > 0);
+  if (!ltsLast) return '';
+  return `<div class="lts-quick">Целевая версия:
+    <button onclick="cfg_pick_target('${id}','${ltsLast.v}')" title="Остаться на ветке длительной поддержки ${esc_html(cfg.ltsLine)}">до последней ДП ${ltsLast.v}</button>
+    ${mainLast ? `<button onclick="cfg_pick_target('${id}','${mainLast.v}')" title="Перейти на основную ветку">до последней основной ${mainLast.v}</button>` : ''}
+  </div>`;
+}
+function platform_cmp_v(a, b) {   // numeric compare of dotted versions
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
+}
+function cfg_pick_target(id, v) {
+  const toEl = document.getElementById('cfg-to-ver');
+  if (toEl) toEl.value = v;
+  cfg_do_chain(id);
+}
+function cfg_build_from_ver(cfgId, fromV) {
+  cfg_set_tab(cfgId, 'chain');
+  const fromEl = document.getElementById('cfg-from-ver');
+  if (fromEl) fromEl.value = fromV;
+  cfg_do_chain(cfgId);
+  document.getElementById('cfg-chain-result')?.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function cfg_do_chain(id) {
+  const cfg = CONFIGS.find(c=>c.id===id);
+  if (!cfg) return;
+  const fromV = document.getElementById('cfg-from-ver')?.value;
+  const toV   = document.getElementById('cfg-to-ver')?.value;
+  const result = document.getElementById('cfg-chain-result');
+  if (!fromV || !toV) return;
+
+  result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Строю цепочку...</span></div>`;
+  let r;
+  try { r = await chain_api(cfg, fromV, toV); }
+  catch(e) { result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>Ошибка сервера</span></div>`; return; }
+  if (r.found) goal('chain');
+
+  if (!r.found) {
+    const msg = r.note || 'Цепочка не найдена';
+    result.innerHTML = `<div class="alert alert-warning" style="margin:0">${icn_alert()} <span>${msg}</span></div>`;
+    return;
+  }
+  const steps = chain_response_to_steps(r, cfg);
+  if (!steps?.length) {
+    result.innerHTML = `<div class="alert alert-info" style="margin:0">${icn_info()} <span>Версия ${fromV} уже актуальна</span></div>`;
+    return;
+  }
+  CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
+  result.innerHTML = render_chain_steps(steps, fromV, cfg);
+}
+
+/* ================================================================
+   CHAIN PAGE VIEW
+   ================================================================ */
+function render_chain_page_shell() {
+  return `<div class="wrap"><div class="page-head"><div class="page-title">Цепочка обновлений</div></div><div id="chain-page-content" class="fade-up">${render_loading('Загрузка...')}</div></div>`;
+}
+async function bind_chain_page(params) {
+  const { config, from, to } = params;
+  const el = document.getElementById('chain-page-content');
+  if (!config || !from) {
+    el.innerHTML = `<div class="empty"><div class="empty-title">Параметры цепочки не указаны</div><div class="empty-sub">Воспользуйтесь формой на главной странице</div></div>`;
+    return;
+  }
+  const cfg = CONFIGS.find(c => c.id === config);
+  if (!cfg) { el.innerHTML = `<div class="empty"><div class="empty-title">Конфигурация не найдена</div></div>`; return; }
+
+  await loadVersionsForConfig(config);
+  const toV = to || cfg.latestV;
+  let r;
+  try { r = await chain_api(cfg, from, toV); }
+  catch(e) { el.innerHTML = `<div class="alert alert-warning">${icn_alert()} Ошибка сервера</div>`; return; }
+  if (r.found) goal('chain');
+
+  if (!r.found) {
+    const msg = r.note || 'Цепочка не найдена';
+    el.innerHTML = `<div class="alert alert-warning">${icn_alert()} <span>${msg}</span></div>`;
+    return;
+  }
+  const steps = chain_response_to_steps(r, cfg);
+  if (!steps?.length) {
+    el.innerHTML = `<div class="alert alert-info">${icn_info()} <span>Версия ${from} уже актуальна</span></div>`;
+    return;
+  }
+  CHAIN_CACHE[`${cfg.id}:${from}:${toV}`] = steps;
+  el.innerHTML = `<div style="margin-bottom:8px"><div class="breadcrumb"><a href="/config/${cfg.id}">${cfg.name}</a>${icn_chevron_r()}<span>Цепочка</span></div></div>${render_chain_steps(steps, from, cfg)}`;
+}
+
+/* ================================================================
+   STATS VIEW
+   ================================================================ */
+// ── Stats page ────────────────────────────────────────────────────────────
+// Two populations, said in every card note: "current editions" (what the
+// platform and freshness cards count — stale ones included, that is the
+// point there) and "live" ones (current, not stale — the catalog's default,
+// so a click on a row opens a catalog with the same count).
+function stats_current() { return CONFIGS.filter(c => c.isLatestEdition); }
+function stats_live() { return CONFIGS.filter(c => c.isLatestEdition && !c.stale); }
+function ru_plural(n, one, few, many) {
+  const a = n % 10, b = n % 100;
+  return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 10 || b >= 20) ? few : many;
+}
+function pct_text(n, total) {
+  const p = total ? n / total * 100 : 0;
+  return (p > 0 && p < 1 ? p.toFixed(1) : String(Math.round(p))).replace('.', ',') + '%';
+}
+const nfmt = n => Number(n).toLocaleString('ru');
+const q_enc = v => encodeURIComponent(v).replace(/'/g, '%27');
+const RU_MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+const RU_MON = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+function st_card(title, note, body, extra) {
+  return `<div class="st-card"${extra || ''}><div class="st-head"><div class="st-title">${title}</div>${note ? `<div class="st-note">${note}</div>` : ''}</div>${body}</div>`;
+}
+function st_attrs(o) {
+  return (o.href ? ` href="${o.href}"` : '') + tip_attr(o.tip);
+}
+
+// ── Hover layer: one tooltip for the whole page ──
+// A mark carries data-tip = JSON {v: value (leads), l: label, r: [[color, text]]
+// series rows with a line key, s: [notes], h: action hint}. Filled with
+// textContent only — names come from the data. Same details on keyboard focus.
+function tip_attr(o) {
+  return o ? ` data-tip="${esc_html(JSON.stringify(o))}"` : '';
+}
+function st_examples(list, n) {
+  const names = list.slice().sort(main_cmp).slice(0, n || 3).map(c => c.short);
+  return names.length ? 'Например: ' + names.join(', ') + (list.length > names.length ? '…' : '') : '';
+}
+function tip_init() {
+  if (document.getElementById('st-tip')) return;
+  const box = document.createElement('div');
+  box.id = 'st-tip'; box.className = 'st-tip'; box.setAttribute('role', 'tooltip');
+  document.body.appendChild(box);
+  let cur = null;
+  const line = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; return d; };
+  const fill = el => {
+    let o;
+    try { o = JSON.parse(el.dataset.tip); } catch (e) { return false; }
+    box.replaceChildren();
+    if (o.v) box.appendChild(line('st-tip-v', o.v));
+    if (o.l) box.appendChild(line('st-tip-l', o.l));
+    (o.r || []).forEach(([color, text]) => {
+      const d = line('st-tip-r', text);
+      const k = document.createElement('i'); k.style.background = color; d.prepend(k);
+      box.appendChild(d);
+    });
+    (o.s || []).filter(Boolean).forEach(t => box.appendChild(line('st-tip-s', t)));
+    if (o.h) box.appendChild(line('st-tip-h', o.h));
+    return true;
+  };
+  const place = (x, y, below) => {
+    const w = box.offsetWidth, h = box.offsetHeight, vw = innerWidth, vh = innerHeight;
+    let left = x + 14, top = below != null ? below : y + 16;
+    if (left + w > vw - 8) left = Math.max(8, x - w - 14);
+    if (top + h > vh - 8) top = Math.max(8, y - h - 12);
+    box.style.left = left + 'px'; box.style.top = top + 'px';
+  };
+  const show = (el, x, y, below) => {
+    if (el !== cur) { cur = el; if (!fill(el)) { hide(); return; } }
+    box.classList.add('on');
+    place(x, y, below);
+  };
+  const hide = () => { cur = null; box.classList.remove('on'); };
+  document.addEventListener('pointermove', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) { if (cur) hide(); return; }
+    // A tap on a link navigates — no tooltip to get in the way.
+    if (e.pointerType === 'touch' && el.tagName === 'A') return;
+    show(el, e.clientX, e.clientY);
+  }, { passive: true });
+  document.addEventListener('pointerdown', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (e.pointerType === 'touch' && el && el.tagName !== 'A') {
+      const r = el.getBoundingClientRect();
+      show(el, r.left + r.width / 2, r.top, r.bottom + 8);
+    } else if (!el) hide();
+  });
+  document.addEventListener('mouseout', e => { if (!e.relatedTarget) hide(); });   // left the window
+  document.addEventListener('focusin', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el || !el.matches(':focus-visible')) return;
+    const r = el.getBoundingClientRect();
+    show(el, r.left + Math.min(r.width / 2, 120), r.top, r.bottom + 8);
+  });
+  document.addEventListener('focusout', hide);
+  addEventListener('scroll', hide, { passive: true });
+}
+function st_track(o) {
+  const segs = o.segs || [{ w: o.w, cls: o.cls }];
+  return `<div class="st-track">${segs.filter(s => s.w > 0).map(s =>
+    `<div class="st-bar ${s.cls || ''}" style="width:${Math.min(100, s.w).toFixed(2)}%"></div>`).join('')}</div>`;
+}
+// {name, val, w | segs, cls, href, title}
+function st_hrow(o) {
+  const t = o.href ? 'a' : 'div';
+  return `<${t} class="hrow"${st_attrs(o)}><div class="hrow-name">${o.name}</div>${st_track(o)}<div class="hrow-val">${o.val}</div></${t}>`;
+}
+function st_lrow(o) {
+  const t = o.href ? 'a' : 'div';
+  const bar = o.w === undefined && !o.segs ? '' : st_track(o);
+  return `<${t} class="lrow${bar ? '' : ' nobar'}"${st_attrs(o)}><div class="lrow-top"><div class="lrow-name">${o.name}</div><div class="lrow-val">${o.val}</div></div>${bar}</${t}>`;
+}
+// [{lbl, sub, val, n, cls, tip}] — heights relative to the largest; the whole
+// column (not just the painted bar) is the hover/focus target.
+function st_cols(items, height) {
+  const max = Math.max(1, ...items.map(i => i.n));
+  return `<div class="cols">${items.map(i => `<div class="col${i.sel ? ' sel' : ''}${i.click ? ' clickable' : ''}"${tip_attr(i.tip)}${i.click || ''}${i.tip || i.click ? ' tabindex="0"' : ''}>
+      <div class="col-val${/emph/.test(i.cls || '') ? ' emph' : ''}">${i.val}</div>
+      <div class="col-bar ${i.cls || ''}" style="height:${Math.max(3, Math.round(i.n / max * (height || 120)))}px"></div>
+      <div class="col-lbl">${i.lbl}<small>${i.sub || ''}</small></div></div>`).join('')}</div>`;
+}
+// Cards with a "show all" toggle remember it here while the page is open.
+const ST_OPEN = {};
+function st_toggle(key) { ST_OPEN[key] = !ST_OPEN[key]; const el = document.getElementById('st-' + key); if (el) el.outerHTML = ST_RENDER[key](); }
+function st_more_btn(key, total, shown) {
+  return total > shown || ST_OPEN[key]
+    ? `<button class="st-more" onclick="st_toggle('${key}')">${ST_OPEN[key] ? 'Свернуть' : 'Показать все ' + total}</button>` : '';
+}
+
+// Platform generation of current editions: share of all current editions.
+// Emphasis on the newest (8.5) — that is the news. Rows open the catalog with
+// stale ones shown too, so the catalog count matches the row.
+function platform_card_html() {
+  const cur = stats_current();
+  if (!cur.length) return '';
+  const by = {};
+  cur.forEach(c => { const k = c.platform || ''; by[k] = (by[k] || 0) + 1; });
+  const gens = Object.keys(by).filter(Boolean).sort((a, b) => platform_cmp(b, a));
+  const row = k => {
+    const n = by[k], known = !!k;
+    const isNew = known && platform_cmp(k, PLATFORM_NEWEST) >= 0;
+    const old = known && platform_cmp(k, '8.3') < 0;
+    return st_hrow({
+      name: (known ? k : 'не определена') + (isNew ? '<small>новая</small>' : old ? '<small>устаревшая</small>' : ''),
+      val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`, w: n / cur.length * 100,
+      cls: isNew ? 'emph' : known ? '' : 'none',
+      href: '/catalog?plat=' + (known ? k : 'none') + '&stale=1',
+      tip: {
+        v: `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`,
+        l: known ? 'Платформа ' + k + (isNew ? ' — новая' : old ? ' — устаревшая' : '') : 'Платформа не определена',
+        s: known ? [st_examples(cur.filter(c => c.platform === k))]
+                 : ['У этих конфигураций нет проекта на releases.1c.ru (партнёрские, БАС-линейка) — минимальную платформу брать неоткуда'],
+        h: 'Нажмите — открыть в каталоге',
+      },
+    });
+  };
+  return st_card('Платформа 1С:Предприятие', `по последней версии, из ${nfmt(cur.length)} конфигураций`,
+    gens.map(row).join('') + (by[''] ? row('') : '')
+    + `<div class="st-foot">Какую сборку ставить, сборки и ОС — на странице <a href="/platform">«Платформа»</a>.</div>`);
+}
+
+// How long ago the newest release came out (current editions). Rows open the
+// catalog's "Последний релиз" filter with stale ones shown, so counts match.
+function freshness_card_html() {
+  const cur = stats_current();
+  const by = {};
+  cur.forEach(c => { const k = release_age(c); (by[k] = by[k] || []).push(c); });
+  const rows = RELEASE_AGES.filter(a => a.key !== 'none' || by.none).map((a, i) => {
+    const list = by[a.key] || [], n = list.length;
+    return st_hrow({
+      name: a.label, val: `${nfmt(n)} <span>· ${pct_text(n, cur.length)}</span>`,
+      w: n / cur.length * 100, cls: a.key === 'none' ? 'none' : i === 0 ? 'emph' : '',
+      href: n ? '/catalog?age=' + a.key + '&stale=1' : '',
+      tip: { v: `${nfmt(n)} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, cur.length)}`,
+             l: a.key === 'none' ? 'Дата выхода неизвестна' : 'Последний релиз ' + a.ago,
+             s: [a.key === 'none' ? 'Нет проекта на releases.1c.ru' : st_examples(list)], h: n ? 'Нажмите — открыть в каталоге' : '' },
+    });
+  }).join('');
+  return st_card('Когда выходил последний релиз', `из ${nfmt(cur.length)} конфигураций`, rows);
+}
+
+// ── Platform check: "will my platform take the latest releases?" ──
+const PC_KEY = 'uc_platform';
+let PC_TIMER = null, PC_SEQ = 0, PC_LAST = null;
+function pc_saved() { try { return localStorage.getItem(PC_KEY) || ''; } catch (e) { return ''; } }
+const PC_HINT = '<div class="st-empty">Введите версию своей платформы — покажем, у каких конфигураций последний релиз на ней не встанет и до какой версии можно обновиться без смены платформы. Номер сборки можно не указывать: «8.3.24» — любая сборка этой линейки.</div>';
+// /stats: our chains against 1C's update service (chain_checks, nightly).
+let CHAIN_CHECKS = null;
+function chain_checks_html() {
+  const d = CHAIN_CHECKS;
+  if (!d || !d.checked) return '';
+  const t = d.totals || {};
+  const n = Object.values(t).reduce((a, b) => a + b, 0);
+  const rows = (d.mismatches || []).slice(0, 30).map(m => `<div class="st-row"><a href="/chain?config=${m.config_id}&from=${encodeURIComponent(m.version)}&to=${encodeURIComponent(m.svc_next || m.our_next || '')}">${esc_html(m.name)}</a> <span class="mono">${esc_html(m.version)}</span> <span class="st-dim">${esc_html(m.note || m.status)}</span></div>`).join('');
+  return st_card('Сверка цепочек с сервисом обновлений 1С', `${nfmt(n)} ${ru_plural(n, 'проверка', 'проверки', 'проверок')} типовых конфигураций, ${fmt_date(d.checked)}`, `
+    <div class="st-kv"><span>совпадает</span><b>${nfmt(t.match || 0)}</b>
+      <span title="Сервис предлагает свой порядок файлов, не самый короткий: наш путь короче и ведёт к той же версии — не ошибка">наш путь короче</span><b>${nfmt(t.ours_shorter || 0)}</b>
+      <span title="Сервис считает версию актуальной, а у нас есть следующая: региональные линейки и переходы редакций, где сервис отвечает по семейству">у нас новее</span><b>${nfmt(t.ours_longer || 0)}</b>
+      <span title="До версии, которую называет сервис, у нас нет пути — вот это настоящая проблема">нет пути</span><b>${nfmt(t.no_path || 0)}</b>
+      <span>у нас ещё нет версии</span><b>${nfmt(t.behind || 0)}</b><span>сервис не знает</span><b>${nfmt(t.unknown || 0)}</b></div>
+    ${rows ? `<div class="st-rows">${rows}</div>` : '<div class="st-empty">Расхождений нет</div>'}`);
+}
+function platform_check_html() {
+  // Quick picks: the lines the latest releases ask for most often.
+  const lines = new Map();
+  stats_live().forEach(c => (String(c.latestPlat || '').match(/\d+\.\d+\.\d+(?=\.\d+)/g) || [])
+    .forEach(l => lines.set(l, (lines.get(l) || 0) + 1)));
+  const picks = [...lines.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(e => e[0]).sort(platform_cmp_v);
+  const v = pc_saved();
+  return st_card('Встанет ли последний релиз на вашу платформу', 'по требованиям releases.1c.ru', `
+    <div class="pc-form">
+      <input id="pc-input" class="input input-mono" placeholder="8.3.24.1691" value="${esc_html(v)}" autocomplete="off"
+             inputmode="decimal" aria-label="Версия платформы" oninput="pc_input(this.value)">
+      ${picks.length ? `<div class="pc-chips">Частые: ${picks.map(l => `<button class="pc-chip${l === v ? ' on' : ''}" onclick="pc_set('${l}')">${l}</button>`).join('')}</div>` : ''}
+    </div>
+    <div id="pc-result">${PC_HINT}</div>`);
+}
+function pc_set(v) { const i = document.getElementById('pc-input'); if (i) i.value = v; pc_input(v, true); }
+function pc_input(v, now) { clearTimeout(PC_TIMER); PC_TIMER = setTimeout(() => pc_run(v.trim()), now ? 0 : 350); }
+async function pc_run(v) {
+  const box = document.getElementById('pc-result');
+  if (!box) return;
+  document.querySelectorAll('.pc-chip').forEach(b => b.classList.toggle('on', b.textContent === v));
+  const seq = ++PC_SEQ;
+  if (!v) { box.innerHTML = PC_HINT; try { localStorage.removeItem(PC_KEY); } catch (e) {} return; }
+  if (!/^\d+\.\d+\.\d+(\.\d+)?$/.test(v)) { box.innerHTML = '<div class="st-empty">Формат версии: 8.3.24.1691 или 8.3.24</div>'; return; }
+  let rows;
+  try { rows = await apiFetch('/api/platform-check', { p: v }); } catch (e) { box.innerHTML = '<div class="st-empty">Не удалось проверить — попробуйте ещё раз</div>'; return; }
+  if (seq !== PC_SEQ) return;
+  try { localStorage.setItem(PC_KEY, v); } catch (e) {}
+  PC_LAST = { v, rows };
+  box.innerHTML = pc_result_html();
+}
+function pc_result_html() {
+  const { v, rows } = PC_LAST;
+  const by = new Map(rows.map(r => [String(r.id), r]));
+  const live = stats_live().filter(c => by.has(c.id));
+  const st = s => live.filter(c => by.get(c.id).st === s);
+  const ok = st('ok'), no = st('no'), unk = st('unknown');
+  const gen = v.split('.').slice(0, 2).join('.');
+  const needs = no.map(c => by.get(c.id).need);
+  const inGen = needs.filter(n => n.startsWith(gen + '.')).sort(platform_cmp_v);
+  const otherGens = [...new Set(needs.filter(n => !n.startsWith(gen + '.')).map(n => n.split('.').slice(0, 2).join('.')))].sort(platform_cmp_v);
+  const otherCnt = needs.length - inGen.length;
+  let sum = `На платформе <b>${esc_html(v)}</b> последние релизы встанут у <b>${nfmt(ok.length)}</b> из ${nfmt(live.length)} конфигураций.`;
+  if (no.length) {
+    const parts = [];
+    if (inGen.length) parts.push(`${nfmt(inGen.length)} хватит <b>${inGen[inGen.length - 1]}</b>`);
+    if (otherCnt) parts.push(`${nfmt(otherCnt)} — только на ${otherGens.join(' / ')}`);
+    sum += ` Ещё ${nfmt(no.length)} ${ru_plural(no.length, 'требует', 'требуют', 'требуют')} платформу новее: ${parts.join(', ')}.`;
+  } else sum += ' Менять платформу не нужно.';
+  if (unk.length) sum += ` У ${nfmt(unk.length)} ваша версия в требованиях не упоминается — там указаны только более старые платформы.`;
+  no.sort(main_cmp);
+  const shown = ST_OPEN.pc ? no : no.slice(0, 12);
+  const table = no.length ? `<div class="st-table-wrap"><table class="st-table">
+      <thead><tr><th>Конфигурация</th><th>Можно обновиться до</th><th>Актуальная</th><th>Нужна платформа</th></tr></thead>
+      <tbody>${shown.map(c => { const r = by.get(c.id); return `<tr>
+        <td><a href="/config/${c.id}">${esc_html(c.name)}</a></td>
+        <td class="mono">${r.best ? esc_html(r.best) + (r.best_date ? `<small>${fmt_date(r.best_date)}</small>` : '') : '—'}</td>
+        <td class="mono">${esc_html(r.latest)}</td>
+        <td class="mono">${esc_html(r.need || '')}</td></tr>`; }).join('')}</tbody></table></div>
+      ${no.length > 12 ? `<button class="st-more" onclick="ST_OPEN.pc=!ST_OPEN.pc; document.getElementById('pc-result').innerHTML=pc_result_html()">${ST_OPEN.pc ? 'Свернуть' : 'Показать все ' + no.length}</button>` : ''}` : '';
+  return `<div class="pc-sum">${sum}</div>${table}`;
+}
+
+// ── Calendar: planned releases + end of long-term support ──
+function parse_plan_date(s) {
+  s = String(s || '').trim();
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+  if (m) return { d: new Date(m[3].length === 2 ? 2000 + +m[3] : +m[3], m[2] - 1, +m[1]), exact: true };
+  m = s.toLowerCase().match(/^([а-яё]+)\s+(\d{4})$/);
+  if (m && RU_MONTHS.indexOf(m[1]) >= 0) return { d: new Date(+m[2], RU_MONTHS.indexOf(m[1]), 1), exact: false };
+  return null;
+}
+function calendar_events() {
+  const today = new Date(new Date().toDateString());
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const ev = new Map();
+  const add = (d, exact, kind, ver, c) => {
+    const key = kind + '|' + ver + '|' + d.getTime() + '|' + exact;
+    const e = ev.get(key) || { d, exact, kind, ver, list: [] };
+    e.list.push(c);
+    ev.set(key, e);
+  };
+  stats_live().forEach(c => {
+    const p = c.nextReleaseVersion && parse_plan_date(c.nextReleasePlannedDate);
+    if (p && (p.exact ? p.d >= today : p.d >= monthStart)) add(p.d, p.exact, 'rel', c.nextReleaseVersion, c);
+    if (c.ltsVersion && c.ltsUntil) {
+      const [y, mo, d] = c.ltsUntil.split('-').map(Number);
+      const dt = new Date(y, mo - 1, d);
+      if (dt >= today) add(dt, true, 'lts', c.ltsLine, c);
+    }
+  });
+  // A month-only plan sorts after the dated events of that month.
+  const t = e => e.exact ? e.d.getTime() : new Date(e.d.getFullYear(), e.d.getMonth() + 1, 0).getTime() + 1;
+  return [...ev.values()].sort((a, b) => t(a) - t(b));
+}
+function calendar_card_html() {
+  const all = calendar_events();
+  const list = ST_OPEN.cal ? all : all.slice(0, 10);
+  let month = '';
+  const verW = Math.max(1, ...list.map(e => e.ver.length + (e.kind === 'lts' ? 2 : 0)));
+  const rows = list.map(e => {
+    const mk = RU_MONTHS[e.d.getMonth()] + ' ' + e.d.getFullYear();
+    const head = mk !== month ? `<div class="cal-month">${mk[0].toUpperCase() + mk.slice(1)}</div>` : '';
+    month = mk;
+    const c = e.list[0];
+    const dd = d => String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+    // A plan for "Октябрь 2026" has no day yet: it is due by the end of that month.
+    const date = e.exact ? dd(e.d) : 'до ' + dd(new Date(e.d.getFullYear(), e.d.getMonth() + 1, 0));
+    const tip = {
+      v: e.kind === 'rel' ? 'Релиз ' + e.ver : 'Конец длительной поддержки ветки ' + e.ver + '.x',
+      l: e.exact ? (e.kind === 'rel' ? 'запланирован на ' : '') + dd(e.d) + '.' + e.d.getFullYear() : 'запланирован на ' + mk + ', без точной даты',
+      s: e.list.slice(0, 6).map(x => x.name).concat(e.list.length > 6 ? ['и ещё ' + (e.list.length - 6)] : []),
+      h: e.list.length > 1 ? 'Нажмите — открыть первую' : 'Нажмите — открыть конфигурацию',
+    };
+    return `${head}<a class="cal-row" href="/config/${c.id}"${tip_attr(tip)}>
+      <div class="cal-date">${date}</div>
+      <span class="cal-kind${e.kind === 'lts' ? ' lts' : ''}">${e.kind === 'lts' ? 'конец ДП' : 'релиз'}</span>
+      <div class="cal-name"><b>${esc_html(c.short)}</b>${e.list.length > 1 ? `<span>+${e.list.length - 1}</span>` : ''}</div>
+      <div class="cal-ver">${esc_html(e.ver)}${e.kind === 'lts' ? '.x' : ''}</div></a>`;
+  }).join('');
+  return `<div id="st-cal" style="--calv:${verW}">${st_card('Ближайшие события', 'планы релизов и конец длительной поддержки',
+    all.length ? rows + st_more_btn('cal', all.length, 10) : '<div class="st-empty">Запланированных релизов пока нет</div>')}</div>`;
+}
+
+// ── Ecosystem (live editions) ──
+function lines_card_html() {
+  const live = stats_live();
+  const rows = TAG_DICT.map(t => ({
+    t, own: live.filter(c => c.tags.some(x => x.tag === t.tag && x.kind === 'own')).length,
+    based: live.filter(c => c.tags.some(x => x.tag === t.tag && x.kind === 'based')).length,
+  })).filter(r => r.own + r.based > 0).sort((a, b) => (b.own + b.based) - (a.own + a.based));
+  const max = Math.max(1, ...rows.map(r => r.own + r.based));
+  return st_card('Линейки продуктов', `<span class="st-legend"><span><i style="background:var(--accent)"></i>продукты линейки</span><span><i style="background:var(--bar-muted)"></i>решения на их базе</span></span>`,
+    rows.map(r => st_lrow({
+      name: `${esc_html(r.t.tag)} <small>· ${esc_html(r.t.title)}</small>`,
+      val: `${r.own} <span>+ ${r.based}</span>`,
+      segs: [{ w: r.own / max * 100, cls: 'emph' }, { w: r.based / max * 100 }],
+      href: '/catalog?line=' + q_enc(r.t.tag),
+      tip: { v: `${r.own + r.based} ${ru_plural(r.own + r.based, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: r.t.title,
+             r: [['var(--accent)', `${r.own} — продукты линейки`], ['var(--bar-muted)', `${r.based} — решения на её базе`]],
+             h: 'Нажмите — открыть в каталоге' },
+    })).join(''));
+}
+function vendors_card_html() {
+  const live = stats_live();
+  const by = count_by(live, c => [c.vendorName]);
+  const own = by.get('1С') || 0;
+  const partners = [...by.entries()].filter(e => e[0] !== '1С').sort((a, b) => b[1] - a[1]);
+  const pTotal = partners.reduce((s, e) => s + e[1], 0);
+  const max = Math.max(1, ...partners.map(e => e[1]));
+  const shown = ST_OPEN.ven ? partners.slice(0, 40) : partners.slice(0, 8);
+  return `<div id="st-ven">${st_card('Разработчики', `${partners.length} ${ru_plural(partners.length, 'партнёр', 'партнёра', 'партнёров')} и 1С`,
+    `<div class="st-foot" style="margin:0 0 10px"><a href="/catalog?vendor=1с">Фирма 1С</a> — <b>${own}</b> (${pct_text(own, live.length)}), партнёры — <b>${pTotal}</b> (${pct_text(pTotal, live.length)}).</div>`
+    + shown.map(([v, n]) => st_lrow({
+      name: esc_html(v), val: String(n), w: n / max * 100,
+      href: '/catalog?vendor=' + q_enc(v.toLowerCase()),
+      tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')} · ${pct_text(n, live.length)}`, l: v,
+             s: [st_examples(live.filter(c => c.vendorName === v))], h: 'Нажмите — открыть в каталоге' },
+    })).join('') + st_more_btn('ven', Math.min(40, partners.length), 8))}</div>`;
+}
+function industries_card_html() {
+  const live = stats_live();
+  const withCard = live.filter(c => c.sol.industries.length).length;
+  const top = [...count_by(live, c => c.sol.industries).entries()].sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...top.map(e => e[1]));
+  const shown = ST_OPEN.ind ? top : top.slice(0, 8);
+  return `<div id="st-ind">${st_card('Отрасли', `по 1С:Решениям, у ${withCard} ${ru_plural(withCard, 'конфигурации', 'конфигураций', 'конфигураций')}`,
+    top.length ? shown.map(([x, n]) => st_lrow({
+      name: esc_html(x), val: String(n), w: n / max * 100, href: '/catalog?ind=' + q_enc(x),
+      tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: x,
+             s: [st_examples(live.filter(c => c.sol.industries.includes(x)))], h: 'Нажмите — открыть в каталоге' },
+    })).join('') + st_more_btn('ind', top.length, 8) : '<div class="st-empty">Нет данных 1С:Решений</div>')}</div>`;
+}
+function freq_card_html() {
+  const list = stats_live().filter(c => c.avg_update_days).sort((a, b) => a.avg_update_days - b.avg_update_days);
+  const best = list.length ? list[0].avg_update_days : 1;
+  const shown = ST_OPEN.freq ? list.slice(0, 50) : list.slice(0, 8);
+  return `<div id="st-freq">${st_card('Чаще всего выходят релизы', 'средний интервал между релизами',
+    list.length ? shown.map(c => st_lrow({
+      name: esc_html(c.name), val: `~${c.avg_update_days} <span>дн.</span>`, w: best / c.avg_update_days * 100,
+      href: '/config/' + c.id,
+      tip: { v: `~${c.avg_update_days} ${ru_plural(c.avg_update_days, 'день', 'дня', 'дней')} между релизами`, l: c.name,
+             s: [`≈ ${Math.round(365 / c.avg_update_days)} релизов в год`, c.latestDate ? 'Последний релиз — ' + fmt_date(c.latestDate) : ''],
+             h: 'Нажмите — открыть конфигурацию' },
+    })).join('') + st_more_btn('freq', Math.min(50, list.length), 8) : '<div class="st-empty">Нет данных</div>')}</div>`;
+}
+const ST_RENDER = { cal: calendar_card_html, ven: vendors_card_html, ind: industries_card_html, freq: freq_card_html,
+  trans: () => trans_card_html(STATS_MORE), chains: () => chains_card_html(STATS_MORE) };
+
+// ── Cards over /api/stats/more (loaded after the page renders) ──
+let STATS_MORE = null;
+const st_loading = '<div class="st-empty">Загрузка…</div>';
+// ── Drill-down under a column chart: click a column → who is behind it ──
+const ST_DRILL = {};      // kind -> selected value (string)
+const DRILL_CACHE = {};   // 'years:2020' -> {total, top: [{id, n}]}
+const DRILL_HOST = { years: 'st-a-years', wd: 'st-a-wd', p85: 'st-a-85' };
+const DRILL_CARD = { years: m => years_card_html(m), wd: m => weekdays_card_html(m), p85: m => plat85_card_html(m) };
+function st_drill(kind, val) {
+  val = String(val);
+  ST_DRILL[kind] = ST_DRILL[kind] === val ? null : val;
+  const redraw = () => {
+    const host = document.getElementById(DRILL_HOST[kind]);
+    if (!host) return;
+    const hadFocus = host.contains(document.activeElement);
+    host.innerHTML = DRILL_CARD[kind](STATS_MORE);
+    if (hadFocus) { const col = host.querySelector(`.col[data-dv="${val}"]`); if (col) col.focus(); }
+  };
+  redraw();
+  const key = kind + ':' + val;
+  if (ST_DRILL[kind] && kind !== 'p85' && !DRILL_CACHE[key]) {
+    apiFetch('/api/stats/releases', kind === 'years' ? { year: val } : { dow: val })
+      .then(r => { DRILL_CACHE[key] = r; }, () => { DRILL_CACHE[key] = { error: true }; })
+      .then(() => { if (ST_DRILL[kind] === val) redraw(); });
+  }
+}
+function drill_attrs(kind, val) {
+  return ` data-dv="${val}" role="button" aria-pressed="${ST_DRILL[kind] === String(val)}"`
+    + ` onclick="st_drill('${kind}','${val}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();st_drill('${kind}','${val}')}"`;
+}
+function drill_panel(kind, head, body) {
+  return `<div class="st-drill"><div class="st-drill-head"><span>${head}</span>
+    <button class="st-drill-x" onclick="st_drill('${kind}','${ST_DRILL[kind]}')" aria-label="Закрыть" title="Закрыть">✕</button></div>${body}</div>`;
+}
+function releases_drill(kind, head) {
+  const d = DRILL_CACHE[kind + ':' + ST_DRILL[kind]];
+  if (!d) return drill_panel(kind, head, st_loading);
+  if (d.error) return drill_panel(kind, head, '<div class="st-empty">Не удалось загрузить</div>');
+  const byId = new Map(CONFIGS.map(c => [c.id, c]));
+  const top = d.top.map(r => ({ n: r.n, c: byId.get(String(r.id)) })).filter(r => r.c).slice(0, 8);
+  const max = Math.max(1, ...top.map(r => r.n));
+  return drill_panel(kind, head, top.map(r => st_lrow({
+    name: esc_html(r.c.name), val: String(r.n), w: r.n / max * 100, href: '/config/' + r.c.id,
+    tip: { v: `${r.n} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')} · ${pct_text(r.n, d.total)}`, l: r.c.name, h: 'Нажмите — открыть конфигурацию' },
+  })).join('') || '<div class="st-empty">Нет данных</div>');
+}
+
+function years_card_html(m) {
+  const cy = new Date().getFullYear();
+  const ys = m ? m.years.filter(r => r.y >= cy - 7) : [];
+  const full = ys.filter(r => r.y < cy);
+  const avg = full.length ? Math.round(full.reduce((s, r) => s + r.n, 0) / full.length) : 0;
+  const now = new Date();
+  const prevOf = y => (m ? m.years.find(r => r.y === y - 1) : null);
+  const today = String(now.getDate()).padStart(2, '0') + '.' + String(now.getMonth() + 1).padStart(2, '0');
+  const sel = ST_DRILL.years;
+  return st_card('Релизы по годам', 'все конфигурации на releases.1c.ru', !m ? st_loading : st_cols(ys.map(r => {
+    const p = prevOf(r.y);
+    const delta = p && p.n ? Math.round((r.n - p.n) / p.n * 100) : null;
+    return {
+      lbl: r.y < cy ? String(r.y) : r.y + '*', val: nfmt(r.n), n: r.n, cls: r.y === cy ? 'part' : '',
+      sel: sel === String(r.y), click: drill_attrs('years', r.y),
+      tip: { v: `${nfmt(r.n)} ${ru_plural(r.n, 'релиз', 'релиза', 'релизов')}`, l: r.y === cy ? `${r.y}, с 1 января по ${today}` : String(r.y),
+             s: [r.y === cy ? `в среднем ${nfmt(Math.round(r.n / Math.max(1, now.getMonth() + now.getDate() / 31)))} в месяц, в ${r.y - 1} — ${p ? nfmt(Math.round(p.n / 12)) : '—'}`
+                            : delta != null ? `${delta > 0 ? '+' : delta < 0 ? '−' : '±'}${Math.abs(delta)}% к ${r.y - 1}` : ''],
+             h: sel === String(r.y) ? 'Нажмите — скрыть список' : 'Нажмите — кто выпустил больше всего' },
+    };
+  })) + `<div class="st-foot">В среднем <b>${nfmt(avg)}</b> релизов в год. * ${cy} — по ${today}.</div>`
+    + (sel ? releases_drill('years', `${sel}: больше всего релизов`) : ''));
+}
+function weekdays_card_html(m) {
+  const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  if (!m) return st_card('День выхода релиза', 'за последние 3 года', st_loading);
+  const total = m.weekdays.reduce((s, n) => s + n, 0) || 1;
+  const top = m.weekdays.indexOf(Math.max(...m.weekdays));
+  const weekend = m.weekdays[5] + m.weekdays[6];
+  const full = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+  const sel = ST_DRILL.wd;
+  return st_card('День выхода релиза', 'за последние 3 года', st_cols(m.weekdays.map((n, i) => ({
+    lbl: names[i], val: pct_text(n, total), n, cls: i === top ? 'emph' : '',
+    sel: sel === String(i + 1), click: drill_attrs('wd', i + 1),
+    tip: { v: `${nfmt(n)} ${ru_plural(n, 'релиз', 'релиза', 'релизов')} · ${pct_text(n, total)}`, l: cap(full[i]),
+           s: [`≈ ${nfmt(Math.round(n / 156))} в неделю`, 'за последние 3 года'],
+           h: sel === String(i + 1) ? 'Нажмите — скрыть список' : 'Нажмите — кто выпускает чаще' },
+  }))) + `<div class="st-foot">Чаще всего — <b>${full[top]}</b>: ${pct_text(m.weekdays[top], total)} релизов. В выходные — ${pct_text(weekend, total)}.</div>`
+    + (sel ? releases_drill('wd', `${cap(full[+sel - 1])}: кто выпускает чаще всего`) : ''));
+}
+function plat85_card_html(m) {
+  const title = 'Переход на платформу ' + PLATFORM_NEWEST;
+  const note = 'конфигурации с релизом под ' + PLATFORM_NEWEST + ', нарастающим итогом';
+  if (!m) return st_card(title, note, st_loading);
+  const cur = new Map(stats_current().map(c => [c.id, c]));
+  const joined = m.plat85.filter(r => cur.has(String(r.id))).map(r => ({ c: cur.get(String(r.id)), mk: r.first.slice(0, 7) }));
+  const firsts = joined.map(j => j.mk).sort();
+  if (!firsts.length) return st_card(title, note, '<div class="st-empty">Пока ни одной</div>');
+  const now = new Date();
+  const months = [];
+  for (let d = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1); d <= now; d.setMonth(d.getMonth() + 1))
+    months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  const shown = months.slice(-12);
+  const sel = ST_DRILL.p85;
+  const monthName = mk => `${RU_MONTHS[+mk.slice(5, 7) - 1]} ${mk.slice(0, 4)}`;
+  const items = shown.map((mk, i) => {
+    const n = firsts.filter(f => f <= mk).length;
+    const mo = +mk.slice(5, 7) - 1;
+    const added = joined.filter(j => j.mk === mk).map(j => j.c).sort(main_cmp);
+    return { lbl: RU_MON[mo], sub: i === 0 || mo === 0 ? mk.slice(0, 4) : '', val: String(n), n, cls: i === shown.length - 1 ? 'emph' : '',
+             sel: sel === mk, click: drill_attrs('p85', mk),
+             tip: { v: `${n} ${ru_plural(n, 'конфигурация', 'конфигурации', 'конфигураций')}`, l: monthName(mk),
+                    s: added.length ? [`+${added.length} за месяц:`].concat(added.slice(0, 5).map(c => c.name), added.length > 5 ? ['и ещё ' + (added.length - 5)] : [])
+                                    : ['новых за месяц нет'],
+                    h: sel === mk ? 'Нажмите — скрыть список' : 'Нажмите — список конфигураций' } };
+  });
+  const last = items[items.length - 1].n;
+  const first = new Date(+firsts[0].slice(0, 4), +firsts[0].slice(5, 7) - 1, 1);
+  let drill = '';
+  if (sel) {
+    // Everyone on 8.5 by the end of that month; that month's newcomers first.
+    const upto = joined.filter(j => j.mk <= sel)
+      .sort((a, b) => (b.mk === sel) - (a.mk === sel) || b.mk.localeCompare(a.mk) || main_cmp(a.c, b.c));
+    const added = upto.filter(j => j.mk === sel).length;
+    drill = drill_panel('p85', `${monthName(sel)[0].toUpperCase() + monthName(sel).slice(1)}: ${upto.length} на ${PLATFORM_NEWEST}${added ? `, из них ${added} — новые` : ''}`,
+      upto.map(j => st_lrow({
+        name: esc_html(j.c.name) + (j.mk === sel ? ' <small>· новая</small>' : ''),
+        val: `<span>с ${RU_MON[+j.mk.slice(5, 7) - 1]} ${j.mk.slice(0, 4)}</span>`, href: '/config/' + j.c.id,
+        tip: { v: j.c.name, l: `первый релиз под ${PLATFORM_NEWEST} — ${monthName(j.mk)}`, h: 'Нажмите — открыть конфигурацию' },
+      })).join(''));
+  }
+  return st_card(title, note, st_cols(items, 110) + `<div class="st-foot">Первые релизы под ${PLATFORM_NEWEST} — ${RU_MONTHS[first.getMonth()]} ${first.getFullYear()}.
+    Сейчас <b>${last}</b> — ${pct_text(last, cur.size)} актуальных редакций.
+    <a href="/catalog?plat=${PLATFORM_NEWEST}">Открыть в каталоге →</a></div>` + drill);
+}
+function trans_card_html(m) {
+  const title = 'Переходы между продуктами', note = 'по числу пакетов обновления с переходом';
+  if (!m) return `<div id="st-trans">${st_card(title, note, st_loading)}</div>`;
+  const byId = new Map(CONFIGS.map(c => [c.id, c]));
+  const seen = new Set();
+  const list = m.transitions.map(t => ({ ...t, a: byId.get(String(t.from)), b: byId.get(String(t.to)) }))
+    .filter(t => t.a && t.b && t.b.isLatestEdition && !t.b.stale)
+    .filter(t => { const k = t.a.short + '>' + t.b.short; if (seen.has(k)) return false; seen.add(k); return true; });
+  const max = Math.max(1, ...list.map(t => t.packages));
+  const shown = ST_OPEN.trans ? list.slice(0, 30) : list.slice(0, 8);
+  return `<div id="st-trans">${st_card(title, note, list.length ? shown.map(t => st_lrow({
+    name: `${esc_html(t.a.short)} <small>→</small> ${esc_html(t.b.short)}`,
+    val: `${t.packages} <span>${ru_plural(t.packages, 'пакет', 'пакета', 'пакетов')}</span>`, w: t.packages / max * 100,
+    href: '/config/' + t.a.id,
+    tip: { v: `${t.packages} ${ru_plural(t.packages, 'пакет', 'пакета', 'пакетов')} обновления`, l: `${t.a.name} → ${t.b.name}`,
+           s: [t.from_min ? `из версий ${t.from_min}${t.from_max !== t.from_min ? '…' + t.from_max : ''} в ${t.to_min}${t.to_max !== t.to_min ? '…' + t.to_max : ''}` : ''],
+           h: 'Нажмите — открыть исходный продукт' },
+  })).join('') + st_more_btn('trans', Math.min(30, list.length), 8) : '<div class="st-empty">Нет данных</div>')}</div>`;
+}
+function chains_card_html(m) {
+  const title = 'Самые длинные цепочки', note = 'от самой старой версии до актуальной';
+  if (!m) return `<div id="st-chains">${st_card(title, note, st_loading)}</div>`;
+  const byId = new Map(stats_live().map(c => [c.id, c]));
+  const list = m.chains.filter(r => byId.has(String(r.id)));
+  const max = Math.max(1, ...list.map(r => r.steps));
+  const shown = ST_OPEN.chains ? list.slice(0, 30) : list.slice(0, 8);
+  const jc = m.jumps.id != null ? CONFIGS.find(c => c.id === String(m.jumps.id)) : null;
+  return `<div id="st-chains">${st_card(title, note, list.length ? shown.map(r => {
+    const c = byId.get(String(r.id));
+    const href = '/chain?config=' + c.id + '&from=' + r.from + '&to=' + r.to;
+    return st_lrow({
+      name: `${esc_html(c.short)} <small>· с ${esc_html(r.from)}${r.from_date ? ', ' + r.from_date.slice(0, 4) : ''}</small>`,
+      val: `${r.steps} <span>${ru_plural(r.steps, 'шаг', 'шага', 'шагов')}</span>`, w: r.steps / max * 100,
+      href,
+      tip: { v: `${r.steps} ${ru_plural(r.steps, 'шаг', 'шага', 'шагов')} обновления`, l: c.name,
+             s: [`${r.from}${r.from_date ? ' (' + fmt_date(r.from_date) + ')' : ''} → ${r.to}`], h: 'Нажмите — показать цепочку' },
+    });
+  }).join('') + st_more_btn('chains', Math.min(30, list.length), 8)
+    + `<div class="st-foot">Обычно цепочка — <b>${m.chainMedian}</b> ${ru_plural(m.chainMedian || 0, 'шаг', 'шага', 'шагов')}:
+       один пакет принимает ${m.jumps.median} ${ru_plural(m.jumps.median, 'исходную версию', 'исходные версии', 'исходных версий')}, рекорд — <b>${m.jumps.max}</b>${jc ? ` (${esc_html(jc.short)} ${esc_html(m.jumps.version)})` : ''}.</div>`
+    : '<div class="st-empty">Нет данных</div>')}</div>`;
+}
+async function bind_stats() {
+  tip_init();
+  if (!STATS_MORE) {
+    try { STATS_MORE = await apiFetch('/api/stats/more'); } catch (e) { return; }
+  }
+  const m = STATS_MORE;
+  const put = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  if (!CHAIN_CHECKS) apiFetch('/api/chain-checks').then(d => { CHAIN_CHECKS = d; put('st-checks', chain_checks_html()); }).catch(() => {});
+  put('st-a-years', years_card_html(m));
+  put('st-a-wd', weekdays_card_html(m));
+  put('st-a-85', plat85_card_html(m));
+  const t = document.getElementById('st-trans'); if (t) t.outerHTML = trans_card_html(m);
+  const ch = document.getElementById('st-chains'); if (ch) ch.outerHTML = chains_card_html(m);
+}
+
+/* ================================================================
+   «МОИ КОНФИГУРАЦИИ» — a star on a card; kept in this browser only
+   ================================================================ */
+const FAV_KEY = 'uc_fav';
+let FAV = (() => { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]').map(String)); } catch (e) { return new Set(); } })();
+const fav_has = id => FAV.has(String(id));
+const ICN_STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l2.8 5.7 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 2.9 1.1-6.3L2.9 9.4l6.3-.9z"/></svg>';
+function fav_btn(id, label) {
+  const on = fav_has(id);
+  return `<button type="button" class="fav-btn${label ? ' labelled' : ''}${on ? ' on' : ''}" data-fav="${id}" aria-pressed="${on}"
+    title="${on ? 'Убрать из «Моих конфигураций»' : 'В «Мои конфигурации» — их новости отдельно'}"
+    onclick="return fav_toggle(event,'${id}')">${ICN_STAR}${label ? `<span>${on ? 'В моих' : 'В мои'}</span>` : ''}</button>`;
+}
+function fav_toggle(e, id) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  id = String(id);
+  if (FAV.has(id)) FAV.delete(id); else FAV.add(id);
+  try { localStorage.setItem(FAV_KEY, JSON.stringify([...FAV])); } catch (err) {}
+  const on = FAV.has(id);
+  document.querySelectorAll(`[data-fav="${id}"]`).forEach(b => {
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    b.title = on ? 'Убрать из «Моих конфигураций»' : 'В «Мои конфигурации» — их новости отдельно';
+    const t = b.querySelector('span'); if (t) t.textContent = on ? 'В моих' : 'В мои';
+  });
+  toast(on ? '★ Добавлено в «Мои конфигурации»' : 'Убрано из «Моих конфигураций»');
+  if (on) goal('fav');
+  push_sync_favs();
+  if (on) prefetch_favourites(id).catch(() => {});
+  if (ROUTE_PATH === '/news' && NEWS.mine) news_render();
+  if (ROUTE_PATH === '/catalog' && CAT && CAT.fav) apply_filters();
+  return false;
+}
+
+/* ================================================================
+   NEWS VIEW — what happened, by day, from the data we already have
+   ================================================================ */
+const NEWS = { days: 30, data: null, mine: false, country: true, typical: false, line: '', open: {}, openPat: {} };
+const RU_WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+const RU_MONTHS_PREP = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
+const RU_MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+function news_day_label(iso) {
+  const d = new Date(iso + 'T00:00'), today = new Date(new Date().toDateString());
+  const diff = Math.round((today - d) / 864e5);
+  const date = d.getDate() + ' ' + RU_MONTHS_GEN[d.getMonth()] + (d.getFullYear() !== today.getFullYear() ? ' ' + d.getFullYear() : '');
+  return diff === 0 ? 'Сегодня · ' + date : diff === 1 ? 'Вчера · ' + date : date + ', ' + RU_WD[d.getDay()];
+}
+function news_state_from_url() {
+  const p = parse_route().params;
+  NEWS.mine = p.mine === '1';
+  NEWS.country = p.all !== '1';
+  NEWS.typical = p.typical === '1';
+  NEWS.line = p.line || '';
+}
+function news_sync_url() {
+  const q = [];
+  if (NEWS.mine) q.push('mine=1');
+  if (!NEWS.country) q.push('all=1');
+  if (NEWS.typical) q.push('typical=1');
+  if (NEWS.line) q.push('line=' + encodeURIComponent(NEWS.line));
+  history.replaceState(null, '', '/news' + (q.length ? '?' + q.join('&') : ''));
+}
+function render_news() {
+  news_state_from_url();
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Новости</div></div>
+    <div class="news-filters fade-up" id="news-filters"></div>
+    <div id="news-soon"></div>
+    <div id="news-feed">${render_loading('Собираем новости…')}</div>
+  </div>`;
+}
+async function bind_news() {
+  try { NEWS.data = await apiFetch('/api/news', { days: NEWS.days }); }
+  catch (e) { const f = document.getElementById('news-feed'); if (f) f.innerHTML = '<div class="empty"><div class="empty-title">Не удалось загрузить новости</div></div>'; return; }
+  news_render();
+}
+async function news_more() {
+  NEWS.days = Math.min(180, NEWS.days + 30);
+  const b = document.getElementById('news-more'); if (b) b.textContent = 'Загружаем…';
+  await bind_news();
+}
+function news_set(key, val) { NEWS[key] = val; NEWS.open = {}; news_sync_url(); news_render(); }
+
+// Does a configuration pass the filters? (Platform builds are for everyone.)
+function news_pass(c) {
+  if (!c) return false;
+  if (NEWS.mine) return fav_has(c.id);
+  if (NEWS.country && !in_pref_country(c)) return false;
+  if (NEWS.typical && c.type !== 'standard') return false;
+  if (NEWS.line && !c.tags.some(t => t.tag === NEWS.line)) return false;
+  return true;
+}
+function news_filters_html() {
+  const lines = TAG_DICT.map(t => `<option value="${esc_html(t.tag)}"${t.tag === NEWS.line ? ' selected' : ''}>${esc_html(t.tag)} — ${esc_html(t.title)}</option>`).join('');
+  return `<div class="sort-seg" role="group" aria-label="Чьи новости">
+      <button class="${NEWS.mine ? '' : 'active'}" aria-pressed="${!NEWS.mine}" onclick="news_set('mine', false)">Все</button>
+      <button class="${NEWS.mine ? 'active' : ''}" aria-pressed="${NEWS.mine}" onclick="news_set('mine', true)">★ Мои${FAV.size ? ' · ' + FAV.size : ''}</button>
+    </div>
+    ${NEWS.mine ? '' : `
+    <button type="button" class="fchip${NEWS.country ? ' on' : ''}" aria-pressed="${NEWS.country}" onclick="news_set('country', ${!NEWS.country})"
+      title="Только продукты страны из настроек (${esc_html(region_label(pref_country()))})">${esc_html(region_label(pref_country()))}</button>
+    <button type="button" class="fchip${NEWS.typical ? ' on' : ''}" aria-pressed="${NEWS.typical}" onclick="news_set('typical', ${!NEWS.typical})">Только типовые</button>
+    <select class="select news-line" aria-label="Линейка" onchange="news_set('line', this.value)">
+      <option value="">Все линейки</option>${lines}</select>`}`;
+}
+
+// Coming up: planned releases in two weeks, end of ДП in a month (stats' calendar data).
+function news_soon_html() {
+  const limit = new Date(); limit.setDate(limit.getDate() + 14);
+  const ltsLimit = new Date(); ltsLimit.setDate(ltsLimit.getDate() + 30);
+  const ev = calendar_events().filter(e => (e.kind === 'rel' ? e.d <= limit : e.d <= ltsLimit))
+    .map(e => ({ ...e, list: e.list.filter(news_pass) })).filter(e => e.list.length).slice(0, 6);
+  if (!ev.length) return '';
+  const dd = d => String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+  return `<div class="news-soon fade-up"><div class="news-soon-title">Скоро</div>${ev.map(e => {
+    const c = e.list[0];
+    return `<a class="news-soon-item" href="/config/${c.id}">
+      <span class="news-soon-date">${e.exact ? dd(e.d) : 'в ' + RU_MONTHS_PREP[e.d.getMonth()]}</span>
+      <span>${e.kind === 'rel' ? 'релиз' : 'конец ДП'} <b>${esc_html(c.short)}</b>${e.list.length > 1 ? ' +' + (e.list.length - 1) : ''}
+        <span class="mono">${esc_html(e.ver)}${e.kind === 'lts' ? '.x' : ''}</span></span></a>`;
+  }).join('')}</div>`;
+}
+
+function news_release_row(e, c) {
+  const plat = e.platform ? (String(e.platform).match(/\d+\.\d+\.\d+\.\d+/) || [''])[0] : '';
+  const lts = c.ltsLine && e.version.startsWith(c.ltsLine + '.');
+  // The notable releases are rows like the rest: the tag in the ДП column, the note under the name.
+  let tag = lts ? '<span class="badge badge-lts" title="Сборка ветки длительной поддержки">ДП</span>'
+    : e.branch ? '<span class="badge badge-gray" title="Обновление предыдущей ветки — есть более новая">ветка</span>' : '', sub = '';
+  if (e.to85) { tag = '<span class="news-hl-kind k85">8.5</span>'; sub = `первый релиз под платформу 8.5, требования: ${esc_html(e.platform || '')}`; }
+  else if (e.first) { tag = '<span class="news-hl-kind knew">новое</span>'; sub = 'новый продукт в каталоге, первый релиз'; }
+  else if (e.raised_from) { tag = '<span class="news-hl-kind kup">платформа ↑</span>'; sub = `требует платформу ≥ <span class="mono">${esc_html(plat)}</span>, предыдущий релиз шёл на <span class="mono">${esc_html(e.raised_from)}</span> — без обновления платформы не встанет`; }
+  return `<div class="news-row">
+    ${fav_btn(c.id)}
+    <div class="news-row-main"><a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a>${sub ? `<div class="news-row-sub">${sub}</div>` : ''}</div>
+    <span class="news-row-lts">${tag}</span>
+    <span class="news-row-ver"><span>${esc_html(e.version)}</span></span>
+    <span class="news-row-plat">${plat ? `<a href="/platform?build=${plat}" title="Минимальная платформа">≥ ${plat}</a>` : ''}</span>
+  </div>`;
+}
+// A day's patches of one version: one row, the count and what the first ones fix.
+function news_patch_row(e, c) {
+  const n = e.count || 1;
+  const nick = c.nick || nick_from_href(c.url_1c || '');
+  const href = nick ? 'https://releases.1c.ru/patches/total?nick=' + encodeURIComponent(nick) + '&ver=' + encodeURIComponent(e.version) : '/config/' + c.id;
+  const sub = n + ' ' + ru_plural(n, 'исправление', 'исправления', 'исправлений') + ((e.titles || []).length ? ': ' + esc_html(e.titles[0]) : '');
+  return `<div class="news-row news-row-patch">
+    ${fav_btn(c.id)}
+    <div class="news-row-main"><a class="news-row-name" href="/config/${c.id}">${esc_html(c.name)}</a><div class="news-row-sub" title="${esc_html((e.titles || []).join('\n'))}">${sub}</div></div>
+    <span class="news-row-lts"><span class="badge badge-gray" title="Исправления (патчи) к версии">патчи</span></span>
+    <span class="news-row-ver"><a href="${href}" target="_blank" rel="noopener" title="Патчи версии на releases.1c.ru">${esc_html(e.version)}</a></span>
+    <span class="news-row-plat"></span>
+  </div>`;
+}
+// The day's patches: one line «Патчи: N для M конфигураций», the rows unfold (open at once
+// under «Мои» — there they are few and wanted).
+function news_patches_block(date, pat, nPat, byId) {
+  const cfgs = new Set(pat.map(e => e.config_id)).size;
+  const open = NEWS.mine || NEWS.openPat[date];
+  return `<div class="news-patches">
+    <button type="button" class="news-patches-head${open ? ' open' : ''}" onclick="NEWS.openPat['${date}']=!NEWS.openPat['${date}']; news_render()">
+      ${icn_chevron_r()} Патчи: <b>${nPat}</b> ${ru_plural(nPat, 'исправление', 'исправления', 'исправлений')} для ${cfgs} ${ru_plural(cfgs, 'конфигурации', 'конфигураций', 'конфигураций')}</button>
+    ${open ? `<div class="news-rows">${pat.map(e => news_patch_row(e, byId.get(String(e.config_id)))).join('')}</div>` : ''}
+  </div>`;
+}
+// The things worth a headline: new platform builds, raised requirements,
+// a product's first release, a move to 8.5, ended long-term support.
+function news_highlight(e, c) {
+  if (e.type === 'platform_build') {
+    return `<a class="news-hl" href="/platform?build=${e.build}">
+      <span class="news-hl-kind">платформа</span>
+      <span class="news-hl-text">Новая сборка платформы <b class="mono">${esc_html(e.build)}</b>${e.os && e.os.length ? `<span class="news-hl-sub">${os_cell(e.os)}</span>` : ''}</span></a>`;
+  }
+  const head = `${fav_btn(c.id)}<a class="news-hl-text" href="/config/${c.id}">`;
+  if (e.type === 'to85') return `<div class="news-hl"><span class="news-hl-kind k85">8.5</span>${head}<b>${esc_html(c.name)}</b> выпускает релизы под платформу 8.5
+      <span class="news-hl-sub">первый такой — ${esc_html(e.version)}, требования: ${esc_html(e.platform || '')}</span></a></div>`;
+  if (e.type === 'lts_end') return `<div class="news-hl"><span class="news-hl-kind klts">ДП</span>${head}Закончилась длительная поддержка ветки <b class="mono">${esc_html(e.lts_line)}.x</b>
+      <span class="news-hl-sub">${esc_html(c.name)}</span></a></div>`;
+  if (e.first) return `<div class="news-hl"><span class="news-hl-kind knew">новое</span>${head}Новый продукт в каталоге: <b>${esc_html(c.name)}</b>
+      <span class="news-hl-sub">первый релиз ${esc_html(e.version)}</span></a></div>`;
+  const plat = (String(e.platform || '').match(/\d+\.\d+\.\d+\.\d+/) || [''])[0];
+  return `<div class="news-hl"><span class="news-hl-kind kup">платформа ↑</span>${head}<b>${esc_html(c.name)}</b> ${esc_html(e.version)} требует платформу
+      <b class="mono">≥ ${esc_html(plat)}</b><span class="news-hl-sub">предыдущий релиз шёл на ${esc_html(e.raised_from)} — без обновления платформы не встанет</span></a></div>`;
+}
+
+function news_render() {
+  const f = document.getElementById('news-filters'); if (f) f.innerHTML = news_filters_html();
+  const s = document.getElementById('news-soon'); if (s) s.innerHTML = news_soon_html();
+  const box = document.getElementById('news-feed');
+  if (!box || !NEWS.data) return;
+  const byId = new Map(CONFIGS.map(c => [c.id, c]));
+  const events = NEWS.data.events.filter(e => e.type === 'platform_build' ? !NEWS.mine && !NEWS.line : news_pass(byId.get(String(e.config_id))));
+  if (NEWS.mine && !FAV.size) {
+    box.innerHTML = `<div class="empty"><div class="empty-title">Пока нет «Моих конфигураций»</div>
+      <div class="empty-sub">Отметьте звёздочкой ★ нужные конфигурации в <a href="/catalog">каталоге</a> или на их странице — здесь будут только их новости.</div></div>`;
+    return;
+  }
+  const days = new Map();
+  events.forEach(e => { (days.get(e.date) || days.set(e.date, []).get(e.date)).push(e); });
+  let html = '';
+  for (const [date, list] of days) {
+    const hl = list.filter(e => e.type === 'platform_build' || e.type === 'lts_end');
+    const notable = e => (e.to85 ? 0 : e.first ? 1 : e.raised_from ? 2 : 3);
+    // A move to 8.5 is reported next to its release row, not as a second row.
+    const to85 = new Map(list.filter(e => e.type === 'to85').map(e => [e.config_id + ':' + e.version, e]));
+    const rel = list.filter(e => e.type === 'release').map(e => to85.has(e.config_id + ':' + e.version) ? { ...e, to85: true } : e)
+      .sort((a, b) => notable(a) - notable(b) || main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
+    const LIMIT = 8, open = NEWS.open[date];
+    const shown = open ? rel : rel.slice(0, LIMIT);
+    const pat = list.filter(e => e.type === 'patch').sort((a, b) => main_cmp(byId.get(String(a.config_id)), byId.get(String(b.config_id))));
+    const nRel = list.filter(e => e.type === 'release').length;
+    const nPat = pat.reduce((a, e) => a + (e.count || 1), 0);
+    html += `<section class="news-day fade-up">
+      <div class="news-day-head"><span>${news_day_label(date)}</span>
+        <span class="news-day-count">${[nRel ? nRel + ' ' + ru_plural(nRel, 'релиз', 'релиза', 'релизов') : '', nPat ? nPat + ' ' + ru_plural(nPat, 'патч', 'патча', 'патчей') : ''].filter(Boolean).join(' · ')}</span></div>
+      ${hl.map(e => news_highlight(e, byId.get(String(e.config_id)))).join('')}
+      ${shown.length ? `<div class="news-rows">${shown.map(e => news_release_row(e, byId.get(String(e.config_id)))).join('')}</div>` : ''}
+      ${pat.length ? news_patches_block(date, pat, nPat, byId) : ''}
+      ${rel.length > LIMIT ? `<button class="st-more" onclick="NEWS.open['${date}']=!NEWS.open['${date}']; news_render()">${open ? 'Свернуть' : 'Ещё ' + (rel.length - LIMIT) + ' ' + ru_plural(rel.length - LIMIT, 'релиз', 'релиза', 'релизов')}</button>` : ''}
+    </section>`;
+  }
+  box.innerHTML = (html || `<div class="empty"><div class="empty-title">За ${NEWS.days} дней ничего</div>
+      <div class="empty-sub">${NEWS.mine ? 'У ваших конфигураций не было релизов.' : 'Попробуйте снять фильтры.'}</div></div>`)
+    + (NEWS.days < 180 ? `<div style="text-align:center;margin:8px 0 32px"><button class="btn btn-secondary btn-sm" id="news-more" onclick="news_more()">Показать ещё 30 дней</button></div>` : '');
+}
+
+/* ================================================================
+   PLATFORM VIEW — builds of 1С:Предприятие and what configurations need
+   ================================================================ */
+let PLATFORM_DATA = null;
+const OS_TITLE = { win64: 'Windows, 64-bit', win32: 'Windows, 32-bit', linux64: 'Linux, 64-bit', linux32: 'Linux, 32-bit',
+  arm64: 'Linux на ARM (64-bit)', e2k: 'Linux на Эльбрус-8С', mac: 'macOS' };
+const PL_STATE = { line: null, allLines: false };
+// One chip per OS family; 32-bit rides along ("Windows 64/32") so a row stays short.
+const OS_GROUPS = [
+  { label: 'Windows', tags: ['win64', 'win32'] }, { label: 'Linux', tags: ['linux64', 'linux32'] },
+  { label: 'ARM', tags: ['arm64'] }, { label: 'Эльбрус', tags: ['e2k'] }, { label: 'macOS', tags: ['mac'] },
+];
+// Every row shows its full set; what is new against the next older row (lists
+// run newest first) is highlighted — that is where ARM appears or 32-bit goes.
+function os_cell(os, older) {
+  if (!os || !os.length) return '<span style="color:var(--text-light)" title="Нет данных о сборке">—</span>';
+  return OS_GROUPS.filter(g => g.tags.some(t => os.includes(t))).map(g => {
+    const bits = g.tags.length > 1 ? (os.includes(g.tags[0]) && os.includes(g.tags[1]) ? ' 64/32' : os.includes(g.tags[1]) ? ' 32' : '') : '';
+    const added = older && older.length ? g.tags.filter(t => os.includes(t) && !older.includes(t)) : [];
+    const title = g.tags.filter(t => os.includes(t)).map(t => OS_TITLE[t]).join(', ')
+      + (added.length ? ' — новое в этой версии: ' + added.map(t => OS_TITLE[t]).join(', ') : '');
+    return `<span class="os-chip${added.length ? ' new' : ''}" title="${title}">${g.label}${bits}</span>`;
+  }).join('');
+}
+const ver_cmp = (a, b) => platform_cmp_v(a, b);
+const line_of = v => String(v).split('.').slice(0, 3).join('.');
+
+function render_platform() {
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Платформа 1С:Предприятие</div>
+      <a class="btn btn-secondary btn-sm" href="/install" title="Одна команда: скачать дистрибутив с портала 1С и установить">${icn_term()} Установка одной командой</a></div>
+    <div id="pl-root">${render_loading('Загрузка сборок платформы...')}</div>
+  </div>`;
+}
+async function bind_platform() {
+  tip_init();
+  try {
+    const [p, m] = await Promise.all([
+      PLATFORM_DATA || apiFetch('/api/platform'),
+      STATS_MORE || apiFetch('/api/stats/more').catch(() => null),
+    ]);
+    PLATFORM_DATA = p; if (m) STATS_MORE = m;
+  } catch (e) {
+    const r = document.getElementById('pl-root');
+    if (r) r.innerHTML = '<div class="empty"><div class="empty-title">Не удалось загрузить данные о платформе</div></div>';
+    return;
+  }
+  const params = parse_route().params;
+  const lines = platform_lines();
+  PL_STATE.build = params.build || '';
+  PL_STATE.line = params.line && lines.some(l => l.line === params.line) ? params.line
+    : params.build ? line_of(params.build)
+    : (lines.find(l => l.gen === '8.3') || lines[0] || {}).line;
+  if (PL_STATE.line && !lines.some(l => l.line === PL_STATE.line)) PL_STATE.allLines = true;
+  const root = document.getElementById('pl-root');
+  if (!root) return;
+  root.innerHTML = platform_page_html();
+  const v = pc_saved();
+  if (v) pc_run(v);
+  if (params.build || params.line) {
+    // After route() has put the page at the top.
+    setTimeout(() => {
+      const el = document.getElementById(params.build ? 'pl-b-' + params.build.replace(/\./g, '-') : 'pl-builds');
+      if (el) el.scrollIntoView({ block: params.build ? 'center' : 'start', behavior: 'instant' });
+    }, 0);
+  }
+}
+
+// Lines (8.3.27 …) from the builds: dates, counts, the newest build's OS.
+function platform_lines() {
+  const by = new Map();
+  (PLATFORM_DATA ? PLATFORM_DATA.builds : []).forEach(b => {
+    const l = by.get(b.line) || { line: b.line, gen: b.line.split('.').slice(0, 2).join('.'), builds: [] };
+    l.builds.push(b);
+    by.set(b.line, l);
+  });
+  return [...by.values()].map(l => {
+    l.builds.sort((a, b) => ver_cmp(b.v, a.v));
+    l.newest = l.builds[0]; l.oldest = l.builds[l.builds.length - 1];
+    return l;
+  }).sort((a, b) => ver_cmp(b.line, a.line));
+}
+
+function platform_page_html() {
+  const p = PLATFORM_DATA;
+  const lines = platform_lines();
+  const live = stats_live();
+  const liveIds = new Set(live.map(c => c.id));
+  const withReq = live.filter(c => p.required[c.id]);
+  const newest = gen => lines.find(l => l.gen === gen);
+  const n83 = newest('8.3'), n85 = newest('8.5');
+  const cnt = gen => lines.filter(l => l.gen === gen).reduce((s, l) => s + l.builds.length, 0);
+  const first83 = lines.filter(l => l.gen === '8.3').map(l => l.oldest).sort((a, b) => ver_cmp(a.v, b.v))[0];
+  const kpi = (label, value, sub, href) => `<${href ? `a href="${href}"` : 'div'} class="kpi"><div class="kpi-label">${label}</div>
+      <div class="kpi-value pl-ver">${value}</div><div class="kpi-sub">${sub}</div></${href ? 'a' : 'div'}>`;
+
+  // ── Coverage: on the newest build of each line, whose newest release installs ──
+  const cov = p.coverage.slice().sort((a, b) => ver_cmp(b.line, a.line));
+  const best = Math.max(0, ...cov.map(r => r.ok.filter(id => liveIds.has(String(id))).length));
+  const covRows = cov.map(r => {
+    const ok = r.ok.filter(id => liveIds.has(String(id))).length;
+    const unk = r.unknown.filter(id => liveIds.has(String(id))).length;
+    const total = withReq.length;
+    return st_hrow({
+      name: r.line + `<small>${r.build.split('.').pop()}</small>`,
+      val: `${nfmt(ok)} <span><span class="hide-sm">из ${nfmt(total)} </span>· ${pct_text(ok, total)}</span>`, w: total ? ok / total * 100 : 0,
+      cls: ok === best && ok ? 'emph' : '',
+      href: '/platform?line=' + r.line,
+      tip: { v: `${nfmt(ok)} из ${nfmt(total)} · ${pct_text(ok, total)}`, l: `На ${r.build} встанут последние релизы`,
+             s: [unk ? `ещё у ${unk} эта платформа в требованиях не указана` : '', total - ok - unk ? `${total - ok - unk} нужна платформа новее` : ''],
+             h: 'Нажмите — сборки этой линейки' },
+    });
+  }).join('');
+
+  // ── Lines table ──
+  const reqLine = new Map();   // line → live configs whose newest release needs at least this line
+  withReq.forEach(c => { const l = line_of(p.required[c.id]); (reqLine.get(l) || reqLine.set(l, []).get(l)).push(c); });
+  const RECENT = [8, 3, 20];
+  const isRecent = l => l.gen === '8.5' || ver_cmp(l.line, RECENT.join('.')) >= 0;
+  const shownLines = PL_STATE.allLines ? lines : lines.filter(isRecent);
+  const lineRows = shownLines.map((l, i) => {
+    const need = reqLine.get(l.line) || [];
+    const on = l.line === PL_STATE.line;
+    return `<tr class="${on ? 'sel' : ''}" onclick="pl_pick_line('${l.line}')" tabindex="0" onkeydown="if(event.key==='Enter')pl_pick_line('${l.line}')"
+        ${tip_attr({ v: `Линейка ${l.line}`, l: `${l.builds.length} ${ru_plural(l.builds.length, 'сборка', 'сборки', 'сборок')}, ${l.oldest.date ? fmt_date(l.oldest.date) : '?'} — ${l.newest.date ? fmt_date(l.newest.date) : '?'}`,
+          s: need.length ? [`минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, st_examples(need)] : [],
+          h: 'Нажмите — сборки линейки' })}>
+      <td class="mono"><b>${l.line}</b>${on ? ' <span class="sel-tag" title="Сборки этой линейки — ниже">сборки ниже ↓</span>' : ''}</td>
+      <td>${l.builds.length}</td>
+      <td class="mono">${l.oldest.v.split('.').pop()} <small>${l.oldest.date ? fmt_date(l.oldest.date) : ''}</small></td>
+      <td class="mono">${l.newest.v.split('.').pop()} <small>${l.newest.date ? fmt_date(l.newest.date) : ''}</small></td>
+      <td>${need.length || '<span style="color:var(--text-light)">—</span>'}</td>
+      <td class="os-cell">${os_cell(l.newest.os, i + 1 < shownLines.length ? shownLines[i + 1].newest.os : null)}</td>
+    </tr>`;
+  }).join('');
+  const hiddenLines = lines.length - lines.filter(isRecent).length;
+
+  return `
+    <div class="kpi-row fade-up">
+      ${n83 ? kpi('8.3 · актуальная', n83.newest.v, n83.newest.date ? fmt_date(n83.newest.date) + ' · ' + days_ago(n83.newest.date) : '', '/platform?line=' + n83.line) : ''}
+      ${n85 ? kpi('8.5 · актуальная', n85.newest.v, n85.newest.date ? fmt_date(n85.newest.date) + ' · ' + days_ago(n85.newest.date) : '', '/platform?line=' + n85.line) : ''}
+      ${kpi('Мобильная платформа', esc_html(p.current.mobile85 || p.current.mobile || '—'), p.current.mobile85 && p.current.mobile ? '8.3: ' + esc_html(p.current.mobile) : 'для мобильных приложений')}
+      ${kpi('Сборок в каталоге', nfmt(cnt('8.3') + cnt('8.5')), `8.3 — ${cnt('8.3')}${first83 && first83.date ? ' с ' + first83.date.slice(0, 4) + ' года' : ''}, 8.5 — ${cnt('8.5')}`)}
+    </div>
+
+    <div class="st-section">Какую платформу ставить</div>
+    <div class="st-grid">
+      ${st_card('На какой линейке встанут последние релизы', `из ${nfmt(withReq.length)} актуальных конфигураций с требованиями`,
+        (covRows || '<div class="st-empty">Нет данных</div>')
+        + `<div class="st-foot">Для каждой конфигурации берём требования её последнего релиза на releases.1c.ru и проверяем на самой новой сборке линейки.
+           Для 8.5 у большинства в требованиях пока указана только 8.3 — их не считаем.</div>`)}
+      <div id="check">${platform_check_html()}</div>
+    </div>
+
+    <div class="st-section">Линейки</div>
+    ${st_card('Линейки платформы', 'нажмите на линейку — ниже её сборки', `<div class="st-table-wrap"><table class="st-table pl-lines">
+      <thead><tr><th>Линейка</th><th>Сборок</th><th>Первая</th><th>Последняя</th><th title="Для скольких актуальных конфигураций это минимальная линейка последнего релиза">Минимум для</th><th title="ОС самой новой сборки линейки; подсвечено то, чего не было в предыдущей линейке">ОС</th></tr></thead>
+      <tbody>${lineRows}</tbody></table></div>
+      ${hiddenLines || PL_STATE.allLines ? `<button class="st-more" onclick="PL_STATE.allLines=!PL_STATE.allLines; document.getElementById('pl-root').innerHTML=platform_page_html()">${PL_STATE.allLines ? 'Только свежие линейки' : 'Все линейки (' + lines.length + ')'}</button>` : ''}`)}
+
+    <div id="pl-builds">${platform_builds_html()}</div>
+
+    <div class="st-section">Переход на ${PLATFORM_NEWEST}</div>
+    <div class="st-grid">
+      <div id="st-a-85">${plat85_card_html(STATS_MORE)}</div>
+      ${platform_on85_html()}
+    </div>`;
+}
+
+// Builds of the selected line: dates, OS, release notes, known errors, and
+// which configurations name exactly this build as their minimum.
+function platform_builds_html() {
+  const l = platform_lines().find(x => x.line === PL_STATE.line);
+  if (!l) return '';
+  const live = stats_live();
+  const p = PLATFORM_DATA;
+  const exact = new Map();
+  live.forEach(c => { const r = p.required[c.id]; if (r && line_of(r) === l.line) (exact.get(r) || exact.set(r, []).get(r)).push(c); });
+  const rows = l.builds.map((b, i) => {
+    const need = exact.get(b.v) || [];
+    const sel = b.v === PL_STATE.build;
+    return `<tr id="pl-b-${b.v.replace(/\./g, '-')}" class="${sel ? 'sel' : ''}">
+      <td class="mono"><b>${b.v}</b>${b === l.newest ? ' <span class="badge badge-blue" style="font-size:10px;padding:1px 6px">новая</span>' : ''}${sel ? ' <span class="sel-tag" title="Эта сборка указана в ссылке — например, как минимальная платформа конфигурации">выбрана</span>' : ''}</td>
+      <td>${b.date ? fmt_date(b.date) : '—'}</td>
+      <td class="os-cell">${os_cell(b.os, i + 1 < l.builds.length ? l.builds[i + 1].os : null)}</td>
+      <td>${need.length ? `<span class="pl-need"${tip_attr({ v: `Минимум для ${need.length} ${ru_plural(need.length, 'конфигурации', 'конфигураций', 'конфигураций')}`, l: 'последний релиз требует эту сборку',
+          s: need.slice().sort(main_cmp).slice(0, 6).map(c => c.name).concat(need.length > 6 ? ['и ещё ' + (need.length - 6)] : []) })} tabindex="0">${need.length}</span>` : ''}</td>
+      <td class="pl-links">${/^8\.[35]\./.test(b.v) ? `<button type="button" class="pl-install" onclick="open_platform_script('${b.v}')" title="Скрипт для Windows или Linux: скачает дистрибутив и установит платформу">установить</button>` : ''}${b.notes ? `<a href="${esc_html(b.notes)}" target="_blank" rel="noopener">изменения</a>` : ''}${b.bugs ? `<a href="${esc_html(b.bugs)}" target="_blank" rel="noopener">ошибки</a>` : ''}</td>
+    </tr>`;
+  }).join('');
+  const missing = PL_STATE.build && line_of(PL_STATE.build) === l.line && !l.builds.some(b => b.v === PL_STATE.build)
+    ? `<div class="st-foot" style="margin:0 0 10px">Сборки ${esc_html(PL_STATE.build)} нет в каталоге releases.1c.ru — ближайшие ниже.</div>` : '';
+  return `<div class="st-section">Сборки ${l.line}</div>
+    ${st_card(`Сборки линейки ${l.line}`, `${l.builds.length} ${ru_plural(l.builds.length, 'сборка', 'сборки', 'сборок')}, новые сверху`,
+      missing + `<div class="st-table-wrap"><table class="st-table pl-builds">
+        <thead><tr><th>Сборка</th><th>Вышла</th><th title="Подсвечено то, чего не было в предыдущей сборке">ОС</th><th title="Для скольких актуальных конфигураций это минимальная сборка последнего релиза">Минимум для</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+        <div class="st-foot">Ссылки ведут на releases.1c.ru (список изменений) и bugboard.1c.ru (известные ошибки сборки) — нужен вход в ИТС.</div>`)}`;
+}
+function pl_pick_line(line) {
+  PL_STATE.line = line; PL_STATE.build = '';
+  history.replaceState(null, '', '/platform?line=' + line);
+  const root = document.getElementById('pl-root');
+  if (root) root.innerHTML = platform_page_html();
+  const v = pc_saved(); if (v) pc_run(v);
+  const b = document.getElementById('pl-builds');
+  if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Who already ships releases for 8.5 (any edition currently in the catalog).
+function platform_on85_html() {
+  const on = stats_current().filter(c => c.platform && platform_cmp(c.platform, PLATFORM_NEWEST) >= 0).sort(main_cmp);
+  return st_card(`Уже на ${PLATFORM_NEWEST}`, `${on.length} ${ru_plural(on.length, 'конфигурация', 'конфигурации', 'конфигураций')}`,
+    on.length ? on.map(c => st_lrow({ name: esc_html(c.name), val: `<span>${esc_html(c.latestV || '')}</span>`, href: '/config/' + c.id,
+      tip: { v: c.name, l: 'последний релиз требует ' + (c.latestPlat || PLATFORM_NEWEST), h: 'Нажмите — открыть конфигурацию' } })).join('')
+      + `<div class="st-foot"><a href="/catalog?plat=${PLATFORM_NEWEST}">Открыть в каталоге →</a></div>`
+      : '<div class="st-empty">Пока ни одной</div>');
+}
+
+function render_stats() {
+  return `<div class="wrap">
+    <div class="page-head"><div class="page-title">Статистика</div></div>
+    <div class="kpi-row fade-up">
+      <a class="kpi" href="/catalog?stale=1"${tip_attr({ v: DB_META.total_configs.toLocaleString('ru') + ' конфигураций', l: 'Актуальные редакции, вместе с устаревшими', h: 'Нажмите — открыть каталог' })}><div class="kpi-label">Конфигурации</div><div class="kpi-value">${DB_META.total_configs.toLocaleString('ru')}</div><div class="kpi-sub">актуальные редакции</div></a>
+      <a class="kpi" href="/catalog?legacy=1&stale=1"${tip_attr({ v: DB_META.total_editions.toLocaleString('ru') + ' редакций', l: 'Все редакции, вместе с предыдущими', h: 'Нажмите — открыть каталог' })}><div class="kpi-label">Редакции</div><div class="kpi-value">${DB_META.total_editions.toLocaleString('ru')}</div><div class="kpi-sub">вместе с предыдущими</div></a>
+      <div class="kpi"><div class="kpi-label">Версии</div><div class="kpi-value">${(DB_META.total_versions||0).toLocaleString('ru')}</div><div class="kpi-sub">в цепочках обновлений</div></div>
+      <a class="kpi" href="/catalog?sort=date_desc"${tip_attr({ v: 'Последние релизы', l: 'Каталог, отсортированный по дате выхода', h: 'Нажмите — открыть каталог' })}><div class="kpi-label">Обновление базы</div><div class="kpi-value">${DB_META.last_updated ? days_ago(DB_META.last_updated) : '—'}</div><div class="kpi-sub">${DB_META.last_updated ? fmt_date(DB_META.last_updated) : 'импортов ещё не было'}</div></a>
+    </div>
+    <div class="fade-up fade-up-1">
+      <div class="st-section">Платформа и актуальность</div>
+      <div class="st-grid">${platform_card_html()}${freshness_card_html()}</div>
+      <div class="st-section">Что впереди</div>
+      <div class="st-grid">${calendar_card_html()}<div id="st-a-85">${plat85_card_html(STATS_MORE)}</div></div>
+      <div class="st-section">Динамика релизов</div>
+      <div class="st-grid"><div id="st-a-years">${years_card_html(STATS_MORE)}</div><div id="st-a-wd">${weekdays_card_html(STATS_MORE)}</div></div>
+      <div class="st-section">Экосистема</div>
+      <div class="st-grid">${lines_card_html()}${vendors_card_html()}</div>
+      <div class="st-grid">${industries_card_html()}${trans_card_html(STATS_MORE)}</div>
+      <div class="st-section">Цепочки и частота</div>
+      <div class="st-grid">${chains_card_html(STATS_MORE)}${freq_card_html()}</div>
+      <div id="st-checks">${chain_checks_html()}</div>
+    </div>
+  </div>`;
+}
+
+/* ================================================================
+   SETTINGS VIEW
+   ================================================================ */
+function render_settings() {
+  const th = current_theme();
+  const pc = pref_country();
+  const regions = [...new Set(CONFIGS.flatMap(c => c.regions))]
+    .filter(r => r !== 'stdlib' && r !== 'intl')
+    .sort((a, b) => (b === 'ru') - (a === 'ru') || region_label(a).localeCompare(region_label(b), 'ru'));
+  return `<div class="wrap" style="max-width:720px">
+    <div class="page-head"><div class="page-title">Настройки</div></div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Моя страна</div>
+      <div class="settings-section-sub">Конфигурации этой страны идут первыми в каталоге (сортировка «Сначала основные») и в «Последних обновлениях»; у продуктов других стран на карточке виден бейдж страны.</div>
+      <select class="select" style="max-width:280px" onchange="set_country(this.value)">
+        ${regions.map(r => `<option value="${r}"${r === pc ? ' selected' : ''}>${region_label(r)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Тема оформления</div>
+      <div class="settings-section-sub">По умолчанию используется системная тема браузера</div>
+      <div class="theme-opts">
+        <div class="theme-opt ${th==='auto'?'active':''}" onclick="set_theme('auto')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 010 20V2z"/></svg>
+          Авто
+        </div>
+        <div class="theme-opt ${th==='light'?'active':''}" onclick="set_theme('light')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+          Светлая
+        </div>
+        <div class="theme-opt ${th==='dark'?'active':''}" onclick="set_theme('dark')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          Тёмная
+        </div>
+      </div>
+    </div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Приложение</div>
+      <div class="settings-section-sub">Апдейкон устанавливается на компьютер и телефон как обычное приложение</div>
+      <div class="app-install" id="app-install">${install_section_body()}</div>
+    </div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-title">Уведомления</div>
+      <div class="settings-section-sub">Push о релизах «Моих конфигураций» — на телефон и компьютер, без почты и регистрации</div>
+      <div class="app-install" id="push-section"><div class="app-install-text">…</div></div>
+    </div>
+    <div class="settings-section fade-up fade-up-2">
+      <div class="settings-section-title">API</div>
+      <div class="settings-section-sub">Открытое HTTP API Апдейкона: JSON (скрипты — текстом), без ключей и регистрации. Нажмите на пример, чтобы открыть ответ.</div>
+      <div class="api-list">
+        ${api_rows().map(r => `<div class="api-row">
+          <div class="api-head"><span class="api-method">GET</span><code class="api-path">${esc_html(r.path)}</code></div>
+          <div class="api-desc">${r.desc}</div>
+          ${r.example ? `<a class="api-example" href="${esc_html(r.example)}" target="_blank" rel="noopener">${esc_html(r.example)}</a>` : ''}
+        </div>`).join('')}
+      </div>
+    </div>
+    ${SITE.adminLink ? `<div class="settings-section fade-up fade-up-3">
+      <div class="settings-section-title">Администрирование</div>
+      <div class="settings-section-sub">Управление импортом, логи и конфигурация сервера</div>
+      <div style="margin-top:12px">
+        <a href="${esc_html(SITE.adminLink)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;padding:9px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-xs);font-size:13px;color:var(--text);text-decoration:none;transition:border-color .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;flex-shrink:0;color:var(--accent)"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          Панель администратора ↗
+        </a>
+      </div>
+    </div>` : ''}
+  </div>`;
+}
+// The public API, as listed on the Settings page (examples use БП 3.0, id 96).
+function api_rows() {
+  return [
+    { path: '/api/configs', desc: 'Все конфигурации: название, разработчик, последняя версия, платформа, линейки, страны.', example: '/api/configs' },
+    { path: '/api/configs?version=<версия>', desc: 'Какие конфигурации знают эту версию — так главная страница находит конфигурацию по номеру.', example: '/api/configs?version=3.0.193.19' },
+    { path: '/api/version-news?config_id=<id>&version=<версия>', desc: '«Что нового» версии: очищенный HTML и текст из файла «Новое в версии» на releases.1c.ru (для типовых 1С — с публичной страницы news.webits.1c.ru), источник.', example: '/api/version-news?config_id=96&version=3.0.208.14' },
+    { path: '/api/graph?config_id=<id>', desc: 'Граф обновлений конфигурации: рёбра [из, в, путь .cfu] — то, из чего строится цепочка; приложение хранит его для «Моих конфигураций» и строит цепочки без сети.', example: '/api/graph?config_id=96' },
+    { path: '/api/chain-checks', desc: 'Сверка наших цепочек с сервисом обновлений 1С (update-api.1c.ru) по типовым конфигурациям: итоги по статусам и расхождения; в /api/chain для проверенной исходной версии поле <code>official</code>.', example: '/api/chain-checks' },
+    { path: '/api/push/key · POST /api/push/subscribe', desc: 'Web Push: публичный VAPID-ключ и подписка {subscription, config_ids} на релизы выбранных конфигураций (страница делает это сама кнопкой «Включить уведомления»).', example: '/api/push/key' },
+    { path: '/api/versions/suggest?q=<префикс>', desc: 'Подсказки версий по началу номера (как на главной): версия и число конфигураций, новые первыми, до 12 строк.', example: '/api/versions/suggest?q=3.0.20' },
+    { path: '/api/versions?config_id=<id>', desc: 'Версии конфигурации: даты выхода, минимальная платформа, файлы обновления .cfu, а в <code>files</code> — готовые ссылки на releases.1c.ru: <code>update</code> (обновление), <code>full</code> (полный дистрибутив), <code>tech</code>, <code>news</code>, <code>order</code>, <code>page</code>.', example: '/api/versions?config_id=96' },
+    { path: '/api/files?config_id=<id>&version=<версия>', desc: 'Файлы одной версии с готовыми ссылками: <code>full</code> — полный дистрибутив, <code>update</code> — обновление, <code>news</code>, <code>order</code>, <code>tech</code>, <code>page</code> — все файлы на releases.1c.ru, <code>cfu</code> — файл обновления для конфигуратора на downloads.v8.1c.ru. Без <code>version</code> — старшая (актуальная) версия. <code>read: false</code> — список файлов на портале ещё не прочитан, работает <code>links.page</code>.', example: '/api/files?config_id=96' },
+    { path: '/api/chain?config_id=<id>&from=<версия>&to=<версия>', desc: 'Цепочка обновлений: шаги по порядку, файл .cfu, дата, размер (<code>sizeBytes</code>, если прочитан), патчи (<code>patches</code>, <code>patchesUrl</code>) и начало «Что нового» (<code>news</code>) каждого шага; <code>totalBytes</code> / <code>sizesKnown</code> для оценки времени.', example: '/api/chain?config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/transitions?config_id=<id>', desc: 'Переходы на другие продукты и редакции и с них.', example: '/api/transitions?config_id=96' },
+    { path: '/api/exchanges?config_id=<id>', desc: 'Обмены (синхронизация) и переходы (перенос данных) типовых конфигураций по реестру 1CExchenge: механизм, план обмена, объекты, в какой поставке найдено, версии EnterpriseData. Без <code>config_id</code> — все связи.', example: '/api/exchanges?config_id=96' },
+    { path: '/api/news?days=<дней>', desc: 'Лента событий: релизы, новые сборки платформы, повышение требований, конец длительной поддержки.', example: '/api/news?days=7' },
+    { path: '/api/platform', desc: 'Сборки платформы 8.2, 8.3, 8.5: даты, ОС, ссылки на изменения и ошибки; минимальная платформа конфигураций.', example: '/api/platform' },
+    { path: '/api/stats, /api/stats/more', desc: 'Статистика базы: числа, релизы по годам и дням недели, линейки, разработчики, цепочки.', example: '/api/stats/more' },
+    { path: '/api/script/chain?os=windows|linux&config_id=<id>&from=<версия>&to=<версия>', desc: 'Скрипт обновления по цепочке (PowerShell или bash): скачивает обновления и ставит их на базу.', example: '/api/script/chain?os=linux&config_id=96&from=3.0.193.19&to=3.0.207.25' },
+    { path: '/api/script/platform?os=windows|linux&version=<сборка>', desc: 'Скрипт установки платформы: скачивает дистрибутив с портала 1С и устанавливает.', example: '/api/script/platform?os=linux&version=8.3.27.2342' },
+  ];
+}
+function bind_settings() { push_render(); }
+
+/* ================================================================
+   INSTALL — the platform installer page (/install)
+   ================================================================ */
+function ins_copy(btn, id) {
+  const t = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(t).then(() => { btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1500); })
+    .catch(() => prompt('Скопируйте команду:', t));
+}
+function render_install() {
+  const cur = PLATFORM_DATA && PLATFORM_DATA.current ? PLATFORM_DATA.current : {};
+  const l83 = cur.Platform83 || '8.3.x', l85 = cur.Platform85 || '8.5.x';
+  const site = location.origin;
+  const win = `$ver='8.5'; irm ${site}/1c | iex`;
+  const lin = `sudo bash -c "$(curl -fsSL ${site}/1c.sh)" -- --version 8.5`;
+  return `<div class="wrap" style="max-width:860px">
+    <div class="page-head"><div class="page-title">Установка платформы 1С одной командой</div></div>
+    <div class="settings-section fade-up">
+      <div class="settings-section-sub" style="margin-bottom:14px">Скрипт сам скачивает дистрибутив с портала 1С под вашей учётной записью ИТС и ставит платформу без вопросов. Логин и пароль уходят только на серверы 1С — в скрипт, на этот сайт и куда-либо ещё они не попадают. Скрипт открывается в любом редакторе: в нём нет ничего скрытого.</div>
+      <div class="settings-section-title">Windows</div>
+      <div class="ins-note">PowerShell <b>от имени администратора</b>. <code>$ver='8.5'</code> — какую линейку ставить; без него скрипт покажет меню.</div>
+      <div class="ins-cmd"><code id="ins-win">${esc_html(win)}</code><button class="btn btn-secondary btn-sm" onclick="ins_copy(this,'ins-win')">Копировать</button></div>
+      <div class="settings-section-title" style="margin-top:18px">Linux</div>
+      <div class="ins-note">Debian, Ubuntu, RHEL, Astra и другие с systemd. Ставит сервер 1С и модули веб-сервера; с <code>--mode full</code> ещё и клиент.</div>
+      <div class="ins-cmd"><code id="ins-lin">${esc_html(lin)}</code><button class="btn btn-secondary btn-sm" onclick="ins_copy(this,'ins-lin')">Копировать</button></div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-1">
+      <div class="settings-section-title">Как это выглядит</div>
+      <div class="settings-section-sub">Сначала обзор, потом меню. После каждого действия — снова меню, пока не выбрать «Выход».</div>
+      <div class="ins-menu">Установлено на этом компьютере:
+  8.3.24.1819    клиент, конфигуратор
+  8.3.27.1688    клиент, конфигуратор, сервер (служба работает), COM
+Доступно на портале 1С:
+  8.3  →  ${esc_html(l83)}
+  8.5  →  ${esc_html(l85)}
+
+Что сделать?
+  *1 — Обновить 8.3: 8.3.27.1688 → ${esc_html(l83)}
+   2 — Установить 8.5 (${esc_html(l85)})
+   3 — Установить другую сборку (ввести номер или линейку)
+   4 — Удалить старые версии платформы
+   5 — Только проверить вход на портал 1С
+   6 — Выход</div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-2">
+      <div class="settings-section-title">Что умеет</div>
+      <div class="ins-grid" style="margin-top:14px">
+        <div class="ins-card"><b>Видит, что установлено</b><p>Версии, состав (клиент, сервер), служба «Агент сервера» и её состояние, зарегистрирована ли COM-компонента. Последние сборки 8.3 и 8.5 берёт из каталога этого сайта.</p></div>
+        <div class="ins-card"><b>Обновляет линейку</b><p>Если стоит старая 8.3, первым пунктом предлагает обновить до последней. Состав новой сборки — как у установленной.</p></div>
+        <div class="ins-card"><b>Состав на выбор</b><p>Клиент и конфигуратор; с сервером 1С и службой «Агент сервера»; только сервер. На Linux — сервер, сервер с клиентом, только клиент.</p></div>
+        <div class="ins-card"><b>Переводит службу сервера</b><p>Если на старой сборке работает служба, спросит, перевести ли её на новую. Предупреждает, что сеансы отвалятся.</p></div>
+        <div class="ins-card"><b>Сводка перед стартом</b><p>Сборка и дата выхода, состав, куда ставится, что со службой, свободное место на диске. Только после «Продолжить?» начинается скачивание.</p></div>
+        <div class="ins-card"><b>Скачивание с прогрессом</b><p>Процент, мегабайты, скорость, оставшееся время. Три зеркала 1С, при обрыве — повтор. Дистрибутив — во временную папку.</p></div>
+        <div class="ins-card"><b>После установки — по запросу</b><p>Регистрация COM-компоненты (V83.COMConnector) и консоли администрирования серверов, удаление скачанного дистрибутива.</p></div>
+        <div class="ins-card"><b>Удаление старых версий</b><p>В каждой линейке оставляет новейшую сборку. Версии, на которых работает служба сервера, не трогает.</p></div>
+        <div class="ins-card"><b>Повтор без вопросов</b><p>В конце печатает команду со всеми ответами — её можно запустить на других машинах: ничего спрашивать не будет.</p></div>
+      </div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-3">
+      <div class="settings-section-title">Параметры</div>
+      <div class="settings-section-sub">Всё необязательно: что не задано — скрипт спросит.</div>
+      <div class="ins-params">
+        <code>-Version 8.5</code><span>Номер сборки (8.5.1.1529) или линейка (8.5, 8.3.27) — последняя сборка линейки. На Linux: <code>--version</code>.</span>
+        <code>-Mode client|full|server</code><span>Состав. На Linux: <code>--mode server|full|client</code>.</span>
+        <code>-MoveService / -KeepService</code><span>Перевести службу сервера на новую сборку или оставить.</span>
+        <code>-Com, -Admin</code><span>Зарегистрировать COM-компоненту / консоль администрирования (<code>-NoCom</code>, <code>-NoAdmin</code> — не спрашивать).</span>
+        <code>-RemoveFiles / -KeepFiles</code><span>Удалить или оставить дистрибутив после установки. На Linux: <code>--remove-files</code>, <code>--keep-files</code>.</span>
+        <code>-Yes</code><span>Не спрашивать подтверждение перед установкой.</span>
+        <code>-DryRun</code><span>Только войти на портал и найти дистрибутив, ничего не скачивая. На Linux: <code>--dry-run</code>.</span>
+        <code>ITS_LOGIN, ITS_PASSWORD</code><span>Переменные окружения с учётной записью ИТС — чтобы не вводить вручную.</span>
+      </div>
+    </div>
+
+    <div class="settings-section fade-up fade-up-3">
+      <div class="settings-section-title">Что нужно знать</div>
+      <ul style="margin:12px 0 0 20px;font-size:14px;line-height:1.7;color:var(--text)">
+        <li>Нужна учётная запись ИТС с правом скачивать платформу.</li>
+        <li>Windows: для распаковки .rar нужен Windows 11 (встроенный tar) или установленный 7-Zip. Нужно около 3,5 ГБ на диске.</li>
+        <li>Linux: сборки 8.3.20 и новее (в старых нет единого установщика), 64-bit x86_64, права root.</li>
+        <li>Уже установленные версии платформы не удаляются, пока вы сами не выберете «Удалить старые версии».</li>
+        <li>Скрипт для конкретной сборки — кнопка «установить» у сборки на странице <a href="/platform">Платформа</a>. Там же можно посмотреть список изменений сборки.</li>
+        <li>Исходники: <a href="https://github.com/iMironRU/updatecon/tree/main/tools" target="_blank" rel="noopener">github.com/iMironRU/updatecon/tools</a>.</li>
+      </ul>
+    </div>
+  </div>`;
+}
+function set_country(code) {
+  try { localStorage.setItem('uc_country', code); } catch (e) {}
+  toast('Моя страна: ' + region_label(code));
+}
+function save_its_form() {
+  const login = document.getElementById('its-login')?.value.trim();
+  const pw    = document.getElementById('its-pw')?.value;
+  save_its(login, pw);
+  toast('Данные ИТС сохранены');
+  setTimeout(() => navigate('/settings'), 500);
+}
+function clear_its() {
+  localStorage.removeItem('uc_its_login');
+  localStorage.removeItem('uc_its_pw');
+  toast('Данные ИТС удалены');
+  setTimeout(() => navigate('/settings'), 500);
+}
+function set_theme(t) {
+  apply_theme(t);
+  document.querySelectorAll('.theme-opt').forEach(el => el.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+}
+
+/* ================================================================
+   VERSION BADGE (footer only)
+   ================================================================ */
+async function init_version_badge() {
+  let current = { date: 'dev', commit: 'dev' };
+  try {
+    const r = await fetch('/version.json');
+    if (r.ok) current = await r.json();
+  } catch(_) {}
+
+  const is_dev = current.date === 'dev';
+  const date_str = is_dev ? 'dev' : current.date.slice(0, 10);
+
+  var footerVer = document.getElementById('footer-ver');
+  if (footerVer) footerVer.textContent = is_dev ? 'dev' : (current.commit + ' · ' + date_str);
+}
+
+/* ================================================================
+   INIT
+   ================================================================ */
+const _style = document.createElement('style');
+_style.textContent = `.hidden-version { display: none; }`;
+document.head.appendChild(_style);
+
+apply_theme(localStorage.getItem('uc_theme') || 'auto');
+update_theme_icon();
+route();
+init_version_badge();
