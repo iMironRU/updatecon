@@ -772,6 +772,12 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .results-note { font-size: 13px; color: var(--text-muted); margin: 0 0 12px; }
 .results-note code { font-family: var(--mono); color: var(--text); background: var(--surface2); padding: 1px 6px; border-radius: var(--r-sm); }
 .more-chains-btn { display: block; width: 100%; margin: 0 0 16px; }
+/* Chain steps: the target step keeps the full buttons, the intermediate ones one line. */
+.step-links-compact { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.step-links-compact a { display: inline-flex; align-items: center; gap: 4px; min-height: 24px;
+  font-size: 12px; color: var(--accent); }
+.step-links-compact a:hover { text-decoration: underline; }
+.step-links-compact svg { width: 12px; height: 12px; opacity: .85; }
 .catalog-more { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0 10px; }
 .catalog-more-sub { font-size: 12px; color: var(--text-muted); }
 .catalog-found { font-size: 13px; color: var(--text-muted); margin-right: 4px; }
@@ -1987,11 +1993,18 @@ function render_chain_steps(steps, fromV, cfg, reversed) {
         ${s.req && !is_final ? `<div class="step-note">${icn_alert()} Пропустить нельзя — обязательный промежуточный релиз</div>` : ''}
         ${s._platUp ? `<div class="step-note step-note-plat">${icn_alert()} Перед этим шагом обновите платформу до <b class="mono">${s._platUp}</b> — у вас ${esc_html(myPlat)}.
           <a href="/platform?build=${encodeURIComponent(s._platUp)}">Сборки</a> · <a href="/install">Установка платформы</a></div>` : ''}
-        <div class="step-actions">
+        ${is_final ? `<div class="step-actions">
           ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} releases.1c.ru ${icn_ext()}</a>` : ''}
           ${dl_its ? `<a href="${dl_its}" target="_blank" class="btn btn-sm btn-secondary" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} downloads.v8.1c.ru ${icn_ext()}</a>` : ''}
           ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Инструкция 1С к этому обновлению">${icn_link()} Порядок обновления ${icn_ext()}</a>` : ''}
-        </div>
+        </div>`
+        // Intermediate steps: the same three links, but as one line of small text links —
+        // six steps of buttons made 202 links in the chain.
+        : `<div class="step-links-compact">
+          ${dl_1c ? `<a href="${dl_1c}" target="_blank" rel="noopener" title="Дистрибутив обновления на портале 1С" onclick="handle_dl(event,'${dl_1c}')">${icn_dl()} дистрибутив</a>` : ''}
+          ${dl_its ? `<a href="${dl_its}" target="_blank" title="Файл .cfu с сайта обновлений (вход по логину ИТС)">${icn_dl()} .cfu</a>` : ''}
+          ${s.order ? `<a href="${s.order}" target="_blank" rel="noopener" title="Инструкция 1С к этому обновлению">${icn_link()} порядок</a>` : ''}
+        </div>`}
         ${step_news_html(s, cfg)}
         ${step_patches_html(s)}
       </div>
@@ -2119,6 +2132,19 @@ function toggle_menu(open) {
 }
 document.getElementById('mobile-menu').addEventListener('click', e => { if (e.target.closest('a')) toggle_menu(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') toggle_menu(false); });
+// The catalog is a long page: reach its search from anywhere with 「/」 (as on GitHub) or
+// ⌘/Ctrl+K (as in most apps). Typing in a field keeps the normal characters.
+document.addEventListener('keydown', e => {
+  const a = document.activeElement;
+  const in_field = /^(INPUT|TEXTAREA|SELECT)$/.test(a?.tagName || '') || !!a?.isContentEditable;
+  const is_slash = e.key === '/' && !in_field && !e.metaKey && !e.ctrlKey && !e.altKey;
+  const is_cmd_k = (e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey);
+  if (!is_slash && !is_cmd_k) return;
+  e.preventDefault();
+  const focus_search = () => { const el = document.getElementById('catalog-search'); if (el) { el.focus(); el.select(); } };
+  if (document.getElementById('catalog-search')) focus_search();
+  else { navigate('/catalog'); setTimeout(focus_search, 350); }
+});
 matchMedia('(min-width: 761px)').addEventListener('change', e => { if (e.matches) toggle_menu(false); });
 
 /* Яндекс Метрика: when a counter is set in the admin panel, the server puts its
