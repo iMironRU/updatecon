@@ -53,6 +53,7 @@
 
 import Fastify, { type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyCompress from "@fastify/compress";
 import fastifyCookie from "@fastify/cookie";
 import fastifyFormbody from "@fastify/formbody";
 import { readFileSync } from "node:fs";
@@ -270,6 +271,11 @@ export async function buildServer() {
     return true;
   }
 
+  // gzip/brotli for every response over 1 KB: /api/configs is 759 KB of JSON
+  // that compresses to 52 KB (gzip) / 42 KB (brotli), and index.html is 339 KB.
+  // Registered before the routes and before the static handler so their bodies
+  // go through the same onSend hook.
+  await app.register(fastifyCompress, { global: true, threshold: 1024, encodings: ["br", "gzip", "deflate"] });
   await app.register(fastifyCookie);
   await app.register(fastifyFormbody);
 
