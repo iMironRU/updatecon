@@ -349,6 +349,17 @@ input, select, textarea { font-family: inherit; }
 .version-size { font-size: 12px; color: var(--text-muted); margin-left: 8px; }
 .version-chevron { width: 16px; height: 16px; color: var(--text-light); transition: transform .2s; flex-shrink: 0; }
 .version-chevron.open { transform: rotate(90deg); }
+/* Loading skeletons: the first screen waits 2–3 s for /api/configs, and one line of
+   text on an empty page reads as «broken». Blocks of the real layout's size make the
+   wait legible and keep the page from jumping when the data lands. */
+.skel { background: var(--surface2); border-radius: var(--r-sm); position: relative; overflow: hidden; }
+.skel::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--surface3), transparent); animation: skel 1.2s infinite; }
+@keyframes skel { 100% { transform: translateX(100%); } }
+.skel-line { height: 12px; margin-bottom: 8px; }
+.skel-card { height: 132px; }
+.skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+@media (prefers-reduced-motion: reduce) { .skel::after { animation: none; } }
 .version-body { padding: 0 18px 14px; display: none; }
 .version-body.open { display: block; }
 .patches-title { font-size: 12px; font-weight: 600; color: var(--text-muted);
@@ -1780,6 +1791,26 @@ const icn_spin_svg= () => `<svg class="spin" viewBox="0 0 24 24" fill="none" str
 function render_loading(msg) {
   return `<div class="wrap" style="padding-top:80px"><div class="empty">${icn_spin_svg()}<div class="empty-title">${msg || 'Загрузка...'}</div></div></div>`;
 }
+/* The shape of the page that is coming, instead of a spinner: the first visit waits
+   for /api/configs (~2.5 s even compressed), and the layout must not jump after. */
+function render_skeleton(kind) {
+  const line = (w, h) => `<div class="skel skel-line" style="width:${w};${h ? 'height:' + h + ';' : ''}"></div>`;
+  const cards = (n) => `<div class="skel-grid">${'<div class="skel skel-card"></div>'.repeat(n)}</div>`;
+  if (kind === 'catalog') {
+    return `<div class="wrap">${line('220px', '26px')}<div class="skel" style="height:44px;margin:18px 0"></div>${cards(6)}</div>`;
+  }
+  if (kind === 'config') {
+    return `<div class="wrap">${line('58%', '26px')}${line('34%')}${line('26%')}<div class="skel" style="height:190px;margin-top:22px"></div>${cards(2)}</div>`;
+  }
+  if (kind === 'page') {
+    return `<div class="wrap">${line('240px', '26px')}<div class="skel" style="height:150px;margin:18px 0"></div>${cards(3)}</div>`;
+  }
+  return `<div class="wrap"><div class="hero">
+      ${line('340px', '26px')}${line('420px')}
+      <div class="skel" style="height:52px;margin:18px 0 12px"></div>
+      <div class="skel-grid" style="grid-template-columns:repeat(3,1fr);gap:12px">${'<div class="skel" style="height:64px"></div>'.repeat(3)}</div>
+    </div></div>`;
+}
 
 /* ================================================================
    CHAIN RENDERING
@@ -2114,7 +2145,7 @@ async function route() {
       a.classList.add('active');
   });
   if (!CONFIGS_LOADED) {
-    el.innerHTML = render_loading('Загрузка базы данных...');
+    el.innerHTML = render_skeleton(path === '/catalog' ? 'catalog' : path.startsWith('/config/') ? 'config' : path === '/' ? 'home' : 'page');
     await initData();
     if (!CONFIGS_LOADED) {
       el.innerHTML = `<div class="wrap"><div class="empty" style="padding-top:48px"><div class="empty-title">Не удалось загрузить данные</div>
@@ -2132,7 +2163,7 @@ async function route() {
     // Config → config (another edition from the header): keep the page until the data is
     // here (a placeholder only when it takes a while) and skip the fade-in — no blink.
     const swap = (ROUTE_PATH || '').startsWith('/config/') && CONFIGS.some(c => c.id === id);
-    const placeholder = setTimeout(() => { el.innerHTML = render_loading('Загрузка конфигурации...'); }, swap ? 300 : 0);
+    const placeholder = setTimeout(() => { el.innerHTML = render_skeleton('config'); }, swap ? 300 : 0);
     await loadVersionsForConfig(id);
     clearTimeout(placeholder);
     el.classList.toggle('no-anim', swap);
