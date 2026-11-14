@@ -186,3 +186,20 @@ test("graph: the configuration's edges for the offline chain", async () => {
   assert.deepEqual(g.edges.find((e: string[]) => e[1] === "3.0.101.2"), ["3.0.100.1", "3.0.101.2", "1c/Accounting/3_0_101_2/1cv8.cfu"]);
   assert.equal((await app.inject({ method: "GET", url: "/api/graph?config_id=999" })).statusCode, 404);
 });
+
+test("the page is a shell: hashed assets, immutable caching, stale hash 404s", async () => {
+  const page = await app.inject({ method: "GET", url: "/" });
+  assert.equal(page.statusCode, 200);
+  const html = page.body;
+  assert.ok(html.length < 20000, `the document must stay a shell, got ${html.length} bytes`);
+  const urls = [...new Set(html.match(/\/app\.[0-9a-f]{8}\.(?:js|css)/g) ?? [])];
+  assert.equal(urls.length, 2, `js and css must be hashed: ${urls.join(", ")}`);
+  for (const url of urls) {
+    const r = await app.inject({ method: "GET", url });
+    assert.equal(r.statusCode, 200, `${url}: ${r.body.slice(0, 120)}`);
+    assert.match(String(r.headers["cache-control"]), /immutable/);
+    assert.match(String(r.headers["content-type"]), url.endsWith(".js") ? /javascript/ : /text\/css/);
+  }
+  // A stale hash must not fall through to the SPA fallback: HTML served as JS breaks the page.
+  assert.equal((await app.inject({ method: "GET", url: "/app.deadbeef.js" })).statusCode, 404);
+});
