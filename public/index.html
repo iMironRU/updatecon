@@ -766,6 +766,10 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .filter-more { background: none; border: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
 .filter-more:hover { text-decoration: underline; }
 .catalog-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 16px; min-height: 28px; }
+/* Home: after «Построить» the first chain must be the answer the user came for. */
+.results-note { font-size: 13px; color: var(--text-muted); margin: 0 0 12px; }
+.results-note code { font-family: var(--mono); color: var(--text); background: var(--surface2); padding: 1px 6px; border-radius: var(--r-sm); }
+.more-chains-btn { display: block; width: 100%; margin: 0 0 16px; }
 .catalog-more { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0 10px; }
 .catalog-more-sub { font-size: 12px; color: var(--text-muted); }
 .catalog-found { font-size: 13px; color: var(--text-muted); margin-right: 4px; }
@@ -2604,7 +2608,14 @@ async function home_build_chain() {
   home_extra_sync();
   await Promise.all(configs_to_check.map(c => loadVersionsForConfig(c.id)));
 
+  // The likeliest chain goes first and open; the rest wait behind one button. A version like
+  // 3.0.207.25 is shared by a dozen configurations, and ten open chains put the answer
+  // eight screens down — the button also tells the user that there were more.
+  const rank = c => (selectedId && c.id === selectedId ? -2 : FAV.has(c.id) ? -1 : c.isLatestEdition ? 0 : 1);
+  configs_to_check = [...configs_to_check].sort((a, b) => rank(a) - rank(b));
+
   let html = '', reached = false;
+  const items = [];
   for (const cfg of configs_to_check) {
     const toV = toVRaw || cfg.latestV;
     if (!toV) continue;
@@ -2614,20 +2625,33 @@ async function home_build_chain() {
     if (r.found && !reached) { reached = true; goal('chain'); }
 
     if (r.note && !r.found) {
-      html += `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br><span style="color:var(--text-muted);font-size:14px">${r.note}</span></div></div>`;
+      items.push({ html: `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br><span style="color:var(--text-muted);font-size:14px">${r.note}</span></div></div>` });
       continue;
     }
     if (!r.found) {
       const msg = r.length === 0
         ? `<span style="color:var(--green)">${icn_check()} Версия ${fromV} уже является актуальной</span>`
         : `<span style="color:var(--text-muted)">Цепочка не найдена</span>`;
-      html += `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br>${msg}</div></div>`;
+      items.push({ html: `<div class="card fade-up" style="margin-bottom:16px"><div class="card-body"><strong>${cfg.name}</strong><br>${msg}</div></div>` });
       continue;
     }
     const steps = chain_response_to_steps(r, cfg);
     if (!steps?.length) continue;
     CHAIN_CACHE[`${cfg.id}:${fromV}:${toV}`] = steps;
-    html += `<div style="margin-bottom:24px">${render_chain_steps(steps, fromV, cfg)}</div>`;
+    items.push({ html: `<div style="margin-bottom:24px">${render_chain_steps(steps, fromV, cfg)}</div>`, chain: true });
+  }
+  if (items.length > 1) {
+    const rest = items.slice(1);
+    const word = items.length % 10 === 1 && items.length % 100 !== 11 ? 'конфигурации'
+      : items.length % 10 >= 2 && items.length % 10 <= 4 && (items.length % 100 < 10 || items.length % 100 >= 20) ? 'конфигураций' : 'конфигураций';
+    html = `<div class="results-note">Версия <code>${esc_html(fromV)}</code> есть у ${items.length} ${word} — открыта самая вероятная, остальные ${rest.length} ниже.</div>`
+      + items[0].html
+      + `<button class="btn btn-secondary more-chains-btn" onclick="home_more_toggle(this)" data-more="${rest.length}">
+           Ещё ${rest.length} ${rest.length % 10 === 1 && rest.length % 100 !== 11 ? 'цепочка' : 'цепочек'} этой версии ↓
+         </button>
+         <div id="home-more-chains" hidden>${rest.map(i => i.html).join('')}</div>`;
+  } else {
+    html = items.map(i => i.html).join('');
   }
   // A chain was built — the query is worth remembering for the next visit.
   if (reached) {
@@ -2637,6 +2661,17 @@ async function home_build_chain() {
     if (nameInp) hist_put('name', nameInp.value);
   }
   result.innerHTML = html || `<div class="empty"><p>Цепочка не найдена</p></div>`;
+  // The hero is ~700 px tall, so without this nothing visibly happens after «Построить».
+  if (html && result.getBoundingClientRect().top > innerHeight * 0.6) {
+    result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+function home_more_toggle(btn) {
+  const box = document.getElementById('home-more-chains');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  const n = btn.dataset.more;
+  btn.innerHTML = box.hidden ? `Ещё ${n} ${n === '1' ? 'цепочка' : 'цепочек'} этой версии ↓` : 'Свернуть ↑';
 }
 
 /* ================================================================
