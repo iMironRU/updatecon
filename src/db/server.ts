@@ -1387,7 +1387,22 @@ export async function buildServer() {
   app.get("/api/tags", async () =>
     TAGS.map((t) => ({ tag: t.tag, title: t.title, core: t.core })));
 
-  app.get("/api/stats", async () => {
+  // Same shape as the catalog cache: five aggregates over 221k edges, of which
+  // count(DISTINCT to_version) alone costs a few hundred milliseconds, and the answer
+  // changes only when an import lands.
+  const STATS_TTL_MS = 15 * 60_000;
+  let statsCache: { at: number; stamp: string; etag: string; body: string } | null = null;
+
+  app.get("/api/stats", async (req, reply) => {
+    if (statsCache && Date.now() - statsCache.at < STATS_TTL_MS
+        && (await catalogStamp()) === statsCache.stamp) {
+      if (req.headers["if-none-match"] === statsCache.etag) return reply.code(304).send();
+      return reply
+        .header("ETag", statsCache.etag)
+        .header("Cache-Control", "public, max-age=60")
+        .type("application/json; charset=utf-8")
+        .send(statsCache.body);
+    }
     const [cfgCount, appCount, edgeCount, verCount, lastRun] = await Promise.all([
       db.execute(sql`SELECT count(*)::int c FROM configurations`),
       // Applications = templates (one current edition each); configurations = all editions.
@@ -1404,14 +1419,20 @@ export async function buildServer() {
     const edgeC = ((edgeCount as any).rows ?? edgeCount)[0]?.c ?? 0;
     const verC = ((verCount as any).rows ?? verCount)[0]?.c ?? 0;
     const run = lastRun[0] ?? null;
-    return {
+    const body = JSON.stringify({
       configurations: cfgC,
       applications: appC,
       edges: edgeC,
       versions: verC,
       last_updated: run?.finishedAt?.toISOString().slice(0, 10) ?? null,
       lastRun: run,
-    };
+    });
+    statsCache = { at: Date.now(), stamp: await catalogStamp(), etag: catalogEtag(body), body };
+    return reply
+      .header("ETag", statsCache.etag)
+      .header("Cache-Control", "public, max-age=60")
+      .type("application/json; charset=utf-8")
+      .send(body);
   });
 
   // ── SPA fallback: any unmatched GET → index.html ─────────────────────────
@@ -1428,9 +1449,11 @@ export async function buildServer() {
   // wait ~2.5 s for a query whose answer has not changed (it also survives the deploy
   // window, where the TTL would have expired).
   const warmTimer = setTimeout(() => {
-    void app.inject({ method: "GET", url: "/api/configs" })
-      .then((r) => console.log(`[catalog] cache warmed (${r.statusCode})`))
-      .catch((e) => console.warn("[catalog] warm-up failed:", (e as Error).message));
+    for (const url of ["/api/configs", "/api/stats"]) {
+      void app.inject({ method: "GET", url })
+        .then((r) => console.log(`[cache] ${url} warmed (${r.statusCode})`))
+        .catch((e) => console.warn(`[cache] ${url} warm-up failed:`, (e as Error).message));
+    }
   }, 800);
   warmTimer.unref?.();
   app.addHook("onClose", async () => { clearTimeout(warmTimer); });
