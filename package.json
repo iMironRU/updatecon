@@ -17,6 +17,7 @@
     "test": "npm run build && node --test \"dist/test/**/*.test.js\""
   },
   "dependencies": {
+    "@fastify/compress": "^7.0.3",
     "@fastify/cookie": "^9.4.0",
     "@fastify/formbody": "^7.4.0",
     "@fastify/static": "^7.0.4",
