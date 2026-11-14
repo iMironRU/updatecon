@@ -60,7 +60,7 @@ import { readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { sql, eq, and, desc, getTableColumns, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
 import { configurations, updateEdges, importRuns, patches, settings, releaseProjects, versionMeta, platformBuilds } from "./schema.js";
@@ -766,9 +766,28 @@ export async function buildServer() {
     return (rows as any).rows ?? rows;
   });
 
-  app.get("/api/configs", async (req) => {
+  // The full catalog changes only when an import or a snapshot lands, but the page asks
+  // for it on every first visit — and this query costs ~2.5 s here (six correlated
+  // LATERALs over 855 configs and 221k edges, six more lookups per row). The answer is
+  // serialised once, served with an ETag so a repeat visit gets a 304, and warmed at
+  // boot: the first user after a deploy must not pay for a query whose result was
+  // already known. Filtered requests (q) stay uncached.
+  const CATALOG_TTL_MS = 60_000;
+  let catalogCache: { at: number; etag: string; body: string } | null = null;
+  const catalogEtag = (body: string) => `"${createHash("sha1").update(body).digest("hex").slice(0, 20)}"`;
+
+  app.get("/api/configs", async (req, reply) => {
     const q = String((req.query as any).q ?? "").trim();
     const version = String((req.query as any).version ?? "").trim();
+
+    if (!q && !version && catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+      if (req.headers["if-none-match"] === catalogCache.etag) return reply.code(304).send();
+      return reply
+        .header("ETag", catalogCache.etag)
+        .header("Cache-Control", "public, max-age=60")
+        .type("application/json; charset=utf-8")
+        .send(catalogCache.body);
+    }
 
     // By-version lookup: find configs that contain this version in their edges.
     if (version) {
@@ -879,7 +898,17 @@ export async function buildServer() {
       ORDER BY coalesce(c.display_name, c.name)
       LIMIT 1000
     `);
-    return (rows as any).rows ?? rows;
+    const list = ((rows as any).rows ?? rows) as unknown[];
+    if (!q) {
+      const body = JSON.stringify(list);
+      catalogCache = { at: Date.now(), etag: catalogEtag(body), body };
+      return reply
+        .header("ETag", catalogCache.etag)
+        .header("Cache-Control", "public, max-age=60")
+        .type("application/json; charset=utf-8")
+        .send(body);
+    }
+    return list;
   });
 
   app.get("/api/versions", async (req) => {
@@ -1341,6 +1370,17 @@ export async function buildServer() {
     if (/^\/(admin\/)?api\//.test(req.url)) return reply.code(404).send({ error: "not found" });
     return reply.code(200).type("text/html; charset=utf-8").header("cache-control", "no-cache").send(await sitePage());
   });
+
+  // Warm the catalog cache in the background: the first visitor after a restart must not
+  // wait ~2.5 s for a query whose answer has not changed (it also survives the deploy
+  // window, where the TTL would have expired).
+  const warmTimer = setTimeout(() => {
+    void app.inject({ method: "GET", url: "/api/configs" })
+      .then((r) => console.log(`[catalog] cache warmed (${r.statusCode})`))
+      .catch((e) => console.warn("[catalog] warm-up failed:", (e as Error).message));
+  }, 800);
+  warmTimer.unref?.();
+  app.addHook("onClose", async () => { clearTimeout(warmTimer); });
 
   return app;
 }
