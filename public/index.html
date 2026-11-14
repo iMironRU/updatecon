@@ -766,6 +766,8 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
 .filter-more { background: none; border: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
 .filter-more:hover { text-decoration: underline; }
 .catalog-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 16px; min-height: 28px; }
+.catalog-more { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0 10px; }
+.catalog-more-sub { font-size: 12px; color: var(--text-muted); }
 .catalog-found { font-size: 13px; color: var(--text-muted); margin-right: 4px; }
 .filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px;
   border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent);
@@ -2745,6 +2747,8 @@ function script_copy_cmd(btn) {
 // restores the filters, and a filtered catalog can be shared as a link.
 const CAT_SEP = '|';
 let CAT = null;          // current catalog state
+const CAT_PORTION = 90;  // cards rendered at once: 530 cards = 91 screens and 15k nodes
+let CAT_SHOWN = CAT_PORTION, CAT_SIG = '';
 let CAT_URL = '';       // URL of the catalog as last written
 let CAT_SCROLL = null;   // { hash, y } — where the user left the catalog
 
@@ -3112,7 +3116,11 @@ function render_facets() {
     + flag('stale', 'устаревшие', staleCnt, 'Платформа 8.2 или нет новых версий больше 1,5 лет — скрыты по умолчанию'));
 }
 
-function render_summary(found) {
+function catalog_show_more() {
+  CAT_SHOWN += CAT_PORTION;
+  apply_filters();
+}
+function render_summary(found, shown) {
   const chips = [];
   const chip = (field, value, label) => chips.push(
     `<button class="filter-chip" data-v="${esc_html(value)}" onclick="remove_filter('${field}', this.dataset.v)" title="Убрать фильтр">${esc_html(label)} ✕</button>`);
@@ -3133,7 +3141,7 @@ function render_summary(found) {
   if (CAT.legacy) chip('legacy', '', 'Предыдущие редакции');
   if (CAT.stale) chip('stale', '', 'Устаревшие');
   const el = document.getElementById('catalog-summary');
-  if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b></span>` + chips.join('')
+  if (el) el.innerHTML = `<span class="catalog-found">Найдено: <b>${found}</b>${shown != null && shown < found ? ` · показано ${shown}` : ''}</span>` + chips.join('')
     + (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="reset_filters()">Сбросить всё</button>` : '');
   const favBtn = document.getElementById('f-fav');
   if (favBtn) { favBtn.classList.toggle('on', CAT.fav); favBtn.setAttribute('aria-pressed', CAT.fav); favBtn.innerHTML = '★ Мои конфигурации<span>' + FAV.size + '</span>'; }
@@ -3203,7 +3211,13 @@ function cat_hist_record() {
 }
 function apply_filters() {
   if (!CAT) return;
+  // A new filter/search/sort starts the list from the first portion again, «показать ещё»
+  // only widens the same result set.
+  const sig = JSON.stringify([CAT.q, CAT.lines, CAT.industries, CAT.tasks, CAT.levels, CAT.platforms, CAT.ages,
+    CAT.trans, CAT.lts, CAT.regions, CAT.orgs, CAT.types, CAT.vendors, CAT.legacy, CAT.stale, CAT.fav, CAT.sort]);
+  if (sig !== CAT_SIG) { CAT_SIG = sig; CAT_SHOWN = CAT_PORTION; }
   const list = catalog_filter(catalog_base(), null);
+  const visible = list.slice(0, CAT_SHOWN);
 
   // With a line filter on, the line's own products come before the ones built on it.
   const ownRank = c => CAT.lines.length && c.tags.some(t => t.kind === 'own' && CAT.lines.includes(t.tag)) ? 0 : 1;
@@ -3234,19 +3248,32 @@ function apply_filters() {
     const counts = {};
     list.forEach(c => { const g = groupOf(c); counts[g] = (counts[g] || 0) + 1; });
     let prev = 0;
-    list.forEach(c => {
+    visible.forEach(c => {
       const g = groupOf(c);
       if (g !== prev) { html += `<div class="catalog-group-title">${titles[g]} <span>${counts[g]}</span></div>`; prev = g; }
       html += config_card_html(c);
     });
   } else {
-    html = list.map(config_card_html).join('');
+    html = visible.map(config_card_html).join('');
   }
-  if (grid) grid.innerHTML = list.length ? html
-    : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте убрать часть фильтров</div></div>`;
+  if (grid) {
+    grid.innerHTML = list.length ? html
+      : `<div class="empty" style="grid-column:1/-1">${icn_search()}<div class="empty-title">Ничего не найдено</div><div class="empty-sub">Попробуйте убрать часть фильтров</div></div>`;
+    const more = document.getElementById('catalog-more');
+    if (more) more.remove();
+    if (list.length > visible.length) {
+      const left = list.length - visible.length;
+      const box = document.createElement('div');
+      box.id = 'catalog-more';
+      box.className = 'catalog-more';
+      box.innerHTML = `<button class="btn btn-secondary" onclick="catalog_show_more()">Показать ещё ${Math.min(CAT_PORTION, left)}</button>` +
+        `<div class="catalog-more-sub">показано ${visible.length} из ${list.length}</div>`;
+      grid.after(box);
+    }
+  }
   render_sort();
   render_facets();
-  render_summary(list.length);
+  render_summary(list.length, visible.length);
   catalog_sync_url();
 }
 
