@@ -772,15 +772,23 @@ export async function buildServer() {
   // serialised once, served with an ETag so a repeat visit gets a 304, and warmed at
   // boot: the first user after a deploy must not pay for a query whose result was
   // already known. Filtered requests (q) stay uncached.
-  const CATALOG_TTL_MS = 60_000;
-  let catalogCache: { at: number; etag: string; body: string } | null = null;
+  const CATALOG_TTL_MS = 15 * 60_000;   // a safety net for direct DB edits; imports invalidate at once
+  let catalogCache: { at: number; stamp: string; etag: string; body: string } | null = null;
   const catalogEtag = (body: string) => `"${createHash("sha1").update(body).digest("hex").slice(0, 20)}"`;
+  // Cheap freshness probe (~1 ms): the catalog only changes when an import run lands,
+  // so a new run id means the cached body is stale even if the TTL has not expired.
+  const catalogStamp = async () => {
+    const r = await db.execute(sql`SELECT coalesce(max(id), 0)::text AS run, count(*)::text AS n FROM import_runs`);
+    const row = ((r as any).rows ?? r)[0] as any;
+    return `${row.run}/${row.n}`;
+  };
 
   app.get("/api/configs", async (req, reply) => {
     const q = String((req.query as any).q ?? "").trim();
     const version = String((req.query as any).version ?? "").trim();
 
-    if (!q && !version && catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+    if (!q && !version && catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS
+        && (await catalogStamp()) === catalogCache.stamp) {
       if (req.headers["if-none-match"] === catalogCache.etag) return reply.code(304).send();
       return reply
         .header("ETag", catalogCache.etag)
@@ -901,7 +909,7 @@ export async function buildServer() {
     const list = ((rows as any).rows ?? rows) as unknown[];
     if (!q) {
       const body = JSON.stringify(list);
-      catalogCache = { at: Date.now(), etag: catalogEtag(body), body };
+      catalogCache = { at: Date.now(), stamp: await catalogStamp(), etag: catalogEtag(body), body };
       return reply
         .header("ETag", catalogCache.etag)
         .header("Cache-Control", "public, max-age=60")
