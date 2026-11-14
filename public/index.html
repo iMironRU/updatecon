@@ -22,7 +22,9 @@
   --bg: #EEF1F8; --bg-header: rgba(238,241,248,0.9);
   --surface: #FFFFFF; --surface2: #F5F7FC; --surface3: #EBEEf6;
   --border: #DDE3EF; --border-strong: #C8D0E4;
-  --text: #171E33; --text-muted: #6472A0; --text-light: #9BA5C2;
+  /* AA: --text-muted was 4.17:1 on --bg (needs 4.5), --text-light 2.17:1.
+     #59668F → 4.86-5.64:1 on every light surface, #616B92 → 4.61+ for hints. */
+  --text: #171E33; --text-muted: #59668F; --text-light: #616B92;
   --accent: #1355FF; --accent-h: #0D41D4; --accent-dim: #EEF2FF; --bar-muted: #8590AE;
   --orange: #F97316; --orange-dim: #FFF4ED;
   --green: #059669; --green-dim: #ECFDF5;
@@ -41,7 +43,7 @@
     --bg: #0C1120; --bg-header: rgba(12,17,32,0.9);
     --surface: #141B2D; --surface2: #1A2340; --surface3: #1F293A;
     --border: #263048; --border-strong: #354268;
-    --text: #E4EAF8; --text-muted: #7C88B0; --text-light: #48566E;
+    --text: #E4EAF8; --text-muted: #8692B8; --text-light: #6B7995;
     --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545; --bar-muted: #5D6987;
     --orange: #FB923C; --orange-dim: #251500;
     --green: #34D399; --green-dim: #022C1C;
@@ -56,7 +58,7 @@
   --bg: #0C1120; --bg-header: rgba(12,17,32,0.9);
   --surface: #141B2D; --surface2: #1A2340; --surface3: #1F293A;
   --border: #263048; --border-strong: #354268;
-  --text: #E4EAF8; --text-muted: #7C88B0; --text-light: #48566E;
+  --text: #E4EAF8; --text-muted: #8692B8; --text-light: #6B7995;
   --accent: #4D7FFF; --accent-h: #3A6AEE; --accent-dim: #1A2545; --bar-muted: #5D6987;
   --orange: #FB923C; --orange-dim: #251500;
   --green: #34D399; --green-dim: #022C1C;
@@ -848,7 +850,7 @@ body.offline .main { padding-top: calc(var(--hdr) + 32px); }
 .russia-flag span { flex: 1; display: block; }
 .footer-link { display: inline-flex; align-items: center; min-height: 32px; font-size: 12px; color: var(--text-muted); transition: color .15s; }
 .footer-link:hover { color: var(--accent); }
-.footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-light); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
+.footer-ver { font-size: 11px; font-family: var(--mono); color: var(--text-muted); padding: 2px 8px; background: var(--surface2); border-radius: 99px; }
 /* Four fields in the chain builder need room: below 1100px it folds to two columns
    (the platform field's label is longer than the version ones). */
 @media (max-width: 1100px) {
