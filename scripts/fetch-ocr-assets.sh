@@ -36,15 +36,21 @@ if need tesseract.min.js || need worker.min.js; then
   tar -xzf "$TMP/core.tgz" -C "$TMP/core"
   cp "$TMP/tess/package/dist/tesseract.min.js" "$DEST/tesseract.min.js"
   cp "$TMP/tess/package/dist/worker.min.js" "$DEST/worker.min.js"
-  # Ядро: SIMD-сборка под LSTM — её берут все современные браузеры; обычная LSTM нужна
-  # как запас для старых Safari. Полный набор собирать смысла нет: он тормозит в любом случае.
-  for f in tesseract-core-simd-lstm.wasm.js tesseract-core-lstm.wasm.js; do
-    if [ -s "$TMP/core/package/$f" ]; then cp "$TMP/core/package/$f" "$DEST/$f"; fi
+  # Ядро под LSTM (мы просим oem=1): воркер сам выбирает вариант по возможностям браузера —
+  # relaxedsimd, simd или обычный. Берём все три, иначе современный Chrome просит
+  # tesseract-core-relaxedsimd-lstm.wasm.js и падает, если его нет.
+  for src in "$TMP/core/package/"*lstm*.wasm.js; do
+    [ -s "$src" ] && cp "$src" "$DEST/"
   done
 fi
 
 if need rus.traineddata; then
   fetch "$LANG_URL" rus.traineddata
+fi
+# tesseract.js по умолчанию просит <lang>.traineddata.gz и распаковывает сам: 3.7 МБ → ~2 МБ.
+if [ ! -s "$DEST/rus.traineddata.gz" ] || [ -n "${FORCE:-}" ]; then
+  echo "→ rus.traineddata.gz"
+  gzip -9 -n -c "$DEST/rus.traineddata" > "$DEST/rus.traineddata.gz"
 fi
 
 # Без ядра распознавание не запустится — лучше упасть на сборке, чем в браузере.
