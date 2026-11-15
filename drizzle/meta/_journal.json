@@ -169,6 +169,13 @@
       "when": 1791706706931,
       "tag": "0023_fantastic_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794733089374,
+      "tag": "0024_calm_toxin",
+      "breakpoints": true
     }
   ]
 }

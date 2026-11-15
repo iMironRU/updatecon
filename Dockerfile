@@ -3,6 +3,10 @@
 FROM node:22-bookworm-slim AS base
 WORKDIR /app
 ENV NODE_ENV=production
+# tesseract.js (WASM) и русская модель не лежат в git — их тянет скрипт. curl нужен
+# только на этапе сборки образа, в runtime-слое его нет.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 # ---- deps ----
 FROM base AS deps
@@ -18,7 +22,10 @@ RUN NODE_ENV=development npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY public ./public
+COPY scripts/fetch-ocr-assets.sh ./scripts/fetch-ocr-assets.sh
 COPY drizzle.config.ts ./
+# Распознавание скриншотов: ~11 МБ ассетов в public/vendor/ocr (ядро + модель).
+RUN bash scripts/fetch-ocr-assets.sh
 RUN npm run build
 
 # ---- runtime ----

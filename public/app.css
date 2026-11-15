@@ -758,6 +758,19 @@ a.cal-row:hover, a.cal-row:focus-visible { background: var(--surface2); outline:
   font-size: 12px; color: var(--accent); }
 .step-links-compact a:hover { text-decoration: underline; }
 .step-links-compact svg { width: 12px; height: 12px; opacity: .85; }
+/* Скриншот → версия: кнопка живёт в подписи поля, поэтому мелкая и не спорит с формой. */
+.ocr-btn { float: right; margin: -4px 0 -4px 8px; padding: 3px 8px; min-height: 24px;
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--accent);
+  background: var(--accent-dim); border: 1px solid transparent; border-radius: 99px; cursor: pointer; }
+.ocr-btn:hover { border-color: var(--accent); }
+.chain-builder.ocr-drag { outline: 2px dashed var(--accent); outline-offset: 6px; border-radius: var(--r); }
+.ocr-status { font-size: 13px; line-height: 1.45; margin-top: 10px; }
+.ocr-status:empty { display: none; }
+.ocr-status.ocr-busy { color: var(--text-muted); }
+.ocr-status.ocr-ok { color: var(--text); background: var(--green-dim); border-radius: var(--r-sm); padding: 8px 12px; }
+.ocr-status.ocr-fail { color: var(--text); background: var(--surface2); border-radius: var(--r-sm); padding: 8px 12px; }
+.ocr-status .ocr-hint { color: var(--text-muted); }
+.ocr-status .btn { margin-left: 8px; }
 .catalog-more { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0 10px; }
 .catalog-more-sub { font-size: 12px; color: var(--text-muted); }
 .catalog-found { font-size: 13px; color: var(--text-muted); margin-right: 4px; }

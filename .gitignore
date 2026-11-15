@@ -33,3 +33,9 @@ docker-compose.override.yml
 .dev-local.pid
 .dev-local.log
 data/snapshot/
+
+# OCR-ассеты (tesseract.js + rus.traineddata) тянутся scripts/fetch-ocr-assets.sh
+public/vendor/ocr/
+
+# Присланные скриншоты для калибровки распознавания
+data/ocr-samples/

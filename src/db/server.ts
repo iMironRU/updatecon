@@ -57,9 +57,9 @@ import fastifyCompress from "@fastify/compress";
 import fastifyCookie from "@fastify/cookie";
 import fastifyFormbody from "@fastify/formbody";
 import { readFileSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { sql, eq, and, desc, getTableColumns, inArray } from "drizzle-orm";
 import { db, pool } from "./client.js";
@@ -75,6 +75,7 @@ import { loadMetrika, metrikaSettings, metrikaTag, parseCounterId, saveMetrika }
 import { chainScript, platformScript, linuxInstallerAvailable, cfuUrl, type ScriptOs, type ScriptFile } from "./scripts.js";
 import { syncSnapshot, remoteMeta, appliedSnapshot, SNAPSHOT_URL } from "./snapshot.js";
 import { chainCheckSummary } from "./chain-checks.js";
+import { resolveOcr, logOcrEvent, updateOcrEvent, ocrSummary, tokenize } from "./ocr.js";
 import { vapidKeys, validSubscription, saveSubscription, removeSubscription, sendTest, subscriptionCount, notifyReleases } from "./push.js";
 import { configExchanges, allExchanges, REGISTRY_PAGE } from "./exchanges.js";
 import {
@@ -788,6 +789,14 @@ export async function buildServer() {
     prefix: "/",
     // The page itself goes through sitePage() (the fallback below): it may carry the Метрика tag.
     allowedPath: (path) => path !== "/" && path !== "/index.html",
+    // Ассеты распознавания (ядро tesseract + модель, ~11 МБ) не меняются между выкатками:
+    // пусть браузер держит их у себя, иначе каждое открытие формы будет качать 11 МБ.
+    // Всё остальное — по прежним правилам (sw.js обязан обновляться).
+    setHeaders: (res, filePath) => {
+      if (filePath.includes(`${sep}vendor${sep}`)) {
+        res.setHeader("cache-control", "public, max-age=31536000, immutable");
+      }
+    },
   });
 
   app.get("/api/health", async () => ({
@@ -1362,6 +1371,79 @@ export async function buildServer() {
 
   app.get("/api/stats/more", async () => moreStats());
   app.get("/api/platform", async () => platformInfo());
+
+  // ── Скриншот → версии ─────────────────────────────────────────────────────
+  // Движок читает текст у себя (сегодня — tesseract в браузере, завтра — модель на
+  // сервере) и присылает сюда только токены: картинка остаётся у пользователя, пока
+  // он сам не нажмёт «прислать скриншот». Смысл токенов достаётся один раз для всех
+  // движков — см. src/db/ocr.ts.
+  app.post("/api/ocr/resolve", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+    const body = (req.body ?? {}) as any;
+    // Движок может прислать готовые токены или просто текст — разбираем и то и другое.
+    const raw: unknown = body.tokens;
+    if (raw !== undefined && (!Array.isArray(raw) || raw.length > 200)) {
+      return reply.code(400).send({ error: "tokens: массив до 200 строк" });
+    }
+    const tokens = (Array.isArray(raw) ? raw : []).map((t) => String(t)).filter((t) => t.length <= 24);
+    // Текст от движка тоже принимаем: серверный OCR пришлёт его целиком.
+    const textTokens = typeof body.text === "string" ? tokenize(body.text.slice(0, 20_000)) : [];
+    const all = [...new Set([...tokens, ...textTokens])];
+
+    const resolution = await resolveOcr(all);
+    const id = await logOcrEvent({
+      engine: String(body.engine ?? "unknown"),
+      ms: Number(body.ms ?? 0),
+      tokens: all,
+      imageW: Number(body.w ?? 0) || undefined,
+      imageH: Number(body.h ?? 0) || undefined,
+      imageBytes: Number(body.bytes ?? 0) || undefined,
+      resolution,
+      ua: req.headers["user-agent"] ?? null,
+    });
+    return { id, ...resolution };
+  });
+
+  // Что пользователь сделал с подставленным: поправил, построил цепочку. Без этого
+  // нельзя отличить «распознали» от «распознали и это было верно».
+  app.post("/api/ocr/feedback", { bodyLimit: 8 * 1024 }, async (req, reply) => {
+    const body = (req.body ?? {}) as any;
+    const id = Number(body.id);
+    if (!Number.isFinite(id)) return reply.code(400).send({ error: "id: число" });
+    await updateOcrEvent(id, {
+      appliedVersion: body.appliedVersion == null ? undefined : String(body.appliedVersion).slice(0, 32),
+      corrected: body.corrected === undefined ? undefined : !!body.corrected,
+      built: body.built === undefined ? undefined : !!body.built,
+    });
+    return { ok: true };
+  });
+
+  // Прислать скриншот нам — только явной кнопкой и только когда не распознали.
+  // Файл кладём рядом с данными, путь пишем в событие: это и есть калибровочный набор.
+  app.post("/api/ocr/sample", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
+    const body = (req.body ?? {}) as any;
+    const data = String(body.data ?? "");
+    const b64 = data.includes(",") ? data.slice(data.indexOf(",") + 1) : data;
+    const buf = Buffer.from(b64, "base64");
+    if (!buf.length) return reply.code(400).send({ error: "пустой файл" });
+    if (buf.length > 4 * 1024 * 1024) return reply.code(413).send({ error: "файл больше 4 МБ" });
+    const mime = String(body.mime ?? "image/jpeg");
+    const ext = /png/i.test(mime) ? "png" : /webp/i.test(mime) ? "webp" : "jpg";
+    const dir = process.env.OCR_SAMPLES_DIR ?? join(process.cwd(), "data", "ocr-samples");
+    try {
+      await mkdir(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const name = `${stamp}-${createHash("sha1").update(buf).digest("hex").slice(0, 8)}.${ext}`;
+      const file = join(dir, name);
+      await writeFile(file, buf);
+      const id = Number(body.id);
+      if (Number.isFinite(id)) await updateOcrEvent(id, { samplePath: name });
+      return { ok: true, file: name, bytes: buf.length };
+    } catch (e) {
+      return reply.code(500).send({ error: `не смог сохранить: ${(e as Error).message}` });
+    }
+  });
+
+  app.get("/api/ocr/summary", async (req) => ocrSummary(Number((req.query as any).days ?? 30) || 30));
   app.get("/api/news", async (req) => newsEvents(Number((req.query as any).days ?? 30) || 30));
 
   app.get("/api/stats/releases", async (req, reply) => {

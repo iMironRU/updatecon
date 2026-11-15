@@ -1266,7 +1266,10 @@ function render_home() {
       </div>
       <div class="chain-builder">
         <div class="field ver-field" style="margin:0">
-          <label class="label">Текущая версия</label>
+          <label class="label">Текущая версия
+            <button type="button" class="ocr-btn" onclick="ocr_pick()" title="Прочитать версию со скриншота «О программе» — можно выбрать файл, перетащить его сюда или вставить из буфера (⌘V)">📷 Скриншот</button>
+          </label>
+          <input type="file" id="ocr-file" accept="image/*" hidden>
           <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" autocomplete="off" spellcheck="false"
             oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="ver_suggest_blur()" onfocus="home_version_input(this.value)">
           <div id="ver-suggest" class="ver-suggest" hidden></div>
@@ -1292,6 +1295,7 @@ function render_home() {
           Построить
         </button>
       </div>
+      <div id="ocr-status" class="ocr-status" aria-live="polite"></div>
       <div id="home-matches" style="margin-top:14px"></div>
       ${(() => { const n = CONFIGS.filter(c => c.isLatestEdition && c.platform === PLATFORM_NEWEST).length;
         return n ? `<a class="plat-callout" href="/catalog?plat=${PLATFORM_NEWEST}">Уже на платформе ${PLATFORM_NEWEST}: ${n} ${n % 10 === 1 && n % 100 !== 11 ? 'конфигурация' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'конфигурации' : 'конфигураций'} →</a>` : ''; })()}
@@ -1330,6 +1334,7 @@ function home_extra_sync() {
   extra.hidden = busy;
 }
 function bind_home() {
+  ocr_bind();
   const { params } = parse_route();
   if (params.v) {
     document.getElementById('inp-version').value = params.v;
@@ -1705,6 +1710,7 @@ async function home_build_chain() {
   }
   // A chain was built — the query is worth remembering for the next visit.
   if (reached) {
+    if (_ocrLast && !_ocrLast.built) { _ocrLast.built = true; ocr_note_built(); }
     hist_put('ver', fromV);
     if (toVRaw) hist_put('ver', toVRaw);
     const nameInp = document.getElementById('inp-name');
@@ -4089,3 +4095,276 @@ apply_theme(localStorage.getItem('uc_theme') || 'auto');
 update_theme_icon();
 route();
 init_version_badge();
+
+/* ================================================================
+   SCREENSHOT → VERSIONS
+   ----------------------------------------------------------------
+   Скриншот «О программе» превращается в две версии. Движок — это интерфейс, а не
+   функция: сегодня единственная реализация читает буквы здесь же, в браузере
+   (tesseract.js, ~7 МБ при первом использовании, дальше из кэша, скриншот не покидает
+   устройство). Серверный движок — модель — встанет сюда же как вторая реализация и
+   получит тот же разбор токенов: смысл версии достаётся на сервере, потому что
+   правильный ответ даёт не OCR, а наш словарь версий.
+   ================================================================ */
+const OCR_VENDOR = '/vendor/ocr';
+const OCR_LANG = 'rus';
+let _ocrWorker = null;        // созданный воркер tesseract
+let _ocrLoading = null;       // промис загрузки скрипта, чтобы не грузить дважды
+let _ocrLast = null;          // { id, version, platform } — для обратной связи о качестве
+let _ocrFile = null;          // последний скриншот, если пользователь решит прислать его нам
+let _ocrBusy = false;
+
+function ocr_status(html, kind) {
+  const el = document.getElementById('ocr-status');
+  if (!el) return;
+  el.className = 'ocr-status' + (kind ? ' ocr-' + kind : '');
+  el.innerHTML = html || '';
+}
+
+/* ── Загрузка движка ─────────────────────────────────────────────────────── */
+function ocr_load_script() {
+  if (window.Tesseract) return Promise.resolve();
+  if (_ocrLoading) return _ocrLoading;
+  _ocrLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = OCR_VENDOR + '/tesseract.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => { _ocrLoading = null; reject(new Error('не загрузился tesseract.js')); };
+    document.head.appendChild(s);
+  });
+  return _ocrLoading;
+}
+
+/**
+ * Подготовка картинки: серое + растяжка контраста + увеличение мелких скриншотов.
+ * Проверено на реальных скриншотах: без увеличения мелкий текст 1С (11–13 px) tesseract
+ * теряет, а ×2 с растяжкой контраста возвращает. Никакого OpenCV для этого не нужно.
+ */
+function ocr_prepare(file, on_progress) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const target = 2000;                                  // ширина, на которой цифры читаются
+        const scale = img.width < target ? Math.min(3, target / img.width) : 1;
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, w, h);
+        on_progress?.('contrast');
+        const data = ctx.getImageData(0, 0, w, h);
+        const px = data.data;
+        let lo = 255, hi = 0;
+        for (let i = 0; i < px.length; i += 4) {
+          const g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
+          px[i] = px[i + 1] = px[i + 2] = g;
+          if (g < lo) lo = g;
+          if (g > hi) hi = g;
+        }
+        const span = Math.max(1, hi - lo);
+        for (let i = 0; i < px.length; i += 4) {
+          const v = ((px[i] - lo) * 255 / span) | 0;
+          px[i] = px[i + 1] = px[i + 2] = v < 0 ? 0 : v > 255 ? 255 : v;
+        }
+        ctx.putImageData(data, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve({ canvas: cv, width: img.width, height: img.height, bytes: file.size });
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('это не картинка')); };
+    img.src = url;
+  });
+}
+
+async function ocr_tesseract(file, on_progress) {
+  await ocr_load_script();
+  const prep = await ocr_prepare(file, on_progress);
+  on_progress?.('engine');
+  if (!_ocrWorker) {
+    _ocrWorker = await Tesseract.createWorker(OCR_LANG, 1, {
+      workerPath: OCR_VENDOR + '/worker.min.js',
+      corePath: OCR_VENDOR,
+      langPath: OCR_VENDOR,
+      // Модель одна и та же, поэтому кэш браузера делает второй запуск мгновенным.
+      cacheMethod: 'write',
+      logger: (m) => { if (m.status === 'recognizing text') on_progress?.('read', m.progress); },
+    });
+  }
+  const t0 = performance.now();
+  const { data } = await _ocrWorker.recognize(prep.canvas);
+  return {
+    text: data.text || '',
+    ms: Math.round(performance.now() - t0),
+    width: prep.width, height: prep.height, bytes: prep.bytes,
+  };
+}
+
+/* Движки. `id` уходит на сервер в событие статистики — по нему видно, что работает. */
+const OCR_ENGINES = {
+  'local-tesseract': { label: 'tesseract в браузере', note: 'скриншот не покидает устройство', run: ocr_tesseract },
+  // 'server-model': { label: 'модель на сервере', note: 'скриншот уходит на сервер', run: ... }
+};
+function ocr_engine() {
+  const id = localStorage.getItem('uc_ocr_engine') || 'local-tesseract';
+  return { id, ...(OCR_ENGINES[id] || OCR_ENGINES['local-tesseract']) };
+}
+
+/* ── Разбор и подстановка ────────────────────────────────────────────────── */
+async function ocr_resolve(text, meta) {
+  const r = await fetch('/api/ocr/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, engine: meta.engine, ms: meta.ms, w: meta.width, h: meta.height, bytes: meta.bytes }),
+  });
+  if (!r.ok) throw new Error('сервер не разобрал (' + r.status + ')');
+  return r.json();
+}
+
+function ocr_fill(res, file) {
+  _ocrLast = {
+    id: res.id,
+    engine: ocr_engine().id,
+    version: res.config_version?.value ?? null,
+    platform: res.platform_version?.value ?? null,
+    corrected: false,
+  };
+  const vin = document.getElementById('inp-version');
+  const pin = document.getElementById('inp-platform');
+  const notes = [];
+  if (res.config_version && vin) {
+    vin.value = res.config_version.value;
+    home_version_input(vin.value);
+    notes.push(res.config_version.distance === 0
+      ? `версия <b>${esc_html(res.config_version.value)}</b> — прочитана`
+      : `похоже на <b>${esc_html(res.config_version.value)}</b> (одна буква/цифра могла быть прочитана неверно) — проверьте`);
+  }
+  if (res.platform_version && pin) {
+    pin.value = res.platform_version.value;
+    home_platform_input(pin.value);
+    notes.push(res.platform_version.distance === 0
+      ? `платформа <b>${esc_html(res.platform_version.value)}</b> — прочитана`
+      : `платформа: похоже на <b>${esc_html(res.platform_version.value)}</b> — проверьте`);
+  }
+  if (!notes.length) {
+    // Ничего не нашли — это не ошибка пользователя, а повод прислать нам скриншот.
+    ocr_status(`Не удалось прочитать версию на этом скриншоте. <button class="btn btn-sm btn-secondary" onclick="ocr_send_sample()">Прислать скриншот нам</button>`, 'fail');
+    return false;
+  }
+  ocr_status(notes.join(' · ') + ' <span class="ocr-hint">— проверьте перед построением</span>', 'ok');
+  return true;
+}
+
+/* ── Главный вход ────────────────────────────────────────────────────────── */
+async function ocr_handle_file(file) {
+  if (!file || _ocrBusy) return;
+  if (!/^image\//.test(file.type)) { ocr_status('Нужна картинка: PNG, JPEG или WebP.', 'fail'); return; }
+  const eng = ocr_engine();
+  _ocrBusy = true;
+  ocr_status('Читаю скриншот…', 'busy');
+  const t0 = performance.now();
+  try {
+    const read = await eng.run(file, (step, progress) => {
+      if (step === 'read') ocr_status(`Читаю скриншот… ${Math.round((progress || 0) * 100)}%`, 'busy');
+      else if (step === 'engine') ocr_status('Загружаю распознавание (один раз, ~7 МБ)…', 'busy');
+    });
+    const res = await ocr_resolve(read.text, { engine: eng.id, ms: read.ms, width: read.width, height: read.height, bytes: read.bytes });
+    _ocrFile = file;                       // нужен, если пользователь решит прислать его нам
+    const ok = ocr_fill(res, file);
+    if (!ok) _ocrFile = file;
+    console.info('[ocr]', eng.id, `${Math.round(performance.now() - t0)} мс`, res.tokens?.length, 'токенов');
+  } catch (e) {
+    ocr_status('Не получилось распознать: ' + esc_html((e && e.message) || String(e)), 'fail');
+  } finally {
+    _ocrBusy = false;
+  }
+}
+
+/** Прислать скриншот нам — только по явной кнопке, только когда не распознали. */
+async function ocr_send_sample() {
+  if (!_ocrFile) { ocr_status('Файл уже недоступен — выберите скриншот заново.', 'fail'); return; }
+  ocr_status('Отправляю скриншот…', 'busy');
+  try {
+    const data = await new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.readAsDataURL(_ocrFile);
+    });
+    const r = await fetch('/api/ocr/sample', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, mime: _ocrFile.type, id: _ocrLast?.id }),
+    });
+    const j = await r.json().catch(() => ({}));
+    ocr_status(r.ok ? `Спасибо, скриншот у нас (${Math.round((j.bytes || 0) / 1024)} КБ) — он поможет научить распознавание лучше.` : 'Не получилось отправить: ' + esc_html(j.error || r.status), r.ok ? 'ok' : 'fail');
+  } catch (e) {
+    ocr_status('Не получилось отправить: ' + esc_html((e && e.message) || String(e)), 'fail');
+  }
+}
+
+/* Скриншот можно выбрать, перетащить или вставить из буфера — все три пути ведут в одно. */
+function ocr_pick() {
+  const inp = document.getElementById('ocr-file');
+  if (inp) inp.click();
+}
+
+function ocr_bind() {
+  const inp = document.getElementById('ocr-file');
+  if (inp && !inp.dataset.bound) {
+    inp.dataset.bound = '1';
+    inp.addEventListener('change', () => {
+      const f = inp.files && inp.files[0];
+      inp.value = '';
+      if (f) ocr_handle_file(f);
+    });
+  }
+  // Вставка из буфера: скриншот чаще всего уже в буфере (⌘⇧4 → ⌘V).
+  if (!document.__ocrPaste) {
+    document.__ocrPaste = true;
+    document.addEventListener('paste', (e) => {
+      const items = (e.clipboardData && e.clipboardData.items) || [];
+      for (const it of items) {
+        if (it.type && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (f) { e.preventDefault(); ocr_handle_file(f); return; }
+        }
+      }
+    });
+  }
+  // Перетаскивание на форму.
+  const zone = document.querySelector('.chain-builder');
+  if (zone && !zone.dataset.ocrDrop) {
+    zone.dataset.ocrDrop = '1';
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('ocr-drag'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('ocr-drag'));
+    zone.addEventListener('drop', (e) => {
+      zone.classList.remove('ocr-drag');
+      const f = e.dataTransfer?.files?.[0];
+      if (f) { e.preventDefault(); ocr_handle_file(f); }
+    });
+  }
+  // Пользователь поправил распознанное — это и есть «движок ошибся, но человек справился».
+  const vin = document.getElementById('inp-version');
+  if (vin && !vin.dataset.ocrTrack) {
+    vin.dataset.ocrTrack = '1';
+    vin.addEventListener('input', () => {
+      if (!_ocrLast || _ocrLast.corrected) return;
+      if (vin.value.trim() && vin.value.trim() !== _ocrLast.version) {
+        _ocrLast.corrected = true;
+        void fetch('/api/ocr/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: _ocrLast.id, appliedVersion: vin.value.trim(), corrected: true }) }).catch(() => {});
+      }
+    });
+  }
+}
+
+/** Цепочка построена по распознанному — значит распознавание сработало. */
+function ocr_note_built() {
+  if (!_ocrLast) return;
+  const vin = document.getElementById('inp-version');
+  void fetch('/api/ocr/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: _ocrLast.id, built: true, appliedVersion: vin ? vin.value.trim() : null }) }).catch(() => {});
+}

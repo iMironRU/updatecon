@@ -203,3 +203,33 @@ test("the page is a shell: hashed assets, immutable caching, stale hash 404s", a
   // A stale hash must not fall through to the SPA fallback: HTML served as JS breaks the page.
   assert.equal((await app.inject({ method: "GET", url: "/app.deadbeef.js" })).statusCode, 404);
 });
+
+test("скриншот: сервер разбирает токены словарём и пишет событие", async () => {
+  // Движок присылает только текст — картинка остаётся у пользователя.
+  const text = "1С:Предприятие 8.3 (8.3.103.4)\nКонфигурация: (3.0.102.9)";
+  const r = await app.inject({ method: "POST", url: "/api/ocr/resolve",
+    payload: { text, engine: "local-tesseract", ms: 1234, w: 800, h: 600, bytes: 50_000 } });
+  assert.equal(r.statusCode, 200, r.body.slice(0, 200));
+  const body = r.json();
+  assert.equal(typeof body.id, "number");
+  assert.ok(Array.isArray(body.tokens) && body.tokens.length > 0, r.body.slice(0, 200));
+  // Оба значения — из словаря, который собран из наших же таблиц.
+  assert.ok(body.config_version, r.body.slice(0, 300));
+  assert.equal(body.config_version.distance, 0);
+
+  const sum = await get("/api/ocr/summary?days=30");
+  assert.ok(sum.total >= 1, JSON.stringify(sum));
+  assert.ok(sum.hit_rate > 0, JSON.stringify(sum));
+});
+
+test("скриншот: обратная связь отмечает, что пользователь поправил", async () => {
+  const r = await app.inject({ method: "POST", url: "/api/ocr/resolve",
+    payload: { tokens: ["3.0.102.9"], engine: "local-tesseract", ms: 10 } });
+  const { id } = r.json();
+  const fb = await app.inject({ method: "POST", url: "/api/ocr/feedback",
+    payload: { id, appliedVersion: "3.0.103.4", corrected: true, built: true } });
+  assert.equal(fb.statusCode, 200);
+  const sum = await get("/api/ocr/summary?days=30");
+  assert.ok(sum.corrected >= 1, JSON.stringify(sum));
+  assert.ok(sum.built >= 1, JSON.stringify(sum));
+});
