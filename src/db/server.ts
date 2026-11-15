@@ -1379,9 +1379,12 @@ export async function buildServer() {
   // движков — см. src/db/ocr.ts.
   app.post("/api/ocr/resolve", { bodyLimit: 64 * 1024 }, async (req, reply) => {
     const body = (req.body ?? {}) as any;
+    // Движок может прислать готовые токены или просто текст — разбираем и то и другое.
     const raw: unknown = body.tokens;
-    if (!Array.isArray(raw) || raw.length > 200) return reply.code(400).send({ error: "tokens: массив до 200 строк" });
-    const tokens = raw.map((t) => String(t)).filter((t) => t.length <= 24);
+    if (raw !== undefined && (!Array.isArray(raw) || raw.length > 200)) {
+      return reply.code(400).send({ error: "tokens: массив до 200 строк" });
+    }
+    const tokens = (Array.isArray(raw) ? raw : []).map((t) => String(t)).filter((t) => t.length <= 24);
     // Текст от движка тоже принимаем: серверный OCR пришлёт его целиком.
     const textTokens = typeof body.text === "string" ? tokenize(body.text.slice(0, 20_000)) : [];
     const all = [...new Set([...tokens, ...textTokens])];
