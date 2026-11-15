@@ -4140,13 +4140,13 @@ function ocr_load_script() {
  * Проверено на реальных скриншотах: без увеличения мелкий текст 1С (11–13 px) tesseract
  * теряет, а ×2 с растяжкой контраста возвращает. Никакого OpenCV для этого не нужно.
  */
-function ocr_prepare(file, on_progress) {
+function ocr_prepare(file, on_progress, opts) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
       try {
-        const target = 2000;                                  // ширина, на которой цифры читаются
+        const target = 2400;                                  // ширина, на которой цифры читаются
         const scale = img.width < target ? Math.min(3, target / img.width) : 1;
         const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
         const cv = document.createElement('canvas');
@@ -4155,6 +4155,13 @@ function ocr_prepare(file, on_progress) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, w, h);
+        const mode = (opts && opts.mode) || 'contrast';
+        if (mode === 'raw') {
+          // Как есть, только масштаб: у «сырого» прохода свои слепые зоны, и вместе с
+          // контрастным он находит то, что теряет каждый по отдельности.
+          URL.revokeObjectURL(url);
+          return resolve({ canvas: cv, width: img.width, height: img.height, bytes: file.size });
+        }
         on_progress?.('contrast');
         const data = ctx.getImageData(0, 0, w, h);
         const px = data.data;
@@ -4170,6 +4177,29 @@ function ocr_prepare(file, on_progress) {
           const v = ((px[i] - lo) * 255 / span) | 0;
           px[i] = px[i + 1] = px[i + 2] = v < 0 ? 0 : v > 255 ? 255 : v;
         }
+        // Бинаризация по Оцу — только по запросу: на части скриншотов она выбивает
+        // светло-серые строки (второй проход её включает, первый обходится контрастом).
+        if (mode !== 'binarize') { ctx.putImageData(data, 0, 0); URL.revokeObjectURL(url); resolve({ canvas: cv, width: img.width, height: img.height, bytes: file.size }); return; }
+        const hist = new Uint32Array(256);
+        for (let i = 0; i < px.length; i += 4) hist[px[i]]++;
+        const total = px.length / 4;
+        let sum = 0;
+        for (let t = 0; t < 256; t++) sum += t * hist[t];
+        let sumB = 0, wB = 0, best = 0, thr = 128;
+        for (let t = 0; t < 256; t++) {
+          wB += hist[t];
+          if (!wB) continue;
+          const wF = total - wB;
+          if (!wF) break;
+          sumB += t * hist[t];
+          const mB = sumB / wB, mF = (sum - sumB) / wF;
+          const between = wB * wF * (mB - mF) * (mB - mF);
+          if (between > best) { best = between; thr = t; }
+        }
+        for (let i = 0; i < px.length; i += 4) {
+          const v = px[i] > thr ? 255 : 0;
+          px[i] = px[i + 1] = px[i + 2] = v;
+        }
         ctx.putImageData(data, 0, 0);
         URL.revokeObjectURL(url);
         resolve({ canvas: cv, width: img.width, height: img.height, bytes: file.size });
@@ -4180,22 +4210,30 @@ function ocr_prepare(file, on_progress) {
   });
 }
 
-async function ocr_tesseract(file, on_progress) {
+async function ocr_tesseract(file, on_progress, opts) {
   await ocr_load_script();
-  const prep = await ocr_prepare(file, on_progress);
+  const prep = await ocr_prepare(file, on_progress, opts);
   on_progress?.('engine');
   if (!_ocrWorker) {
-    _ocrWorker = await Tesseract.createWorker(OCR_LANG, 1, {
-      workerPath: OCR_VENDOR + '/worker.min.js',
-      corePath: OCR_VENDOR,
-      langPath: OCR_VENDOR,
-      // Модель одна и та же, поэтому кэш браузера делает второй запуск мгновенным.
-      cacheMethod: 'write',
-      logger: (m) => { if (m.status === 'recognizing text') on_progress?.('read', m.progress); },
+    _ocrWorker = await new Promise((resolve, reject) => {
+      Tesseract.createWorker(OCR_LANG, 1, {
+        workerPath: OCR_VENDOR + '/worker.min.js',
+        corePath: OCR_VENDOR,
+        langPath: OCR_VENDOR,
+        // Модель одна и та же, поэтому кэш браузера делает второй запуск мгновенным.
+        cacheMethod: 'write',
+        logger: (m) => { if (m.status === 'recognizing text') on_progress?.('read', m.progress); },
+        // Без этого сетевой сбой в воркере оставляет «Загружаю…» навсегда.
+        errorHandler: (e) => reject(e instanceof Error ? e : new Error(String(e))),
+      }).then(resolve, reject);
     });
   }
+  // psm 11 — «разрозненный текст»: диалог «О программе» обычно занимает угол скриншота.
+  await _ocrWorker.setParameters({ tessedit_pageseg_mode: (opts && opts.psm) || '11' });
   const t0 = performance.now();
-  const { data } = await _ocrWorker.recognize(prep.canvas);
+  // data-URL, а не сам canvas: в воркере canvas не передать, а строка проходит везде.
+  const { data } = await _ocrWorker.recognize(prep.canvas.toDataURL('image/png'));
+  window.__ocrText = data.text || '';
   return {
     text: data.text || '',
     ms: Math.round(performance.now() - t0),
@@ -4267,11 +4305,32 @@ async function ocr_handle_file(file) {
   ocr_status('Читаю скриншот…', 'busy');
   const t0 = performance.now();
   try {
-    const read = await eng.run(file, (step, progress) => {
+    const on_progress = (step, progress) => {
       if (step === 'read') ocr_status(`Читаю скриншот… ${Math.round((progress || 0) * 100)}%`, 'busy');
-      else if (step === 'engine') ocr_status('Загружаю распознавание (один раз, ~7 МБ)…', 'busy');
-    });
-    const res = await ocr_resolve(read.text, { engine: eng.id, ms: read.ms, width: read.width, height: read.height, bytes: read.bytes });
+      else if (step === 'engine') ocr_status('Загружаю распознавание (один раз, ~2 МБ)…', 'busy');
+    };
+    // Проходы идут от дешёвого к дорогому и останавливаются, как только найдены обе
+    // версии. Разные режимы подготовки теряют разное: сырой держит светлые строки,
+    // контраст — мелкий шрифт, бинаризация — шумный фон.
+    const passes = [
+      { psm: '11', mode: 'contrast' },
+      { psm: '6', mode: 'binarize' },
+      { psm: '11', mode: 'raw' },
+      { psm: '4', mode: 'binarize' },
+    ];
+    let text = '', ms = 0, meta = { engine: eng.id };
+    let res = { config_version: null, platform_version: null };
+    const deadline = performance.now() + 12000;   // телефон не должен ждать дольше
+    for (const pass of passes) {
+      if (performance.now() > deadline && text) break;
+      const read = await eng.run(file, on_progress, pass);
+      text = text ? text + "\n" + read.text : read.text;
+      ms += read.ms;
+      meta = { engine: eng.id, ms, width: read.width, height: read.height, bytes: read.bytes };
+      res = await ocr_resolve(text, meta);
+      if (res.config_version && res.platform_version) break;
+      if (pass !== passes[passes.length - 1]) ocr_status('Разбираю дальше — пробую другой режим…', 'busy');
+    }
     _ocrFile = file;                       // нужен, если пользователь решит прислать его нам
     const ok = ocr_fill(res, file);
     if (!ok) _ocrFile = file;
