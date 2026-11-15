@@ -23,6 +23,7 @@ import {
   index,
   bigserial,
   bigint,
+  boolean,
   date,
   primaryKey,
 } from "drizzle-orm/pg-core";
@@ -557,3 +558,34 @@ export const chainChecks = pgTable(
   },
   (t) => ({ pk: primaryKey({ columns: [t.configId, t.version] }) }),
 );
+
+// Скриншоты «О программе»: что прочитал движок и что пользователь в итоге применил.
+// Здесь только текст — токены и найденные версии. Само изображение уходит к нам
+// лишь по явной кнопке «прислать скриншот», и тогда его путь лежит в sample_path.
+// Таблица нужна не для аналитики ради аналитики: на ней видно, какой движок и какая
+// словарная коррекция реально работают на скриншотах пользователей.
+export const ocrEvents = pgTable(
+  "ocr_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    engine: text("engine").notNull(),                       // local-tesseract | server-model
+    ms: integer("ms").notNull().default(0),                 // сколько читал движок
+    tokens: jsonb("tokens").$type<string[]>(),              // что вообще нашлось в тексте
+    imageW: integer("image_w"),
+    imageH: integer("image_h"),
+    imageBytes: integer("image_bytes"),
+    versionValue: text("version_value"),                    // лучшая версия конфигурации
+    versionDistance: integer("version_distance"),           // 0 = точное совпадение, 1 = догадка
+    platformValue: text("platform_value"),
+    platformDistance: integer("platform_distance"),
+    appliedVersion: text("applied_version"),                // что реально ушло в форму
+    corrected: boolean("corrected").notNull().default(false),  // пользователь поправил распознанное
+    built: boolean("built").notNull().default(false),       // и построил цепочку
+    samplePath: text("sample_path"),                        // присланный скриншот (калибровка)
+    ua: text("ua"),
+  },
+  (t) => ({ atIdx: index("ocr_events_at_idx").on(t.at) }),
+);
+
+export type OcrEvent = typeof ocrEvents.$inferSelect;
