@@ -1261,11 +1261,13 @@ function render_home() {
     <div class="hero fade-up">
       <div class="hero-title">Построить цепочку обновлений</div>
       <div class="hero-sub">Введите текущую версию конфигурации 1С — мы найдём путь до актуальной версии</div>
-      <div class="field name-field ocr-field" style="margin:0 0 14px">
+      <div class="field name-field" style="margin:0 0 14px">
         <label class="label">Поиск по названию</label>
-        <button type="button" class="ocr-inline" onclick="navigate('/photo')" aria-label="Найти по скриншоту «О программе»" title="Найти по скриншоту «О программе» — версию конфигурации и платформы прочитаем с картинки">${icn_camera()}</button>
-        <input id="inp-name" class="input input-lg" placeholder="Бухгалтерия, ЗУП, Розница, разработчик…" autocomplete="off" spellcheck="false"
+        <div class="name-row">
+          <input id="inp-name" class="input input-lg" placeholder="Бухгалтерия, ЗУП, Розница, разработчик…" autocomplete="off" spellcheck="false"
           oninput="name_suggest(this.value)" onkeydown="name_suggest_key(event)" onblur="name_suggest_blur()" onfocus="name_suggest(this.value)">
+          <button type="button" class="ocr-inline" onclick="navigate('/photo')" aria-label="Найти по скриншоту «О программе»" title="Найти по скриншоту «О программе» — версию конфигурации и платформы прочитаем с картинки">${icn_camera()}</button>
+        </div>
         <div id="name-suggest" class="ver-suggest name-suggest" hidden></div>
       </div>
       <div class="chain-builder">
