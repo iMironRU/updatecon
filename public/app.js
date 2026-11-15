@@ -819,6 +819,8 @@ const icn_partner = () => icn('<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"
 const icn_industry= () => icn('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/>');
 const icn_chevron_r=() => icn('<polyline points="9 18 15 12 9 6"/>');
 const icn_search  = () => icn('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+// Камера — как у поиска по картинке: узнаваемая форма объектива, а не «фотография».
+const icn_camera  = () => icn('<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>');
 const icn_hist    = () => icn('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>');
 const icn_filter  = () => icn('<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>');
 const icn_bar     = () => icn('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');
@@ -1233,6 +1235,7 @@ async function route() {
   else if (path === '/stats') { el.innerHTML = render_stats(); bind_stats(); }
   else if (path === '/platform') { el.innerHTML = render_platform(); await bind_platform(); }
   else if (path === '/news') { el.innerHTML = render_news(); await bind_news(); }
+  else if (path === '/photo') { el.innerHTML = render_photo(); bind_photo(); }
   else if (path === '/settings') { el.innerHTML = render_settings(); bind_settings(); }
   else if (path === '/install') {
     if (!PLATFORM_DATA) { try { PLATFORM_DATA = await apiFetch('/api/platform'); } catch (e) {} }
@@ -1258,18 +1261,16 @@ function render_home() {
     <div class="hero fade-up">
       <div class="hero-title">Построить цепочку обновлений</div>
       <div class="hero-sub">Введите текущую версию конфигурации 1С — мы найдём путь до актуальной версии</div>
-      <div class="field name-field" style="margin:0 0 14px">
+      <div class="field name-field ocr-field" style="margin:0 0 14px">
         <label class="label">Поиск по названию</label>
+        <button type="button" class="ocr-inline" onclick="navigate('/photo')" aria-label="Найти по скриншоту «О программе»" title="Найти по скриншоту «О программе» — версию конфигурации и платформы прочитаем с картинки">${icn_camera()}</button>
         <input id="inp-name" class="input input-lg" placeholder="Бухгалтерия, ЗУП, Розница, разработчик…" autocomplete="off" spellcheck="false"
           oninput="name_suggest(this.value)" onkeydown="name_suggest_key(event)" onblur="name_suggest_blur()" onfocus="name_suggest(this.value)">
         <div id="name-suggest" class="ver-suggest name-suggest" hidden></div>
       </div>
       <div class="chain-builder">
         <div class="field ver-field" style="margin:0">
-          <label class="label">Текущая версия
-            <button type="button" class="ocr-btn" onclick="ocr_pick()" title="Прочитать версию со скриншота «О программе» — можно выбрать файл, перетащить его сюда или вставить из буфера (⌘V)">📷 Скриншот</button>
-          </label>
-          <input type="file" id="ocr-file" accept="image/*" hidden>
+          <label class="label">Текущая версия</label>
           <input id="inp-version" class="input input-mono input-lg" placeholder="3.0.154.30" autocomplete="off" spellcheck="false"
             oninput="home_version_input(this.value)" onkeydown="ver_suggest_key(event)" onblur="ver_suggest_blur()" onfocus="home_version_input(this.value)">
           <div id="ver-suggest" class="ver-suggest" hidden></div>
@@ -1340,6 +1341,23 @@ function bind_home() {
     document.getElementById('inp-version').value = params.v;
     home_version_input(params.v);
   }
+  // Со страницы «Скриншот» возвращаемся сюда уже с распознанными версиями.
+  if (params.p) {
+    const pin = document.getElementById('inp-platform');
+    if (pin) { pin.value = params.p; home_platform_input(params.p); }
+  }
+  if (params.v && params.build !== '0') home_auto_build(0);
+}
+
+/**
+ * Со страницы «Скриншот» цепочка строится сама — но только когда база конфигураций
+ * загрузилась: иначе расчёт стартует раньше данных и результат затирается следующей
+ * отрисовкой главной.
+ */
+function home_auto_build(n) {
+  if (!document.getElementById('inp-version')) return;         // ушли на другую страницу
+  if (!CONFIGS_LOADED && n < 60) { setTimeout(() => home_auto_build(n + 1), 150); return; }
+  home_build_chain();
 }
 
 let _verSearchTimer, _verSuggestTimer;
@@ -4270,19 +4288,20 @@ function ocr_fill(res, file) {
     platform: res.platform_version?.value ?? null,
     corrected: false,
   };
-  const vin = document.getElementById('inp-version');
-  const pin = document.getElementById('inp-platform');
+  // Поля есть на двух страницах: главная (inp-*) и «Скриншот» (photo-*).
+  const vin = document.getElementById('inp-version') || document.getElementById('photo-ver');
+  const pin = document.getElementById('inp-platform') || document.getElementById('photo-plat');
   const notes = [];
   if (res.config_version && vin) {
     vin.value = res.config_version.value;
-    home_version_input(vin.value);
+    if (vin.id === 'inp-version') home_version_input(vin.value);
     notes.push(res.config_version.distance === 0
       ? `версия <b>${esc_html(res.config_version.value)}</b> — прочитана`
       : `похоже на <b>${esc_html(res.config_version.value)}</b> (одна буква/цифра могла быть прочитана неверно) — проверьте`);
   }
   if (res.platform_version && pin) {
     pin.value = res.platform_version.value;
-    home_platform_input(pin.value);
+    if (pin.id === 'inp-platform') home_platform_input(pin.value);
     notes.push(res.platform_version.distance === 0
       ? `платформа <b>${esc_html(res.platform_version.value)}</b> — прочитана`
       : `платформа: похоже на <b>${esc_html(res.platform_version.value)}</b> — проверьте`);
@@ -4293,6 +4312,7 @@ function ocr_fill(res, file) {
     return false;
   }
   ocr_status(notes.join(' · ') + ' <span class="ocr-hint">— проверьте перед построением</span>', 'ok');
+  if (document.getElementById('photo-go')) { photo_show_drop(); photo_sync_button(); }
   return true;
 }
 
@@ -4426,4 +4446,126 @@ function ocr_note_built() {
   const vin = document.getElementById('inp-version');
   void fetch('/api/ocr/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: _ocrLast.id, built: true, appliedVersion: vin ? vin.value.trim() : null }) }).catch(() => {});
+}
+
+/* ================================================================
+   PHOTO PAGE — скриншот «О программе»
+   ----------------------------------------------------------------
+   Отдельная страница, потому что это не «мелкая кнопка в форме», а целый сценарий:
+   человек ищет, где в 1С посмотреть версию, снимает скриншот и приносит его сюда.
+   Распознавание то же (движок общий), но здесь ему есть место рассказать, что и как,
+   и что делать, если не получилось.
+   ================================================================ */
+function render_photo() {
+  return `<div class="wrap">
+    <div class="page-head">
+      <div class="page-title">Скриншот «О программе»</div>
+      <div class="page-sub">Прочитаем версию конфигурации и версию платформы прямо с картинки.
+        Распознавание идёт в вашем браузере — скриншот никуда не отправляется.</div>
+    </div>
+
+    <div class="photo-zone" id="photo-zone">
+      <div class="photo-icn">${icn_camera()}</div>
+      <div class="photo-title">Перетащите скриншот сюда</div>
+      <div class="photo-sub">или вставьте из буфера (⌘V / Ctrl+V), или выберите файл</div>
+      <div class="photo-actions">
+        <button class="btn btn-primary btn-lg" onclick="photo_pick('file')">Выбрать файл</button>
+        <button class="btn btn-secondary btn-lg" onclick="photo_pick('camera')">Снять камерой</button>
+      </div>
+      <input type="file" id="photo-file" accept="image/*" hidden>
+      <input type="file" id="photo-camera" accept="image/*" capture="environment" hidden>
+      <div class="photo-note">PNG, JPEG или WebP до 10 МБ · первый раз грузится модель распознавания (~2 МБ)</div>
+    </div>
+
+    <div id="ocr-status" class="ocr-status" aria-live="polite"></div>
+
+    <div id="photo-result" class="card card-body photo-result" hidden>
+      <div class="photo-result-title">Прочитано — проверьте и постройте цепочку</div>
+      <div class="photo-fields">
+        <div class="field" style="margin:0">
+          <label class="label">Версия конфигурации</label>
+          <input id="photo-ver" class="input input-mono input-lg" autocomplete="off" oninput="photo_sync_button()">
+        </div>
+        <div class="field" style="margin:0">
+          <label class="label">Версия платформы <span style="font-weight:400;text-transform:none;font-size:11px">(если прочиталась)</span></label>
+          <input id="photo-plat" class="input input-mono input-lg" autocomplete="off" oninput="photo_sync_button()">
+        </div>
+      </div>
+      <div class="photo-result-actions">
+        <button class="btn btn-primary" id="photo-go" onclick="photo_build()" disabled>Построить цепочку</button>
+        <button class="btn btn-secondary" onclick="photo_reset()">Другой скриншот</button>
+      </div>
+    </div>
+
+    <div class="photo-help">
+      <div class="photo-help-title">Как открыть «О программе» в 1С</div>
+      <ol class="photo-help-steps">
+        <li>В открытой базе откройте меню <b>Справка</b> → <b>О программе</b>.
+          В тонком клиенте: кнопка меню (≡) → <b>Справка</b> → <b>О программе</b>.</li>
+        <li>В окне две нужные строки: <b>1С:Предприятие 8.3 (8.3.24.1691)</b> — это платформа,
+          и <b>Конфигурация: … (3.0.210.11)</b> — версия в скобках.</li>
+        <li>Снимите скриншот окна: <b>⌘⇧4</b> на macOS, <b>Win+Shift+S</b> на Windows.
+          Достаточно самого окна «О программе», целиком экран не нужен.</li>
+      </ol>
+      <div class="photo-help-note">Можно и фотографию экрана телефоном — главное, чтобы строка с версией была
+        крупно и без бликов. Если распознать не удалось, проще всего скопировать текст: в окне «О программе»
+        <b>Ctrl+A</b>, <b>Ctrl+C</b>, а затем вставить в поле версии на главной.</div>
+    </div>
+  </div>`;
+}
+
+function photo_pick(kind) {
+  const el = document.getElementById(kind === 'camera' ? 'photo-camera' : 'photo-file');
+  if (el) el.click();
+}
+
+function photo_sync_button() {
+  const v = (document.getElementById('photo-ver')?.value || '').trim();
+  const go = document.getElementById('photo-go');
+  if (go) go.disabled = !/^\d+(\.\d+){1,3}$/.test(v);
+}
+
+function photo_build() {
+  const v = (document.getElementById('photo-ver')?.value || '').trim();
+  const p = (document.getElementById('photo-plat')?.value || '').trim();
+  if (!v) return;
+  navigate('/?v=' + encodeURIComponent(v) + (p ? '&p=' + encodeURIComponent(p) : ''));
+}
+
+function photo_reset() {
+  const box = document.getElementById('photo-result');
+  if (box) box.hidden = true;
+  ocr_status('');
+  _ocrFile = null;
+}
+
+function bind_photo() {
+  ocr_bind();
+  for (const id of ['photo-file', 'photo-camera']) {
+    const inp = document.getElementById(id);
+    if (!inp || inp.dataset.bound) continue;
+    inp.dataset.bound = '1';
+    inp.addEventListener('change', () => {
+      const f = inp.files && inp.files[0];
+      inp.value = '';
+      if (f) { photo_show_drop(true); ocr_handle_file(f); }
+    });
+  }
+  const zone = document.getElementById('photo-zone');
+  if (zone && !zone.dataset.drop) {
+    zone.dataset.drop = '1';
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('photo-drag'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('photo-drag'));
+    zone.addEventListener('drop', (e) => {
+      zone.classList.remove('photo-drag');
+      const f = e.dataTransfer?.files?.[0];
+      if (f) { e.preventDefault(); ocr_handle_file(f); }
+    });
+  }
+}
+
+/** После распознавания на этой странице показываем блок с полями. */
+function photo_show_drop() {
+  const box = document.getElementById('photo-result');
+  if (box) box.hidden = false;
 }
